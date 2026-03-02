@@ -13,10 +13,15 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 # 设置 pnpm 为淘宝镜像
 RUN pnpm config set registry https://registry.npmmirror.com
 
+# 先复制 package.json 和 lock 文件
 COPY fe/package.json fe/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+# 先不安装依赖，等复制源码后再安装（避免平台问题）
 
+# 复制源码
 COPY fe/ ./
+
+# 在容器内安装依赖
+RUN pnpm install --frozen-lockfile
 
 RUN pnpm build
 
