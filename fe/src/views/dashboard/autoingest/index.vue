@@ -171,6 +171,7 @@ import {
   getAutoIngestLogList,
   retryFailedAutoIngest,
   deleteErrorLogs,
+  retryAutoIngestPlan,
   type PlanLogResult,
 } from '@/api/autoingest'
 import { getCloudTokenList } from '@/api/cloudtoken'
@@ -363,7 +364,15 @@ const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
                       default: () => '扫描',
                     }
                   ),
-                  // 新增“修改”按钮（位于扫描右边）
+                  // 重试按钮（重新获取历史记录）
+                  h(
+                    NButton,
+                    { size: 'tiny', type: 'success', secondary: true, onClick: () => onRetry(row) },
+                    {
+                      icon: () => h(NIcon, { size: 12 }, { default: () => h(RefreshOutline) }),
+                      default: () => '重试',
+                    }
+                  ),
                   h(
                     NButton,
                     { size: 'tiny', type: 'primary', secondary: true, onClick: () => onEdit(row) },
@@ -484,6 +493,19 @@ const onRefresh = (row: Models.AutoIngestPlan) => {
     })
     .catch((err: unknown) => {
       console.error('扫描下发失败', err)
+    })
+}
+
+const onRetry = (row: Models.AutoIngestPlan) => {
+  retryAutoIngestPlan({ id: row.id })
+    .then((res: ApiResponse) => {
+      if (res.code === 200) {
+        message.success('已下发重试任务，将重新获取所有历史记录')
+        fetchPlanList()
+      }
+    })
+    .catch((err: unknown) => {
+      console.error('重试失败', err)
     })
 }
 

@@ -686,17 +686,23 @@ const getNextRunTime = (storage: StorageInfo) => {
   if (!storage.enableAutoRefresh || !storage.refreshInterval) return null
   const lastRun = storage.updatedAt ? dayjs(storage.updatedAt) : null
   if (!lastRun) return null
-  return lastRun.add(storage.refreshInterval, 'minute')
+  
+  const interval = storage.refreshInterval
+  const now = dayjs()
+  let nextRun = lastRun.add(interval, 'minute')
+  
+  // 如果计算出的下次运行时间已经过了，计算下一个未来的运行时间
+  while (nextRun.isBefore(now)) {
+    nextRun = nextRun.add(interval, 'minute')
+  }
+  
+  return nextRun
 }
 
 // 格式化下一次运行时间
 const formatNextRunTime = (storage: StorageInfo) => {
   const nextRun = getNextRunTime(storage)
   if (!nextRun) return ''
-  const now = dayjs()
-  if (nextRun.isBefore(now)) {
-    return '即将运行'
-  }
   return nextRun.format('MM-DD HH:mm')
 }
 

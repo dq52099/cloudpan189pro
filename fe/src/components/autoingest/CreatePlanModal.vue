@@ -236,7 +236,7 @@ const typeFormRef = ref<FormInst | null>(null)
 const typeForm = reactive<{
   sourceType?: AutoIngestSourceType
 }>({
-  sourceType: undefined,
+  sourceType: 'subscribe',
 })
 
 const subscribeUserIdInput = ref<string>('')
@@ -275,6 +275,16 @@ const detailForm = reactive<
     enableDeepRefresh: false,
   },
 })
+
+watch(
+  () => props.cloudTokenOptions,
+  (options) => {
+    if (options && options.length > 0 && !detailForm.cloudToken) {
+      detailForm.cloudToken = options[0].value
+    }
+  },
+  { immediate: true }
+)
 
 const detailRules: FormRules = {
   name: [{ required: true, message: '请输入计划名称', trigger: 'blur' }],
@@ -326,6 +336,10 @@ const handleParseSubscribe = () => {
         // 建议预填名称
         if (!detailForm.name) {
           detailForm.name = `订阅：${parsedUserName.value}`
+        }
+        // 默认挂载父目录
+        if (!detailForm.parentPath) {
+          detailForm.parentPath = `/电影/${parsedUserName.value}`
         }
         message.success('解析成功')
       } else {

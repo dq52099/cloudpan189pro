@@ -124,3 +124,8 @@ export const retryFailedAutoIngest = (data: { planId?: number }): Promise<ApiRes
 export const deleteErrorLogs = (data: { planId?: number }): Promise<ApiResponse<number>> => {
   return api.post('/auto_ingest/log/delete_error', data).then((res) => res.data)
 }
+
+// 重试计划（重新获取历史记录）
+export const retryAutoIngestPlan = (data: { id: number }): Promise<ApiResponse> => {
+  return api.post('/auto_ingest/plan/retry', data).then((res) => res.data)
+}

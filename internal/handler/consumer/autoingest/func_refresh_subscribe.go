@@ -137,9 +137,9 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 		logger.Info("开始并发入库", zap.Int("total", len(pendingItems)), zap.Int("concurrent", concurrentCount))
 
 		var (
-			wg           sync.WaitGroup
-			itemChan     = make(chan pendingItem, len(pendingItems))
-			mu           sync.Mutex
+			wg               sync.WaitGroup
+			itemChan         = make(chan pendingItem, len(pendingItems))
+			mu               sync.Mutex
 			localAddCount    int64
 			localFailedCount int64
 		)
@@ -173,7 +173,9 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 								fullPath = path.Join(plan.ParentPath, fmt.Sprintf("%s_%d", pItem.item.Name, time.Now().Unix()))
 								continue
 							}
-							break
+							// abandon: 跳过，继续处理下一个文件
+							logger.Debug("文件已存在，跳过入库", zap.String("path", fullPath))
+							continue
 						}
 
 						id, err := h.storageFacadeService.CreateStorage(ctx.GetContext(),

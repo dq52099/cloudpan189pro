@@ -39,7 +39,9 @@ func (s *service) QueryByPath(ctx context.Context, path string) (*models.Virtual
 	for _, name := range paths {
 		m = new(models.VirtualFile)
 
-		if err = s.getDB(ctx).Model(new(models.VirtualFile)).Where("name", name).Where("parent_id", pid).First(m).Error; err != nil {
+		// 查询时使用 sanitize 后的名字
+		queryName := utils.SanitizeFileName(name)
+		if err = s.getDB(ctx).Model(new(models.VirtualFile)).Where("name", queryName).Where("parent_id", pid).First(m).Error; err != nil {
 			return nil, err
 		}
 
@@ -78,7 +80,9 @@ func (s *service) FindOrCreateAncestors(ctx context.Context, path string) (int64
 	for _, name := range paths {
 		var m = new(models.VirtualFile)
 
-		err = s.getDB(ctx).Model(new(models.VirtualFile)).Where("name", name).Where("parent_id", pid).First(m).Error
+		// 查询时使用 sanitize 后的名字
+		queryName := utils.SanitizeFileName(name)
+		err = s.getDB(ctx).Model(new(models.VirtualFile)).Where("name", queryName).Where("parent_id", pid).First(m).Error
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				// 不存在则创建

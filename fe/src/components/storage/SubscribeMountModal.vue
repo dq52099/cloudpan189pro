@@ -245,7 +245,7 @@ const resourceColumns: DataTableColumns<ShareResourceInfo> = [
     width: 80,
     align: 'center',
     ellipsis: { tooltip: true },
-    render: (_, index) => isAllLoadedComputed ? index + 1 : (resourcePagination.page - 1) * resourcePagination.pageSize + index + 1,
+    render: (_, index) => isAllLoadedComputed.value ? index + 1 : (resourcePagination.page - 1) * resourcePagination.pageSize + index + 1,
   },
   {
     title: '资源名称',

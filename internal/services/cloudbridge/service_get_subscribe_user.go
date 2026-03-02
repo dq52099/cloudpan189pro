@@ -78,7 +78,17 @@ func (s *service) GetSubscribeUserShareResource(ctx context.Context, userId stri
 	list := make([]*ShareResourceInfo, 0)
 
 	for _, item := range resp.Data.FileList {
-		shareTime, _ := time.Parse(time.DateTime, item.ShareDate)
+		var shareTime time.Time
+		var err error
+		for _, format := range []string{time.RFC3339, "2006-01-02T15:04:05Z", time.DateTime, "2006-01-02 15:04:05"} {
+			shareTime, err = time.Parse(format, item.ShareDate)
+			if err == nil {
+				break
+			}
+		}
+		if shareTime.IsZero() {
+			ctx.Info("ShareDate解析失败", zap.String("shareDate", item.ShareDate), zap.String("name", item.Name))
+		}
 
 		list = append(list, &ShareResourceInfo{
 			UserId:     userId,
@@ -132,7 +142,14 @@ func (s *service) GetSubscribeUserShareResourceAll(ctx context.Context, userId s
 		ctx.Info("获取订阅号分享分页数据", zap.String("user_id", userId), zap.Int64("page_num", pageNum), zap.Int("current_page_count", len(resp.Data.FileList)))
 
 		for _, item := range resp.Data.FileList {
-			shareTime, _ := time.Parse(time.DateTime, item.ShareDate)
+			var shareTime time.Time
+			var err error
+			for _, format := range []string{time.RFC3339, "2006-01-02T15:04:05Z", time.DateTime, "2006-01-02 15:04:05"} {
+				shareTime, err = time.Parse(format, item.ShareDate)
+				if err == nil {
+					break
+				}
+			}
 
 			allList = append(allList, &ShareResourceInfo{
 				UserId:     userId,

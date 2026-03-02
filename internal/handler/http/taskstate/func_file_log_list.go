@@ -82,6 +82,7 @@ func (h *handler) FileLogList() httpcontext.HandlerFunc {
 					endTime = &now
 				}
 				log.Duration = endTime.UnixMilli() - log.BeginAt.UnixMilli()
+			}
 		}
 
 		ctx.Success(&fileLogListResponse{

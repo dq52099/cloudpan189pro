@@ -229,6 +229,7 @@ func Start(svc bootstrap.ServiceContext) {
 			autoIngestRouter.POST("/plan/retry_failed", wrap(autoIngestHandler.RetryFailed()))
 			autoIngestRouter.POST("/plan/delete", wrap(autoIngestHandler.DeletePlan()))
 			autoIngestRouter.POST("/plan/update", wrap(autoIngestHandler.UpdatePlan()))
+			autoIngestRouter.POST("/plan/retry", wrap(autoIngestHandler.RetryPlan()))
 			autoIngestRouter.GET("/log/list", wrap(autoIngestHandler.LogList()))
 			autoIngestRouter.POST("/log/delete_error", wrap(autoIngestHandler.DeleteErrorLogs()))
 		}
