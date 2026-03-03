@@ -16,6 +16,8 @@ export interface ConfigInitRequest {
   conflictPolicy?: Enums.MediaFileConflictPolicy // 冲突策略：skip/replace
   baseURL: string // 媒体基础URL，例如：http://localhost:12395
   includedSuffixes?: string[] // 包括的后缀格式，例如：['.mp4','.mkv','.avi']
+  autoRebuildEnable?: boolean // 定时重建strm开关
+  autoRebuildInterval?: number // 定时重建间隔（小时）
 }
 
 // 更新媒体配置 - 请求体（任意字段可选）
@@ -26,6 +28,8 @@ export interface ConfigUpdateRequest {
   conflictPolicy?: Enums.MediaFileConflictPolicy
   baseURL?: string
   includedSuffixes?: string[] // 包括的后缀格式，例如：['.mp4','.mkv','.avi']
+  autoRebuildEnable?: boolean // 定时重建strm开关
+  autoRebuildInterval?: number // 定时重建间隔（小时）
 }
 
 // 切换启用状态 - 请求体

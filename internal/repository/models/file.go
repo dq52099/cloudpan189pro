@@ -42,7 +42,7 @@ type VirtualFile struct {
 	Name       string            `gorm:"column:name;type:varchar(1024);not null;uniqueIndex:parent_name_unique" json:"name"`                                     // 文件名
 	Size       int64             `gorm:"column:size;type:bigint;default:0" json:"size"`                                                                          // 文件大小
 	Hash       string            `gorm:"column:hash;type:varchar(64);default:''" json:"hash"`                                                                    // 文件的hash值 这个没有啥用 考虑是否删除
-	OsType     OsType            `gorm:"column:os_type;type:varchar(20);default:'folder'" json:"osType"`                                                         // 读取文件的方式
+	OsType     OsType            `gorm:"column:os_type;type:varchar(64);default:'folder'" json:"osType"`                                                         // 读取文件的方式
 	Addition   datatypes.JSONMap `gorm:"column:addition;type:json" json:"addition"`                                                                              // 额外信息 例如分享id 文件夹id 等
 	Rev        string            `gorm:"column:rev;type:varchar(64);default:''" json:"rev"`                                                                      // 版本 用于下次扫描时知道当前文件是删除还是修改还是新增
 	IsDelete   int8              `gorm:"column:is_delete;type:smallint;default:0" json:"-"`                                                                      // 删除标记

@@ -9,12 +9,14 @@ import (
 
 // configUpdateRequest 媒体配置更新请求（部分字段可选）
 type configUpdateRequest struct {
-	Enable           *bool                     `json:"enable" binding:"omitempty" example:"false"`
-	StoragePath      *string                   `json:"storagePath" binding:"omitempty" example:"/opt/media"`
-	AutoClean        *bool                     `json:"autoClean" binding:"omitempty" example:"true"`
-	ConflictPolicy   *media.FileConflictPolicy `json:"conflictPolicy" binding:"omitempty,oneof=skip replace" example:"skip"`
-	BaseURL          *string                   `json:"baseURL" binding:"omitempty" example:"http://localhost:12395"`
-	IncludedSuffixes *[]string                 `json:"includedSuffixes" binding:"omitempty" example:"['.mp4','.mkv','.avi']"`
+	Enable              *bool                     `json:"enable" binding:"omitempty" example:"false"`
+	StoragePath         *string                   `json:"storagePath" binding:"omitempty" example:"/opt/media"`
+	AutoClean           *bool                     `json:"autoClean" binding:"omitempty" example:"true"`
+	ConflictPolicy      *media.FileConflictPolicy `json:"conflictPolicy" binding:"omitempty,oneof=skip replace" example:"skip"`
+	BaseURL             *string                   `json:"baseURL" binding:"omitempty" example:"http://localhost:12395"`
+	IncludedSuffixes    *[]string                 `json:"includedSuffixes" binding:"omitempty" example:"['.mp4','.mkv','.avi']"`
+	AutoRebuildEnable   *bool                     `json:"autoRebuildEnable" binding:"omitempty" example:"false"`
+	AutoRebuildInterval *int                      `json:"autoRebuildInterval" binding:"omitempty" example:"24"`
 }
 
 // ConfigUpdate 更新媒体配置指定字段
@@ -61,6 +63,14 @@ func (h *handler) ConfigUpdate() httpcontext.HandlerFunc {
 
 		if req.IncludedSuffixes != nil {
 			fields = append(fields, utils.WithField("included_suffixes", datatypes.NewJSONSlice(*req.IncludedSuffixes)))
+		}
+
+		if req.AutoRebuildEnable != nil {
+			fields = append(fields, utils.WithField("auto_rebuild_enable", *req.AutoRebuildEnable))
+		}
+
+		if req.AutoRebuildInterval != nil {
+			fields = append(fields, utils.WithField("auto_rebuild_interval", *req.AutoRebuildInterval))
 		}
 
 		if len(fields) == 0 {

@@ -8,12 +8,14 @@ import (
 
 // configInitRequest 初始化/更新媒体配置请求
 type configInitRequest struct {
-	Enable           bool                     `json:"enable" example:"false"`
-	StoragePath      string                   `json:"storagePath" binding:"required" example:"/opt/media"`
-	AutoClean        bool                     `json:"autoClean" binding:"required" example:"true"`
-	ConflictPolicy   media.FileConflictPolicy `json:"conflictPolicy" binding:"omitempty,oneof=skip replace" example:"skip"`
-	BaseURL          string                   `json:"baseURL" binding:"required" example:"http://localhost:12395"`
-	IncludedSuffixes []string                 `json:"includedSuffixes" binding:"omitempty" example:"['.mp4','.mkv','.avi']"`
+	Enable              bool                     `json:"enable" example:"false"`
+	StoragePath         string                   `json:"storagePath" binding:"required" example:"/opt/media"`
+	AutoClean           bool                     `json:"autoClean" binding:"required" example:"true"`
+	ConflictPolicy      media.FileConflictPolicy `json:"conflictPolicy" binding:"omitempty,oneof=skip replace" example:"skip"`
+	BaseURL             string                   `json:"baseURL" binding:"required" example:"http://localhost:12395"`
+	IncludedSuffixes    []string                 `json:"includedSuffixes" binding:"omitempty" example:"['.mp4','.mkv','.avi']"`
+	AutoRebuildEnable   bool                     `json:"autoRebuildEnable" example:"false"`
+	AutoRebuildInterval int                      `json:"autoRebuildInterval" example:"24"`
 }
 
 // ConfigInit 初始化媒体配置
@@ -37,12 +39,14 @@ func (h *handler) ConfigInit() httpcontext.HandlerFunc {
 		}
 
 		iReq := &mediaconfig.InitRequest{
-			Enable:           req.Enable,
-			StoragePath:      req.StoragePath,
-			AutoClean:        req.AutoClean,
-			ConflictPolicy:   req.ConflictPolicy,
-			BaseURL:          req.BaseURL,
-			IncludedSuffixes: req.IncludedSuffixes,
+			Enable:              req.Enable,
+			StoragePath:         req.StoragePath,
+			AutoClean:           req.AutoClean,
+			ConflictPolicy:      req.ConflictPolicy,
+			BaseURL:             req.BaseURL,
+			IncludedSuffixes:    req.IncludedSuffixes,
+			AutoRebuildEnable:   req.AutoRebuildEnable,
+			AutoRebuildInterval: req.AutoRebuildInterval,
 		}
 
 		if err := h.mediaConfigService.Init(ctx.GetContext(), iReq); err != nil {

@@ -12,12 +12,14 @@ import (
 
 // InitRequest 初始化/更新媒体配置请求
 type InitRequest struct {
-	Enable           bool
-	StoragePath      string
-	AutoClean        bool
-	ConflictPolicy   media.FileConflictPolicy
-	BaseURL          string
-	IncludedSuffixes []string
+	Enable              bool
+	StoragePath         string
+	AutoClean           bool
+	ConflictPolicy      media.FileConflictPolicy
+	BaseURL             string
+	IncludedSuffixes    []string
+	AutoRebuildEnable   bool
+	AutoRebuildInterval int
 }
 
 var (
@@ -57,13 +59,19 @@ func (s *service) Init(ctx context.Context, req *InitRequest) error {
 		req.IncludedSuffixes = []string{}
 	}
 
+	if req.AutoRebuildInterval <= 0 {
+		req.AutoRebuildInterval = 24
+	}
+
 	newCfg := &models.MediaConfig{
-		Enable:           req.Enable,
-		StoragePath:      req.StoragePath,
-		AutoClean:        req.AutoClean,
-		ConflictPolicy:   req.ConflictPolicy,
-		BaseURL:          req.BaseURL,
-		IncludedSuffixes: req.IncludedSuffixes,
+		Enable:              req.Enable,
+		StoragePath:         req.StoragePath,
+		AutoClean:           req.AutoClean,
+		ConflictPolicy:      req.ConflictPolicy,
+		BaseURL:             req.BaseURL,
+		IncludedSuffixes:    req.IncludedSuffixes,
+		AutoRebuildEnable:   req.AutoRebuildEnable,
+		AutoRebuildInterval: req.AutoRebuildInterval,
 	}
 
 	if createErr := s.svc.GetDB(ctx).Create(newCfg).Error; createErr != nil {

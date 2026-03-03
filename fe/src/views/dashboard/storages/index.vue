@@ -67,7 +67,9 @@
             class="batch-btn"
             :disabled="selectedIds.length === 0"
           >
-            <template #icon><n-icon><RefreshOutline /></n-icon></template>
+            <template #icon
+              ><n-icon><RefreshOutline /></n-icon
+            ></template>
             刷新选中 ({{ selectedIds.length }})
           </n-button>
           <n-button
@@ -76,16 +78,20 @@
             class="batch-btn"
             :disabled="selectedIds.length === 0"
           >
-            <template #icon><n-icon><RefreshOutline /></n-icon></template>
+            <template #icon
+              ><n-icon><RefreshOutline /></n-icon
+            ></template>
             深度刷新 ({{ selectedIds.length }})
           </n-button>
           <n-button
             type="primary"
-            @click="showBatchModifyTokenModal = true"
+            @click="handleBatchModifyToken"
             class="batch-btn"
             :disabled="selectedIds.length === 0"
           >
-            <template #icon><n-icon><KeyOutline /></n-icon></template>
+            <template #icon
+              ><n-icon><KeyOutline /></n-icon
+            ></template>
             修改令牌 ({{ selectedIds.length }})
           </n-button>
           <n-button
@@ -94,7 +100,9 @@
             class="batch-btn"
             :disabled="selectedIds.length === 0"
           >
-            <template #icon><n-icon><TrashOutline /></n-icon></template>
+            <template #icon
+              ><n-icon><TrashOutline /></n-icon
+            ></template>
             删除选中 ({{ selectedIds.length }})
           </n-button>
           <n-button @click="exitBatchMode" class="batch-btn">取消</n-button>
@@ -301,7 +309,10 @@
                   </n-popover>
                   <n-popover trigger="hover" :disabled="storage.taskLogs[0].result ? false : true">
                     <template #trigger>
-                      <n-tag :type="getTaskStatusInfo(storage.taskLogs[0].status).type" size="small">
+                      <n-tag
+                        :type="getTaskStatusInfo(storage.taskLogs[0].status).type"
+                        size="small"
+                      >
                         {{ getTaskStatusInfo(storage.taskLogs[0].status).text }}
                       </n-tag>
                     </template>
@@ -526,7 +537,11 @@
 
       <template #action>
         <n-button @click="showBatchModifyTokenModal = false">取消</n-button>
-        <n-button type="primary" @click="handleBatchModifyTokenConfirm" :loading="modifyTokenSubmitting">
+        <n-button
+          type="primary"
+          @click="handleBatchModifyTokenConfirm"
+          :loading="modifyTokenSubmitting"
+        >
           确认修改
         </n-button>
       </template>
@@ -613,6 +628,30 @@ const showModifyTokenModal = ref(false)
 const showBatchModifyTokenModal = ref(false)
 const batchModifyTokenId = ref<number | null>(null)
 
+// 加载令牌列表（单个和批量修改令牌共用）
+const loadCloudTokenOptions = () => {
+  return getCloudTokenList({ noPaginate: true })
+    .then((response) => {
+      if (response.data) {
+        cloudTokenOptions.value = response.data.data.map((token) => ({
+          label: token.name,
+          value: token.id,
+        }))
+        cloudTokenOptions.value.unshift({
+          label: '解绑令牌',
+          value: 0,
+        })
+        return true
+      }
+      return false
+    })
+    .catch((error) => {
+      console.error('获取云盘令牌列表失败:', error)
+      message.error(error?.message || '获取令牌列表失败')
+      return false
+    })
+}
+
 const subscribeMount = useSubscribeMount()
 const shareMount = useShareMount()
 const personMount = usePersonMount()
@@ -686,16 +725,16 @@ const getNextRunTime = (storage: StorageInfo) => {
   if (!storage.enableAutoRefresh || !storage.refreshInterval) return null
   const lastRun = storage.updatedAt ? dayjs(storage.updatedAt) : null
   if (!lastRun) return null
-  
+
   const interval = storage.refreshInterval
   const now = dayjs()
   let nextRun = lastRun.add(interval, 'minute')
-  
+
   // 如果计算出的下次运行时间已经过了，计算下一个未来的运行时间
   while (nextRun.isBefore(now)) {
     nextRun = nextRun.add(interval, 'minute')
   }
-  
+
   return nextRun
 }
 
@@ -1080,7 +1119,7 @@ const handleBatchRefresh = (deep: boolean) => {
   if (selectedIds.value.length === 0) return
 
   const refreshType = deep ? '深度刷新' : '普通刷新'
-  
+
   dialog.warning({
     title: `批量${refreshType}`,
     content: `确定要${refreshType}选中的 ${selectedIds.value.length} 个挂载点吗？`,
@@ -1104,9 +1143,9 @@ const handleBatchRefresh = (deep: boolean) => {
 // 确认批量修改令牌
 const handleBatchModifyTokenConfirm = () => {
   if (selectedIds.value.length === 0 || !batchModifyTokenId.value) return
-  
+
   modifyTokenSubmitting.value = true
-  
+
   batchModifyToken({
     ids: selectedIds.value,
     tokenId: batchModifyTokenId.value,
@@ -1223,29 +1262,26 @@ const currentModifyStorage = ref<StorageInfo | null>(null)
 const cloudTokenOptions = ref<{ label: string; value: number }[]>([])
 const selectedTokenId = ref<number | null>(null)
 
+// 处理批量修改令牌（先加载令牌列表再打开弹窗）
+const handleBatchModifyToken = () => {
+  batchModifyTokenId.value = null
+  loadCloudTokenOptions().then((success) => {
+    if (success) {
+      showBatchModifyTokenModal.value = true
+    }
+  })
+}
+
 // 处理修改令牌
 const handleModifyToken = (storage: StorageInfo) => {
   currentModifyStorage.value = storage
   selectedTokenId.value = storage.tokenId || null
 
-  getCloudTokenList({ noPaginate: true })
-    .then((response) => {
-      if (response.data) {
-        cloudTokenOptions.value = response.data.data.map((token) => ({
-          label: token.name,
-          value: token.id,
-        }))
-        cloudTokenOptions.value.unshift({
-          label: '解绑令牌',
-          value: 0,
-        })
-        showModifyTokenModal.value = true
-      }
-    })
-    .catch((error) => {
-      console.error('获取云盘令牌列表失败:', error)
-      message.error(error?.message || '获取令牌列表失败')
-    })
+  loadCloudTokenOptions().then((success) => {
+    if (success) {
+      showModifyTokenModal.value = true
+    }
+  })
 }
 
 // 确认修改令牌

@@ -74,7 +74,8 @@ func useSQLiteDB(c *configs.Config) (db *gorm.DB, err error) {
 		return
 	}
 
-	db, err = gorm.Open(sqlite.Open(c.DBFile), &gorm.Config{})
+	dsn := fmt.Sprintf("file:%s?_pragma=encoding_utf8", c.DBFile)
+	db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to open SQLite database")
 	}
@@ -158,15 +159,6 @@ func usePostgresDB(c *configs.Config) (db *gorm.DB, err error) {
 
 	if err = db.Use(new(TracePlugin)); err != nil {
 		return nil, errors.Wrap(err, "failed to register trace plugin")
-	}
-
-	if ShouldMigrateData(c) {
-		fmt.Println("检测到 SQLite 数据，正在迁移到 PostgreSQL...")
-		if err := MigrateFromSQLite(c); err != nil {
-			fmt.Printf("数据迁移失败: %v\n", err)
-		} else {
-			fmt.Println("数据迁移完成!")
-		}
 	}
 
 	return db, nil

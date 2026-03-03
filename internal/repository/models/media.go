@@ -35,8 +35,12 @@ type MediaConfig struct {
 	// IncludedSuffixes 包括的后缀格式 不包括的将过滤 如果为空则表示不过滤
 	IncludedSuffixes datatypes.JSONSlice[string] `gorm:"column:included_suffixes;type:json;not null" json:"includedSuffixes"`
 	BaseURL          string                      `gorm:"column:base_url;type:varchar(255);not null" json:"baseURL"`
-	CreatedAt        time.Time                   `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
-	UpdatedAt        time.Time                   `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
+	// AutoRebuildEnable 定时重建strm开关
+	AutoRebuildEnable bool `gorm:"column:auto_rebuild_enable;type:boolean;not null;default:false" json:"autoRebuildEnable"`
+	// AutoRebuildInterval 定时重建间隔（小时）
+	AutoRebuildInterval int       `gorm:"column:auto_rebuild_interval;type:int;not null;default:24" json:"autoRebuildInterval"`
+	CreatedAt           time.Time `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
+	UpdatedAt           time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
 }
 
 func (m *MediaConfig) TableName() string {

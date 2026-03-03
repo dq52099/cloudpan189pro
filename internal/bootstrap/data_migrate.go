@@ -21,6 +21,8 @@ func MigrateFromSQLite(cfg *configs.Config) error {
 		return fmt.Errorf("failed to open SQLite database: %w", err)
 	}
 
+	sqliteDB.Exec("PRAGMA encoding = 'UTF-8'")
+
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=Asia/Shanghai",
 		cfg.Postgres.Host,
 		cfg.Postgres.User,
@@ -33,6 +35,15 @@ func MigrateFromSQLite(cfg *configs.Config) error {
 	pgDB, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		return fmt.Errorf("failed to open PostgreSQL database: %w", err)
+	}
+
+	pgDB.Exec("SET client_encoding = 'UTF8'")
+
+	var userCount int64
+	if err := sqliteDB.Model(&models.User{}).Count(&userCount).Error; err != nil {
+		fmt.Printf("检查用户数量失败: %v\n", err)
+	} else {
+		fmt.Printf("检测到 SQLite 用户数: %d\n", userCount)
 	}
 
 	if err := migrateUsers(sqliteDB, pgDB); err != nil {
@@ -59,7 +70,7 @@ func MigrateFromSQLite(cfg *configs.Config) error {
 		fmt.Println("自动订阅计划数据迁移完成")
 	}
 
-	if err := migrateSettings(sqliteDB, pgDB); err != nil {
+	if err := migrateSettings(sqliteDB, pgDB, userCount); err != nil {
 		fmt.Printf("迁移设置数据失败: %v\n", err)
 	} else {
 		fmt.Println("设置数据迁移完成")
@@ -79,7 +90,7 @@ func migrateUsers(src, dst *gorm.DB) error {
 	for i := range users {
 		users[i].ID = 0
 	}
-	return dst.Create(&users).Error
+	return dst.Save(&users).Error
 }
 
 func migrateUserGroups(src, dst *gorm.DB) error {
@@ -93,7 +104,7 @@ func migrateUserGroups(src, dst *gorm.DB) error {
 	for i := range groups {
 		groups[i].ID = 0
 	}
-	return dst.Create(&groups).Error
+	return dst.Save(&groups).Error
 }
 
 func migrateGroup2Files(src, dst *gorm.DB) error {
@@ -107,7 +118,7 @@ func migrateGroup2Files(src, dst *gorm.DB) error {
 	for i := range relations {
 		relations[i].ID = 0
 	}
-	return dst.Create(&relations).Error
+	return dst.Save(&relations).Error
 }
 
 func migrateCloudTokens(src, dst *gorm.DB) error {
@@ -121,7 +132,7 @@ func migrateCloudTokens(src, dst *gorm.DB) error {
 	for i := range tokens {
 		tokens[i].ID = 0
 	}
-	return dst.Create(&tokens).Error
+	return dst.Save(&tokens).Error
 }
 
 func migrateAutoIngestPlans(src, dst *gorm.DB) error {
@@ -135,10 +146,10 @@ func migrateAutoIngestPlans(src, dst *gorm.DB) error {
 	for i := range plans {
 		plans[i].ID = 0
 	}
-	return dst.Create(&plans).Error
+	return dst.Save(&plans).Error
 }
 
-func migrateSettings(src, dst *gorm.DB) error {
+func migrateSettings(src, dst *gorm.DB, userCount int64) error {
 	var settings []models.Setting
 	if err := src.Find(&settings).Error; err != nil {
 		return err
@@ -148,8 +159,11 @@ func migrateSettings(src, dst *gorm.DB) error {
 	}
 	for i := range settings {
 		settings[i].ID = 0
+		if userCount > 0 {
+			settings[i].Initialized = true
+		}
 	}
-	return dst.Create(&settings).Error
+	return dst.Save(&settings).Error
 }
 
 func migrateMediaConfig(src, dst *gorm.DB) error {
@@ -163,7 +177,7 @@ func migrateMediaConfig(src, dst *gorm.DB) error {
 	for i := range configs {
 		configs[i].ID = 0
 	}
-	return dst.Create(&configs).Error
+	return dst.Save(&configs).Error
 }
 
 func migrateLoginLogs(src, dst *gorm.DB) error {
@@ -177,7 +191,7 @@ func migrateLoginLogs(src, dst *gorm.DB) error {
 	for i := range logs {
 		logs[i].ID = 0
 	}
-	return dst.Create(&logs).Error
+	return dst.Save(&logs).Error
 }
 
 func migrateFileTaskLogs(src, dst *gorm.DB) error {
@@ -191,7 +205,7 @@ func migrateFileTaskLogs(src, dst *gorm.DB) error {
 	for i := range logs {
 		logs[i].ID = 0
 	}
-	return dst.Create(&logs).Error
+	return dst.Save(&logs).Error
 }
 
 func migrateMountPoints(src, dst *gorm.DB) error {
@@ -205,7 +219,7 @@ func migrateMountPoints(src, dst *gorm.DB) error {
 	for i := range mountPoints {
 		mountPoints[i].ID = 0
 	}
-	return dst.Create(&mountPoints).Error
+	return dst.Save(&mountPoints).Error
 }
 
 func migrateVirtualFiles(src, dst *gorm.DB) error {
@@ -226,7 +240,7 @@ func migrateVirtualFiles(src, dst *gorm.DB) error {
 		for j := range batch {
 			batch[j].ID = 0
 		}
-		if err := dst.Create(&batch).Error; err != nil {
+		if err := dst.Save(&batch).Error; err != nil {
 			fmt.Printf("批量迁移虚拟文件失败: %v\n", err)
 		}
 	}
@@ -257,10 +271,12 @@ func ShouldMigrateData(cfg *configs.Config) bool {
 		return false
 	}
 
-	var userCount int64
-	sqliteDB.Model(&models.User{}).Count(&userCount)
+	var settingCount int64
+	if err := sqliteDB.Model(&models.Setting{}).Count(&settingCount).Error; err != nil {
+		return false
+	}
 
-	if userCount == 0 {
+	if settingCount == 0 {
 		return false
 	}
 
@@ -279,7 +295,9 @@ func ShouldMigrateData(cfg *configs.Config) bool {
 	}
 
 	var pgUserCount int64
-	pgDB.Model(&models.User{}).Count(&pgUserCount)
+	if err := pgDB.Model(&models.User{}).Count(&pgUserCount).Error; err != nil {
+		return false
+	}
 
-	return userCount > 0 && pgUserCount == 0
+	return pgUserCount == 0
 }

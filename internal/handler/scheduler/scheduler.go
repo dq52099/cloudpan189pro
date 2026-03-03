@@ -71,11 +71,17 @@ func Start(svc bootstrap.ServiceContext) (func(), error) {
 		errs = append(errs, err)
 	}
 
+	rebuildStrmScheduler := NewRebuildStrmScheduler(taskEngine)
+	if err := rebuildStrmScheduler.Start(ctx); err != nil {
+		errs = append(errs, err)
+	}
+
 	schedulers := []Scheduler{
 		fileTaskLogCheckScheduler,
 		refreshFileScheduler,
 		autoIngestRefreshScheduler,
 		refreshCloudTokenScheduler,
+		rebuildStrmScheduler,
 	}
 
 	return closeBar(schedulers), errors2.Join(errs...)

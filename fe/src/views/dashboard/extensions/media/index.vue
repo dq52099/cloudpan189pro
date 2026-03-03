@@ -61,6 +61,16 @@
               <n-text>{{ config?.includedSuffixes?.join(', ') || '-' }}</n-text>
               <div class="desc-sub">仅支持这些后缀的文件生成 STRM</div>
             </n-descriptions-item>
+
+            <n-descriptions-item label="定时重建strm">
+              <n-tag :type="config?.autoRebuildEnable ? 'success' : 'default'">
+                {{ config?.autoRebuildEnable ? '已启用' : '未启用' }}
+              </n-tag>
+              <div class="desc-sub" v-if="config?.autoRebuildEnable">
+                每 {{ config?.autoRebuildInterval || 24 }} 小时自动重建STRM文件
+              </div>
+              <div class="desc-sub" v-else>启用后将按设定间隔自动重建STRM文件</div>
+            </n-descriptions-item>
           </n-descriptions>
 
           <n-space justify="space-between" align="center">
@@ -117,7 +127,8 @@
           </n-form-item>
 
           <n-form-item label="存储根路径">
-            <n-input v-model:value="initForm.storagePath" placeholder="/opt/media" clearable />
+            <n-input v-model:value="initForm.storagePath" placeholder="/media_dir" clearable />
+            <div class="desc-sub">STRM文件输出根目录，必须与配置文件中mediaDir保持一致</div>
           </n-form-item>
 
           <n-form-item label="自动清理空文件夹">
@@ -152,6 +163,26 @@
             <div class="desc-sub">输入以 . 开头的后缀名后按回车添加，留空将支持所有类型。</div>
           </n-form-item>
 
+          <n-form-item label="定时重建strm">
+            <n-space vertical>
+              <n-switch v-model:value="initForm.autoRebuildEnable" />
+              <div class="desc-sub">启用后将按设定间隔自动重建STRM文件（强制覆盖）</div>
+            </n-space>
+          </n-form-item>
+
+          <n-form-item v-if="initForm.autoRebuildEnable" label="重建间隔">
+            <n-space>
+              <n-input-number
+                v-model:value="initForm.autoRebuildInterval"
+                :min="1"
+                :max="168"
+                style="width: 120px"
+              />
+              <n-text>小时</n-text>
+            </n-space>
+            <div class="desc-sub">每隔多少小时自动重建一次STRM文件（1-168小时）</div>
+          </n-form-item>
+
           <n-space justify="end">
             <n-button @click="showInitModal = false">取消</n-button>
             <n-button type="primary" @click="handleInit">完成初始化</n-button>
@@ -163,7 +194,11 @@
       <n-modal v-model:show="showEditModal" preset="card" title="编辑媒体配置" style="width: 680px">
         <n-form :model="editForm" label-placement="left" label-width="130px">
           <n-form-item label="存储根路径">
-            <n-input v-model:value="editForm.storagePath" placeholder="/opt/media" clearable />
+            <n-input
+              v-model:value="editForm.storagePath"
+              placeholder="请填写 media_dir（存储根路径，必须如此配置才能挂载成功）"
+              clearable
+            />
           </n-form-item>
 
           <n-form-item label="自动清理空文件夹">
@@ -196,6 +231,26 @@
               @create="handleSuffixCreate"
             />
             <div class="desc-sub">输入以 . 开头的后缀名后按回车添加，留空将支持所有类型。</div>
+          </n-form-item>
+
+          <n-form-item label="定时重建strm">
+            <n-space vertical>
+              <n-switch v-model:value="editForm.autoRebuildEnable" />
+              <div class="desc-sub">启用后将按设定间隔自动重建STRM文件（强制覆盖）</div>
+            </n-space>
+          </n-form-item>
+
+          <n-form-item v-if="editForm.autoRebuildEnable" label="重建间隔">
+            <n-space>
+              <n-input-number
+                v-model:value="editForm.autoRebuildInterval"
+                :min="1"
+                :max="168"
+                style="width: 120px"
+              />
+              <n-text>小时</n-text>
+            </n-space>
+            <div class="desc-sub">每隔多少小时自动重建一次STRM文件（1-168小时）</div>
           </n-form-item>
 
           <n-space justify="end">
@@ -257,6 +312,8 @@ const editForm = reactive<ConfigUpdateRequest>({
   conflictPolicy: 'skip',
   baseURL: '',
   includedSuffixes: [],
+  autoRebuildEnable: false,
+  autoRebuildInterval: 24,
 })
 
 // 初始化表单
@@ -267,6 +324,8 @@ const initForm = reactive<ConfigInitRequest>({
   conflictPolicy: 'skip',
   baseURL: '',
   includedSuffixes: [],
+  autoRebuildEnable: false,
+  autoRebuildInterval: 24,
 })
 
 const conflictPolicyOptions = [

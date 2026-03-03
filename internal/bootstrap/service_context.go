@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -71,9 +72,19 @@ func newServiceContext(c *configs.RuntimeConfig) (ServiceContext, error) {
 		return nil, err
 	}
 
-	// 执行数据迁移
+	// 执行数据迁移（创建表结构）
 	if err = migrateDB(db); err != nil {
 		return nil, err
+	}
+
+	// 从 SQLite 迁移数据到 PostgreSQL
+	if ShouldMigrateData(c.Config) {
+		fmt.Println("检测到 SQLite 数据，正在迁移到 PostgreSQL...")
+		if err := MigrateFromSQLite(c.Config); err != nil {
+			fmt.Printf("数据迁移失败: %v\n", err)
+		} else {
+			fmt.Println("数据迁移完成!")
+		}
 	}
 
 	// 初始化日志
