@@ -21,8 +21,8 @@ type FileTaskLog struct {
 	Type  string `gorm:"column:type;type:varchar(100);not null;index" json:"type"` // 任务类型（如：file_refresh, file_scan等）
 	Desc  string `gorm:"column:desc;type:text" json:"desc"`
 
-	BeginAt time.Time  `gorm:"column:begin_at;type:datetime;not null" json:"beginAt"` // 开始时间
-	EndAt   *time.Time `gorm:"column:end_at;type:datetime" json:"endAt"`              // 结束时间
+	BeginAt time.Time  `gorm:"column:begin_at;type:timestamp;not null" json:"beginAt"` // 开始时间
+	EndAt   *time.Time `gorm:"column:end_at;type:timestamp" json:"endAt"`              // 结束时间
 
 	Status   string            `gorm:"column:status;type:varchar(50);not null;default:'pending';index" json:"status"` // 状态：pending, running, completed, failed
 	Result   string            `gorm:"column:result;type:varchar(1024)" json:"result"`                                // 执行结果描述
@@ -38,8 +38,8 @@ type FileTaskLog struct {
 	Completed int64 `gorm:"column:completed;type:bigint;default:0" json:"completed"` // 已完成数量
 	Total     int64 `gorm:"column:total;type:bigint;default:0" json:"total"`         // 总数量
 
-	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime;type:datetime;default:CURRENT_TIMESTAMP" json:"createdAt"`
-	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime;type:datetime;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
+	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
+	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
 }
 
 func (l *FileTaskLog) TableName() string {
@@ -58,8 +58,8 @@ type LoginLog struct {
 	Reason    string          `gorm:"column:reason;type:varchar(255);default:'';comment:失败或拦截原因" json:"reason"`
 	UserAgent string          `gorm:"column:user_agent;type:varchar(512);default:'';comment:客户端UA" json:"userAgent"`
 	TraceId   string          `gorm:"column:trace_id;type:varchar(255);not null;default:''" json:"traceId"`
-	CreatedAt time.Time       `gorm:"column:created_at;autoCreateTime;type:datetime;default:CURRENT_TIMESTAMP;index:idx_user_time,priority:2;index:idx_status_time,priority:2;index:idx_event_time,priority:2;index:idx_method_time,priority:2;index:idx_addr_time,priority:2" json:"createdAt"`
-	UpdatedAt time.Time       `gorm:"column:updated_at;autoUpdateTime;type:datetime;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
+	CreatedAt time.Time       `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP;index:idx_user_time,priority:2;index:idx_status_time,priority:2;index:idx_event_time,priority:2;index:idx_method_time,priority:2;index:idx_addr_time,priority:2" json:"createdAt"`
+	UpdatedAt time.Time       `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
 }
 
 func (l *LoginLog) TableName() string {

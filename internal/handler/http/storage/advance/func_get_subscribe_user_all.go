@@ -10,9 +10,9 @@ type getSubscribeUserAllRequest struct {
 }
 
 type getSubscribeUserAllResponse struct {
-	Name        string                              `json:"name" example:"订阅用户"`
-	Total       int64                               `json:"total"`
-	Data        []*cloudbridgeSvi.ShareResourceInfo `json:"data"`
+	Name  string                              `json:"name" example:"订阅用户"`
+	Total int64                               `json:"total"`
+	Data  []*cloudbridgeSvi.ShareResourceInfo `json:"data"`
 }
 
 // GetSubscribeUserAll 获取订阅用户所有资源列表（不分页，获取全部）

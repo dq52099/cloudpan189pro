@@ -26,10 +26,10 @@ func (s *service) GetAutoRefreshList(ctx context.Context, req *GetAutoRefreshLis
 
 	// 筛选在自动刷新时间范围内的挂载点
 	// 条件：当前时间 >= auto_refresh_begin_at 且 当前时间 <= auto_refresh_begin_at + auto_refresh_days天
-	// 使用兼容SQLite和MySQL的语法：datetime(auto_refresh_begin_at, '+' || auto_refresh_days || ' days')
+	// PostgreSQL 使用: auto_refresh_begin_at + (auto_refresh_days || ' days')::interval
 	query = query.Where("auto_refresh_begin_at IS NOT NULL").
 		Where("auto_refresh_begin_at <= ?", now).
-		Where("datetime(auto_refresh_begin_at, '+' || auto_refresh_days || ' days') >= ?", now)
+		Where("(auto_refresh_begin_at + (auto_refresh_days || ' days')::interval) >= ?", now)
 
 	list := make([]*models.MountPoint, 0)
 

@@ -40,7 +40,7 @@ var once sync.Once
 
 func Get() *RuntimeConfig {
 	once.Do(func() {
-		conf.MustLoad(configPath, c)
+		conf.MustLoad(configPath, c, conf.UseEnv())
 	})
 
 	return &RuntimeConfig{

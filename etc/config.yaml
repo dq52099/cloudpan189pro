@@ -3,25 +3,20 @@ dbFile: "data/data.db"
 logFile: "logs/share.log"
 mediaDir: "media_dir"
 # 数据库类型: sqlite, mysql, postgresql
-# sqlite: 使用 dbFile 指定的文件数据库
-# mysql/postgresql: 使用下方 postgres 配置
 dbType: "sqlite"
-# SQLite 配置
-# sqlite 配置使用上述 dbFile 路径
-# MySQL/PostgreSQL 配置
+postgres:
+  host: "localhost"
+  port: 5432
+  user: "postgres"
+  pass: "postgres"
+  dbName: "share"
+  sslMode: "disable"
 mysql:
   host: "192.168.31.51"
   port: 3306
   user: "root"
   pass: "password"
   dbName: "share"
-postgres:
-  host: "192.168.31.51"
-  port: 5432
-  user: "postgres"
-  pass: "postgres"
-  dbName: "share"
-  sslMode: "disable"
 taskEngine:
   workerCount: 4
   bufferSize: 89120

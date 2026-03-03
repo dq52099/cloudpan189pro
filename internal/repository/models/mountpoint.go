@@ -13,12 +13,12 @@ type MountPoint struct {
 	FullPath           string     `gorm:"column:full_path;type:text;default:''" json:"fullPath"`
 	EnableAutoRefresh  bool       `gorm:"column:enable_auto_refresh;not null;default:false" json:"enableAutoRefresh"`
 	AutoRefreshDays    int        `gorm:"column:auto_refresh_days;not null;default:7;comment:'单位:刷新持续天数'" json:"autoRefreshDays"`
-	AutoRefreshBeginAt *time.Time `gorm:"column:auto_refresh_begin_at;type:datetime;default:null" json:"autoRefreshBeginAt"`
+	AutoRefreshBeginAt *time.Time `gorm:"column:auto_refresh_begin_at;type:timestamp;default:null" json:"autoRefreshBeginAt"`
 	RefreshInterval    int        `gorm:"column:refresh_interval;not null;default:30;comment:'单位:分钟，最小值30'" json:"refreshInterval"`
 	EnableDeepRefresh  bool       `gorm:"column:enable_deep_refresh;not null;default:false" json:"enableDeepRefresh"`
 	LastState          string     `gorm:"column:last_state;type:varchar(1024);not null;default:'成功'" json:"lastState"`
-	CreatedAt          time.Time  `gorm:"column:created_at;autoCreateTime;type:datetime;default:CURRENT_TIMESTAMP" json:"createdAt"`
-	UpdatedAt          time.Time  `gorm:"column:updated_at;autoUpdateTime;type:datetime;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
+	CreatedAt          time.Time  `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
+	UpdatedAt          time.Time  `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
 }
 
 func (m *MountPoint) TableName() string {

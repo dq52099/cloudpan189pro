@@ -12,13 +12,13 @@ import (
 type Setting struct {
 	ID          int64           `gorm:"primaryKey" json:"id"`
 	Title       string          `gorm:"column:title;type:varchar(255);not null" json:"title"`
-	EnableAuth  bool            `gorm:"column:enable_auth;type:tinyint(1);default:1" json:"enableAuth"` // 是否启用鉴权 1 启用 0 不启用
+	EnableAuth  bool            `gorm:"column:enable_auth;type:boolean;default:true" json:"enableAuth"` // 是否启用鉴权 1 启用 0 不启用
 	SaltKey     string          `gorm:"column:salt_key;type:varchar(255);not null" json:"-"`
 	BaseURL     string          `gorm:"column:base_url;type:varchar(255);not null;default:''" json:"baseURL"` // base url
-	Initialized bool            `gorm:"column:initialized;type:tinyint(1);default:0" json:"initialized"`      // 是否初始化完成
+	Initialized bool            `gorm:"column:initialized;type:boolean;default:false" json:"initialized"`     // 是否初始化完成
 	Addition    SettingAddition `gorm:"column:addition;type:json" json:"addition" swaggertype:"object"`
-	CreatedAt   time.Time       `gorm:"column:created_at;autoCreateTime;type:datetime;default:CURRENT_TIMESTAMP" json:"createdAt"`
-	UpdatedAt   time.Time       `gorm:"column:updated_at;autoUpdateTime;type:datetime;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
+	CreatedAt   time.Time       `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
+	UpdatedAt   time.Time       `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
 }
 
 func (s *Setting) TableName() string {

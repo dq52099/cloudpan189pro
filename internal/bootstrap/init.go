@@ -19,6 +19,55 @@ import (
 	"gorm.io/gorm"
 )
 
+func ensurePostgresDB(c *configs.Config) error {
+	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=postgres port=%d sslmode=%s TimeZone=Asia/Shanghai",
+		c.Postgres.Host,
+		c.Postgres.User,
+		c.Postgres.Pass,
+		c.Postgres.Port,
+		c.Postgres.SSLMode,
+	)
+
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return errors.Wrap(err, "failed to connect to postgres database")
+	}
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM pg_database WHERE datname = ?", c.Postgres.DBName).Scan(&count)
+	if count == 0 {
+		db.Exec(fmt.Sprintf("CREATE DATABASE %s", c.Postgres.DBName))
+	}
+
+	sqlDB, _ := db.DB()
+	sqlDB.Close()
+	return nil
+}
+
+func ensureMySQLDB(c *configs.Config) error {
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/mysql?charset=utf8mb4&parseTime=True&loc=Local",
+		c.MySQL.User,
+		c.MySQL.Pass,
+		c.MySQL.Host,
+		c.MySQL.Port,
+	)
+
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return errors.Wrap(err, "failed to connect to mysql database")
+	}
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?", c.MySQL.DBName).Scan(&count)
+	if count == 0 {
+		db.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", c.MySQL.DBName))
+	}
+
+	sqlDB, _ := db.DB()
+	sqlDB.Close()
+	return nil
+}
+
 func useSQLiteDB(c *configs.Config) (db *gorm.DB, err error) {
 	dir := filepath.Dir(c.DBFile)
 	if err = os.MkdirAll(dir, 0766); err != nil {
@@ -43,6 +92,10 @@ func useSQLiteDB(c *configs.Config) (db *gorm.DB, err error) {
 func useMySqlDB(c *configs.Config) (db *gorm.DB, err error) {
 	if c.MySQL == nil {
 		return nil, errors.New("MySQL configuration is required when using MySQL database")
+	}
+
+	if err = ensureMySQLDB(c); err != nil {
+		return nil, err
 	}
 
 	// 构建 MySQL DSN (Data Source Name)
@@ -78,6 +131,10 @@ func usePostgresDB(c *configs.Config) (db *gorm.DB, err error) {
 		return nil, errors.New("PostgreSQL configuration is required when using PostgreSQL database")
 	}
 
+	if err = ensurePostgresDB(c); err != nil {
+		return nil, err
+	}
+
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=Asia/Shanghai",
 		c.Postgres.Host,
 		c.Postgres.User,
@@ -101,6 +158,15 @@ func usePostgresDB(c *configs.Config) (db *gorm.DB, err error) {
 
 	if err = db.Use(new(TracePlugin)); err != nil {
 		return nil, errors.Wrap(err, "failed to register trace plugin")
+	}
+
+	if ShouldMigrateData(c) {
+		fmt.Println("检测到 SQLite 数据，正在迁移到 PostgreSQL...")
+		if err := MigrateFromSQLite(c); err != nil {
+			fmt.Printf("数据迁移失败: %v\n", err)
+		} else {
+			fmt.Println("数据迁移完成!")
+		}
 	}
 
 	return db, nil

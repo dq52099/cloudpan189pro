@@ -1,0 +1,41 @@
+services:
+  app:
+    image: daiqian520/cloudpan189pro
+    container_name: cloudpan189pro
+    restart: unless-stopped
+    ports:
+      - "12395:12395"
+    volumes:
+      - ./etc/config.yaml:/app/etc/config.yaml:ro
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./media_dir:/app/media_dir
+    environment:
+      - TZ=Asia/Shanghai
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - cloudpan189
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: cloudpan189pro-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=share
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cloudpan189
+
+networks:
+  cloudpan189:
+    driver: bridge
