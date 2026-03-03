@@ -11,7 +11,7 @@ import (
 
 type batchModifyTokenRequest struct {
 	IDs     []int64 `json:"ids" binding:"required,min=1"`
-	TokenID int64   `json:"tokenId" binding:"required"` // 新的令牌ID
+	TokenID int64   `json:"tokenId"` // 新的令牌ID，0 表示解绑
 }
 
 // BatchModifyToken 批量修改存储挂载点令牌

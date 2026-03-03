@@ -1142,7 +1142,12 @@ const handleBatchRefresh = (deep: boolean) => {
 
 // 确认批量修改令牌
 const handleBatchModifyTokenConfirm = () => {
-  if (selectedIds.value.length === 0 || !batchModifyTokenId.value) return
+  if (
+    selectedIds.value.length === 0 ||
+    batchModifyTokenId.value === null ||
+    batchModifyTokenId.value === undefined
+  )
+    return
 
   modifyTokenSubmitting.value = true
 
