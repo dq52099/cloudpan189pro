@@ -83,6 +83,45 @@ tail -10 logs/share.log
 
 ---
 
+## Docker 部署
+
+### SQLite 版本（推荐）
+```bash
+# 1. 创建目录结构
+mkdir -p cloudpan189pro/{etc,data,logs,media_dir}
+
+# 2. 复制配置文件
+cp etc/config.yaml etc/config.yaml.bak
+# 编辑 etc/config.yaml，确保 dbType 为 sqlite
+
+# 3. 启动服务
+docker-compose -f docker-compose.sqlite.yml up -d
+```
+
+### PostgreSQL 版本
+```bash
+docker-compose -f docker-compose.yml up -d
+```
+
+---
+
+## 配置文件说明
+
+### config.yaml（SQLite 默认）
+```yaml
+port: 12395
+dbFile: "data/data.db"
+logFile: "logs/share.log"
+mediaDir: "media_dir"
+# 数据库类型: sqlite, mysql, postgresql
+dbType: "sqlite"
+```
+
+### 切换数据库
+修改 `dbType` 为 `sqlite`、`mysql` 或 `postgresql`，并配置对应的连接信息。
+
+---
+
 ## 常见问题
 
 ### Q1: 修改了代码但不生效
@@ -106,34 +145,13 @@ tail -10 logs/share.log
 
 ---
 
-## 完整示例：添加新功能后的构建流程
-
-```bash
-# 1. 修改代码...
-
-# 2. 构建前端
-cd fe && npm run build
-
-# 3. 编译后端
-cd .. && go build -o share.exe ./cmd/main.go
-
-# 4. 重启服务
-# 4.1 查找进程
-netstat -ano | findstr ":12395 "
-# 4.2 停止旧进程
-taskkill /F /PID <PID>
-# 4.3 启动新进程
-start /b "" ./share.exe
-
-# 5. 验证
-tail -10 logs/share.log
-```
-
----
-
 ## 快速命令汇总
 
 ```bash
 # 完整构建流程（单行）
 cd fe && npm run build && cd .. && go build -o share.exe ./cmd/main.go
+
+# Docker 构建并推送
+docker build -t dq52099/cloudpan189pro:latest .
+docker push dq52099/cloudpan189pro:latest
 ```

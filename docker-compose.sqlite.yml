@@ -1,0 +1,18 @@
+services:
+  app:
+    image: dq52099/cloudpan189pro:latest
+    container_name: cloudpan189pro
+    restart: unless-stopped
+    ports:
+      - "12395:12395"
+    volumes:
+      - ./etc/config.yaml:/app/etc/config.yaml:ro
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./media_dir:/app/media_dir
+    environment:
+      - TZ=Asia/Shanghai
+
+networks:
+  cloudpan189:
+    driver: bridge
