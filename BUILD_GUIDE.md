@@ -85,22 +85,87 @@ tail -10 logs/share.log
 
 ## Docker 部署
 
-### SQLite 版本（推荐）
+### 快速启动（SQLite 版本）
+
 ```bash
-# 1. 创建目录结构
+# 1. 创建目录
 mkdir -p cloudpan189pro/{etc,data,logs,media_dir}
 
-# 2. 复制配置文件
-cp etc/config.yaml etc/config.yaml.bak
-# 编辑 etc/config.yaml，确保 dbType 为 sqlite
+# 2. 创建 docker-compose.yml
+cat > docker-compose.yml << 'EOF'
+services:
+  app:
+    image: dq52099/cloudpan189pro:latest
+    container_name: cloudpan189pro
+    restart: unless-stopped
+    ports:
+      - "12395:12395"
+    volumes:
+      - ./etc/config.yaml:/app/etc/config.yaml:ro
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./media_dir:/app/media_dir
+    environment:
+      - TZ=Asia/Shanghai
+EOF
 
-# 3. 启动服务
-docker-compose -f docker-compose.sqlite.yml up -d
+# 3. 创建 config.yaml
+cat > etc/config.yaml << 'EOF'
+port: 12395
+dbFile: "data/data.db"
+logFile: "logs/share.log"
+mediaDir: "media_dir"
+dbType: "sqlite"
+EOF
+
+# 4. 启动服务
+docker-compose up -d
 ```
 
 ### PostgreSQL 版本
-```bash
-docker-compose -f docker-compose.yml up -d
+
+```yaml
+services:
+  app:
+    image: dq52099/cloudpan189pro:latest
+    container_name: cloudpan189pro
+    restart: unless-stopped
+    ports:
+      - "12395:12395"
+    volumes:
+      - ./etc/config.yaml:/app/etc/config.yaml:ro
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./media_dir:/app/media_dir
+    environment:
+      - TZ=Asia/Shanghai
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - cloudpan189
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: cloudpan189pro-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=share
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cloudpan189
+
+networks:
+  cloudpan189:
+    driver: bridge
 ```
 
 ---
@@ -119,6 +184,22 @@ dbType: "sqlite"
 
 ### 切换数据库
 修改 `dbType` 为 `sqlite`、`mysql` 或 `postgresql`，并配置对应的连接信息。
+
+---
+
+## 构建 Docker 镜像
+
+```bash
+# 克隆代码
+git clone https://github.com/dq52099/cloudpan189pro.git
+cd cloudpan189pro
+
+# 构建镜像
+docker build -t dq52099/cloudpan189pro:latest .
+
+# 推送镜像
+docker push dq52099/cloudpan189pro:latest
+```
 
 ---
 
@@ -143,15 +224,45 @@ dbType: "sqlite"
 2. 强制刷新：`Ctrl+Shift+R`（Chrome）
 3. 清除浏览器缓存
 
+### Q4: Docker 部署后数据持久化
+
+确保挂载了以下卷：
+- `./data` - 数据库文件
+- `./media_dir` - 媒体文件
+- `./logs` - 日志文件
+
 ---
 
-## 快速命令汇总
+## 飞牛NAS 部署
 
 ```bash
-# 完整构建流程（单行）
-cd fe && npm run build && cd .. && go build -o share.exe ./cmd/main.go
+# 1. 在飞牛NAS上创建项目目录
+mkdir -p /mnt/storage/appdata/cloudpan189pro/{etc,data,logs,media_dir}
 
-# Docker 构建并推送
-docker build -t dq52099/cloudpan189pro:latest .
-docker push dq52099/cloudpan189pro:latest
+# 2. 复制配置文件到挂载目录
+# 编辑 etc/config.yaml 确保 dbType: "sqlite"
+
+# 3. 启动容器
+docker run -d \
+  --name cloudpan189pro \
+  --restart unless-stopped \
+  -p 12395:12395 \
+  -v /mnt/storage/appdata/cloudpan189pro/etc:/app/etc:ro \
+  -v /mnt/storage/appdata/cloudpan189pro/data:/app/data \
+  -v /mnt/storage/appdata/cloudpan189pro/logs:/app/logs \
+  -v /mnt/storage/appdata/cloudpan189pro/media_dir:/app/media_dir \
+  -e TZ=Asia/Shanghai \
+  dq52099/cloudpan189pro:latest
+```
+
+或使用 docker-compose：
+```bash
+# 创建目录
+mkdir -p /mnt/storage/appdata/cloudpan189pro/{etc,data,logs,media_dir}
+
+# 复制 docker-compose.yml 和 config.yaml
+
+# 启动
+cd /mnt/storage/appdata/cloudpan189pro
+docker-compose up -d
 ```
