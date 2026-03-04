@@ -124,7 +124,36 @@ Configuration files in `etc/` directory:
 - `/api/storage/*` - Storage management
 - `/api/setting/*` - System settings
 - `/api/media/*` - Media management
+- `/api/telegram/*` - Telegram Bot management
 - `/dav/*` - WebDAV interface
+
+### New Features (v2.0+)
+
+#### Telegram Bot Support
+- Bot commands: `/start`, `/help`
+- Auto-recognize 189 share links
+- HTTP/HTTPS/SOCKS5 proxy support (env: `TG_PROXY`)
+- Configuration: `/api/telegram/setting`, `/api/telegram/test`, `/api/telegram/users`
+
+#### TMDB + Douban Subscription System
+- Daily hot resources from TMDB (movie/popular, tv/popular)
+- Douban hot movie subscription
+- Keyword subscription support
+- AI-powered auto-upgrade via OpenAI (search higher quality resources)
+- Pan search integration (default: https://tg.252035.xyz)
+
+#### OpenAI Integration
+- API key from env: `OPENAI_API_KEY`
+- Base URL configurable (default: https://api.openai.com)
+- Model configurable (default: gpt-4o-mini)
+- Used for generating optimized search keywords for quality upgrades
+
+#### Database Models (New)
+- `telegram_settings` - Telegram Bot configuration
+- `telegram_users` - Telegram user management
+- `subscriptions` - Subscription management
+- `match_history` - Resource matching history
+- `daily_hot_history` - Daily hot resource processing history
 
 ### Development Notes
 

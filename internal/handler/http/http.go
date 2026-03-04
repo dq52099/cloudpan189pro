@@ -3,12 +3,14 @@ package http
 import (
 	"io/fs"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	embed "github.com/xxcheng123/cloudpan189-share"
 	"github.com/xxcheng123/cloudpan189-share/internal/handler/http/taskstate"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/loginlog"
+	"gorm.io/gorm"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/handler/http/autoingest"
 	"github.com/xxcheng123/cloudpan189-share/internal/handler/http/cloudtoken"
@@ -24,6 +26,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/handler/http/user"
 
+	telegramHandler "github.com/xxcheng123/cloudpan189-share/internal/handler/http/telegram"
 	autoingestlogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestlog"
 	autoingestplanSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestplan"
 	cloudbridgeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
@@ -36,6 +39,7 @@ import (
 	mountPointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 	settingSvi "github.com/xxcheng123/cloudpan189-share/internal/services/setting"
 	storagefacadeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/storagefacade"
+	telegramSvi "github.com/xxcheng123/cloudpan189-share/internal/services/telegram"
 	userSvi "github.com/xxcheng123/cloudpan189-share/internal/services/user"
 	userGroupSvi "github.com/xxcheng123/cloudpan189-share/internal/services/usergroup"
 	verifySvi "github.com/xxcheng123/cloudpan189-share/internal/services/verify"
@@ -74,7 +78,14 @@ func Start(svc bootstrap.ServiceContext) {
 		loginLogService       = loginlogSvi.NewService(svc)
 		mediaConfigService    = mediaconfigSvi.NewService(svc)
 		mediaFileService      = mediafileSvi.NewService(svc)
+		telegramService       = telegramSvi.NewService(os.Getenv("TG_BOT_TOKEN"), os.Getenv("TG_CHAT_ID"), os.Getenv("TG_PROXY"), os.Getenv("TG_PROXY_TYPE"), "", svc.GetLogger("telegram"))
 	)
+
+	// 获取原始 GORM DB
+	var db *gorm.DB
+	if sc, ok := svc.(interface{ GetDB() *gorm.DB }); ok {
+		db = sc.GetDB()
+	}
 
 	var (
 		userHandler           = user.NewHandler(userService, userGroupService, loginLogService)
@@ -85,10 +96,11 @@ func Start(svc bootstrap.ServiceContext) {
 		cloudTokenHandler     = cloudtoken.NewHandler(cloudTokenService, mountPointService)
 		fileHandler           = file.NewHandler(virtualFileService, verifyService, cloudTokenService, cloudBridgeService, mountPointService, group2FileService, taskEngine)
 
-		taskStateHandler  = taskstate.NewHandler(taskEngine, fileTaskLogService)
-		autoIngestHandler = autoingest.NewHandler(taskEngine, autoIngestPlanService, autoIngestLogService, cloudBridgeService)
-		loginLogHandler   = loginlogHandler.NewHandler(loginLogService)
-		mediaHandler      = media.NewHandler(mediaConfigService, mediaFileService, mountPointService, virtualFileService, verifyService, taskEngine)
+		taskStateHandler    = taskstate.NewHandler(taskEngine, fileTaskLogService)
+		autoIngestHandler   = autoingest.NewHandler(taskEngine, autoIngestPlanService, autoIngestLogService, cloudBridgeService)
+		loginLogHandler     = loginlogHandler.NewHandler(loginLogService)
+		mediaHandler        = media.NewHandler(mediaConfigService, mediaFileService, mountPointService, virtualFileService, verifyService, taskEngine)
+		telegramHTTPHandler = telegramHandler.NewHandler(db, telegramService, svc.GetLogger("telegram-http"))
 	)
 
 	var (
@@ -251,6 +263,18 @@ func Start(svc bootstrap.ServiceContext) {
 			mediaRouter.POST("/config/toggle", wrap(mediaHandler.ConfigToggle()))
 			mediaRouter.POST("/clear", wrap(mediaHandler.Clear()))
 			mediaRouter.POST("/rebuild_strm_file", wrap(mediaHandler.RebuildStrmFile()))
+		}
+	}
+
+	{
+		telegramRouter := openapiRouter.Group("/telegram", wrap(userMiddleware.Auth(true)))
+		{
+			telegramRouter.GET("/setting", wrap(telegramHTTPHandler.GetSetting()))
+			telegramRouter.POST("/setting", wrap(telegramHTTPHandler.UpdateSetting()))
+			telegramRouter.POST("/test", wrap(telegramHTTPHandler.TestConnection()))
+			telegramRouter.GET("/users", wrap(telegramHTTPHandler.GetUserList()))
+			telegramRouter.POST("/user", wrap(telegramHTTPHandler.UpdateUser()))
+			telegramRouter.POST("/send", wrap(telegramHTTPHandler.SendMessage()))
 		}
 	}
 
