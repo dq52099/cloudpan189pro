@@ -43,18 +43,22 @@ func main() {
 		panic(err)
 	}
 
-	http.Start(svc)
-	dav.Start(svc)
-
 	// 初始化扩展服务（Telegram, TMDB, Douban, OpenAI, Subscription）
 	ctx := context.NewContext(stdContext.Background())
 	extServices, err := bootstrap.InitExtensionServices(svc.GetDB(ctx), svc.GetLogger("extension"), cfg.Config)
 	if err != nil {
 		logger.Warn("初始化扩展服务失败", zap.Error(err))
+		extServices = nil
 	} else {
 		logger.Info("扩展服务初始化成功")
+	}
 
-		// 启动 Telegram Bot
+	// 启动 HTTP 服务
+	http.Start(svc, extServices)
+	dav.Start(svc)
+
+	// 启动 Telegram Bot
+	if extServices != nil {
 		if err = extServices.StartTelegramBot(); err != nil {
 			logger.Warn("启动 Telegram Bot 失败", zap.Error(err))
 		} else {

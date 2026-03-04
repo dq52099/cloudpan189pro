@@ -68,16 +68,44 @@ func InitExtensionServices(db *gorm.DB, logger *zap.Logger, cfg *configs.Config)
 	ext.Douban = douban.NewService(logger.Named("douban"))
 
 	// 5. 初始化 OpenAI 服务
-	openaiAPIKey := os.Getenv("OPENAI_API_KEY")
-	openaiBaseURL := os.Getenv("OPENAI_BASE_URL")
-	openaiModel := os.Getenv("OPENAI_MODEL")
+	// 优先级：环境变量 > 配置文件
+	openaiAPIKey := cfg.OpenAI.APIKey
+	openaiBaseURL := cfg.OpenAI.BaseURL
+	openaiModel := cfg.OpenAI.Model
+	if envToken := os.Getenv("OPENAI_API_KEY"); envToken != "" {
+		openaiAPIKey = envToken
+	}
+	if envBaseURL := os.Getenv("OPENAI_BASE_URL"); envBaseURL != "" {
+		openaiBaseURL = envBaseURL
+	}
+	if envModel := os.Getenv("OPENAI_MODEL"); envModel != "" {
+		openaiModel = envModel
+	}
 	ext.OpenAI = openai.NewService(logger.Named("openai"), openaiAPIKey, openaiBaseURL, openaiModel)
 
 	// 6. 初始化 Subscription 服务
+	// 优先级：环境变量 > 配置文件
+	panSearchURL := "https://tg.252035.xyz"
+	enableTMDB := true
+	enableDouban := true
+	if cfg.Subscription != nil {
+		panSearchURL = cfg.Subscription.PanSearchURL
+		enableTMDB = cfg.Subscription.EnableTMDB
+		enableDouban = cfg.Subscription.EnableDouban
+	}
+	if envURL := os.Getenv("PAN_SEARCH_URL"); envURL != "" {
+		panSearchURL = envURL
+	}
+	if envTMDB := os.Getenv("SUBSCRIPTION_ENABLE_TMDB"); envTMDB != "" {
+		enableTMDB = envTMDB == "true"
+	}
+	if envDouban := os.Getenv("SUBSCRIPTION_ENABLE_DOUBAN"); envDouban != "" {
+		enableDouban = envDouban == "true"
+	}
 	subscriptionConfig := &subscription.SubscriptionConfig{
-		PanSearchURL: cfg.Subscription.PanSearchURL,
-		EnableTMDB:   cfg.Subscription.EnableTMDB,
-		EnableDouban: cfg.Subscription.EnableDouban,
+		PanSearchURL: panSearchURL,
+		EnableTMDB:   enableTMDB,
+		EnableDouban: enableDouban,
 	}
 	ext.Subscription = subscription.NewService(db, logger.Named("subscription"), subscriptionConfig)
 

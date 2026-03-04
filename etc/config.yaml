@@ -25,20 +25,20 @@ taskEngine:
 # Telegram Bot 配置
 # 环境变量优先级: TG_BOT_TOKEN, TG_CHAT_ID, TG_PROXY, TG_PROXY_TYPE
 telegram:
-  botToken: ""           # Bot Token (从 @BotFather 获取)
-  chatID: ""             # 通知群组/用户 ID
-  proxyURL: ""           # 代理地址，如 http://192.168.1.1:7890 或 socks5://192.168.1.1:1080
-  proxyType: ""          # 代理类型: http, https, socks5 (不填则自动识别)
-  apiURL: "https://api.telegram.org"  # Telegram API 地址 (可配置自建代理)
-  defaultMountPath: "/转存"  # 默认挂载路径
-  enableNotify: true     # 是否启用通知
+  botToken: "8789850350:AAH42kd1dkdC660F-ttBIKwq68qRI97PuxM" # 从 @BotFather 获取
+  chatID: "6619753212" # 通知群组/用户 ID
+  proxyURL: "" # 代理地址，如 http://192.168.1.1:7890 或 socks5://192.168.1.1:1080
+  proxyType: "" # 代理类型: http, https, socks5 (不填则自动识别)
+  apiURL: "https://api.telegram.org" # Telegram API 地址 (可配置自建代理)
+  defaultMountPath: "/转存" # 默认挂载路径
+  enableNotify: true # 是否启用通知
 
 # OpenAI 配置 (用于 AI 洗版功能)
 # 环境变量优先级: OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL
 openai:
-  apiKey: ""             # OpenAI API Key
-  baseURL: "https://api.openai.com"  # API 地址 (支持 OpenAI 兼容接口)
-  model: "gpt-4o-mini"  # 默认模型
+  apiKey: "sk-g5y0plZFtkjhOrlU7wm8W8toazHBeUbfzPi1MebBrs2xbjPK" # OpenAI API Key
+  baseURL: "https://open.cherryin.net/v1"  # API 地址 (支持 OpenAI 兼容接口)
+  model: "agent/deepseek-v3.2"  # 默认模型
 
 # 订阅配置 (每日热门资源自动抓取)
 subscription:

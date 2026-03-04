@@ -286,6 +286,16 @@ const menuOptions = computed((): MenuOption[] => {
       icon: () => h(NIcon, null, { default: () => h(ExtensionsIcon) }),
     },
     {
+      label: 'Telegram Bot',
+      key: '/@dashboard/telegram',
+      icon: () => h(NIcon, null, { default: () => h(ExtensionsIcon) }),
+    },
+    {
+      label: '订阅管理',
+      key: '/@dashboard/subscriptions',
+      icon: () => h(NIcon, null, { default: () => h(ExtensionsIcon) }),
+    },
+    {
       label: '聚合日志',
       key: '/@dashboard/logs',
       icon: () => h(NIcon, null, { default: () => h(TaskLogIcon) }),

@@ -10,7 +10,6 @@ import (
 	embed "github.com/xxcheng123/cloudpan189-share"
 	"github.com/xxcheng123/cloudpan189-share/internal/handler/http/taskstate"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/loginlog"
-	"gorm.io/gorm"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/handler/http/autoingest"
 	"github.com/xxcheng123/cloudpan189-share/internal/handler/http/cloudtoken"
@@ -46,7 +45,7 @@ import (
 	virtualfileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/virtualfile"
 )
 
-func Start(svc bootstrap.ServiceContext) {
+func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionServices) {
 	const (
 		handlerName = "http"
 	)
@@ -78,14 +77,26 @@ func Start(svc bootstrap.ServiceContext) {
 		loginLogService       = loginlogSvi.NewService(svc)
 		mediaConfigService    = mediaconfigSvi.NewService(svc)
 		mediaFileService      = mediafileSvi.NewService(svc)
-		telegramService       = telegramSvi.NewService(os.Getenv("TG_BOT_TOKEN"), os.Getenv("TG_CHAT_ID"), os.Getenv("TG_PROXY"), os.Getenv("TG_PROXY_TYPE"), "", svc.GetLogger("telegram"))
 	)
 
-	// 获取原始 GORM DB
-	var db *gorm.DB
-	if sc, ok := svc.(interface{ GetDB() *gorm.DB }); ok {
-		db = sc.GetDB()
+	// Telegram 服务：优先使用 extensionServices 中已启动的服务
+	var telegramService telegramSvi.Service
+	if extServices != nil && extServices.Telegram != nil {
+		telegramService = extServices.Telegram
+	} else {
+		// 备用：使用环境变量创建
+		telegramService = telegramSvi.NewService(
+			os.Getenv("TG_BOT_TOKEN"),
+			os.Getenv("TG_CHAT_ID"),
+			os.Getenv("TG_PROXY"),
+			os.Getenv("TG_PROXY_TYPE"),
+			os.Getenv("TG_API_URL"),
+			svc.GetLogger("telegram"),
+		)
 	}
+
+	// 获取原始 GORM DB
+	db := svc.GetDBWithoutContext()
 
 	var (
 		userHandler           = user.NewHandler(userService, userGroupService, loginLogService)

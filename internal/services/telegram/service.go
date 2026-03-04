@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -444,9 +445,52 @@ func (s *service) handleCommand(cmd string, chatID, userID int64) {
 func (s *service) handleShareLink(link string, chatID, userID int64) {
 	s.sendMessageToChat(chatID, "收到分享链接，正在处理...")
 
-	// 这里调用挂载服务处理链接
-	// TODO: 集成挂载服务
-	s.sendMessageToChat(chatID, fmt.Sprintf("链接已收到: %s\n\n注意: 挂载功能需要通过 Web 界面配置", link))
+	re := regexp.MustCompile(`cloud\.189\.cn\/t\/([a-zA-Z0-9]+)`)
+	matches := re.FindStringSubmatch(link)
+	if len(matches) < 2 {
+		s.sendMessageToChat(chatID, "无法识别分享链接，请检查链接格式")
+		return
+	}
+	shareCode := matches[1]
+
+	apiURL := fmt.Sprintf("http://127.0.0.1:12395/api/storage/advance/share_info?shareCode=%s", shareCode)
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		s.sendMessageToChat(chatID, fmt.Sprintf("解析失败: %v", err))
+		return
+	}
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		s.sendMessageToChat(chatID, fmt.Sprintf("解析失败: %v", err))
+		return
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		s.sendMessageToChat(chatID, fmt.Sprintf("解析失败: %v", err))
+		return
+	}
+
+	data, ok := result["data"].(map[string]interface{})
+	if !ok {
+		s.sendMessageToChat(chatID, "无法获取分享信息")
+		return
+	}
+
+	name := data["name"].(string)
+	shareID := int64(data["shareId"].(float64))
+	fileID := data["id"].(string)
+
+	msg := fmt.Sprintf(`✅ <b>分享链接解析成功</b>
+
+📁 名称: %s
+🔗 ShareID: %d
+📂 FileID: %s
+
+请通过 Web 界面创建挂载点，或使用批量添加功能。`, name, shareID, fileID)
+	s.sendMessageToChat(chatID, msg)
 }
 
 func (s *service) sendMessageToChat(chatID int64, text string) {

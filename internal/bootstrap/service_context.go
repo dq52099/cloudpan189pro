@@ -17,6 +17,7 @@ import (
 
 type ServiceContext interface {
 	GetDB(ctx context.Context) *gorm.DB
+	GetDBWithoutContext() *gorm.DB
 	GetLogger(name string, fields ...zap.Field) *zap.Logger
 	Close()
 	GetPort() int
@@ -34,6 +35,10 @@ type serviceContext struct {
 
 func (s *serviceContext) GetDB(ctx context.Context) *gorm.DB {
 	return s.db.WithContext(ctx)
+}
+
+func (s *serviceContext) GetDBWithoutContext() *gorm.DB {
+	return s.db
 }
 
 func (s *serviceContext) GetLogger(name string, fields ...zap.Field) *zap.Logger {
@@ -129,6 +134,10 @@ type mockServiceContext struct {
 }
 
 func (m *mockServiceContext) GetDB(ctx context.Context) *gorm.DB {
+	return nil
+}
+
+func (m *mockServiceContext) GetDBWithoutContext() *gorm.DB {
 	return nil
 }
 
