@@ -36,7 +36,8 @@ func InitExtensionServices(db *gorm.DB, logger *zap.Logger, cfg *configs.Config)
 
 	// 2. 初始化 Telegram 服务
 	// 优先级：环境变量 > 数据库配置
-	botToken := telegramSetting.BotTokenEncrypted
+	telegramSetting.BotToken = telegramSetting.BotTokenEncrypted
+	botToken := telegramSetting.BotToken
 	chatID := telegramSetting.ChatID
 	proxyURL := telegramSetting.ProxyURL
 	proxyType := telegramSetting.ProxyType

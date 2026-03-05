@@ -127,11 +127,14 @@ func (d *DailyHotHistory) TableName() string {
 }
 
 type SubscriptionConfig struct {
-	Enabled        bool   `json:"enabled"`
-	CronExpression string `json:"cronExpression"`
-	PanSearchURL   string `json:"panSearchURL"`
-	EnableTMDB     bool   `json:"enableTMDB"`
-	EnableDouban   bool   `json:"enableDouban"`
+	Enabled          bool   `json:"enabled"`
+	CronExpression   string `json:"cronExpression"`
+	PanSearchURL     string `json:"panSearchURL"`
+	EnableTMDB       bool   `json:"enableTMDB"`
+	EnableDouban     bool   `json:"enableDouban"`
+	DefaultMountPath string `json:"defaultMountPath"`
+	AutoMount        bool   `json:"autoMount"`
+	TMDBAPIKey       string `json:"tmdbAPIKey"`
 }
 
 func (sc SubscriptionConfig) Value() (driver.Value, error) {

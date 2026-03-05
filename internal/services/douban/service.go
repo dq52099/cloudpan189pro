@@ -53,17 +53,42 @@ func NewService(logger *zap.Logger) Service {
 }
 
 func (s *service) GetPopularMovies() ([]Subject, error) {
-	apiURL := "https://movie.douban.com/j/search_subjects?type=movie&tag=热门&page_limit=50"
+	apiURL := "https://movie.douban.com/j/search_subjects?type=movie&tag=热门&page_limit=50&page_start=0"
+
+	cookieClient := &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return nil
+		},
+	}
+
+	firstReq, _ := http.NewRequestWithContext(context.Background(), "GET", "https://movie.douban.com/", nil)
+	firstReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	firstReq.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	firstReq.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+	resp0, err := cookieClient.Do(firstReq)
+	if err == nil {
+		resp0.Body.Close()
+	}
 
 	req, err := http.NewRequestWithContext(context.Background(), "GET", apiURL, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	req.Header.Set("Referer", "https://movie.douban.com")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
+	req.Header.Set("Referer", "https://movie.douban.com/")
+	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("Cache-Control", "no-cache")
 
-	resp, err := s.client.Do(req)
+	for _, cookie := range resp0.Cookies() {
+		req.AddCookie(cookie)
+	}
+
+	resp, err := cookieClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -152,12 +153,32 @@ func (h *Handler) UpdateSetting() httpcontext.HandlerFunc {
 
 func (h *Handler) TestConnection() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
-		if h.service == nil || !h.service.IsEnabled() {
-			c.Fail(invalidParams(&customBusinessError{httpCode: http.StatusBadRequest, message: "Telegram bot is not enabled"}))
+		var setting models.TelegramSetting
+		if err := h.db.First(&setting).Error; err != nil {
+			c.Fail(invalidParams(fmt.Errorf("failed to get settings: %w", err)))
 			return
 		}
 
-		err := h.service.TestConnection()
+		if setting.BotToken == "" && setting.BotTokenEncrypted == "" || !setting.Enable {
+			c.Fail(invalidParams(&customBusinessError{httpCode: http.StatusBadRequest, message: "Telegram bot is not enabled or token not configured"}))
+			return
+		}
+
+		token := setting.BotToken
+		if token == "" {
+			token = setting.BotTokenEncrypted
+		}
+
+		testService := telegram.NewService(
+			token,
+			setting.ChatID,
+			setting.ProxyURL,
+			setting.ProxyType,
+			setting.APIURL,
+			h.logger,
+		)
+
+		err := testService.TestConnection()
 		if err != nil {
 			c.Fail(invalidParams(err))
 			return
@@ -223,12 +244,32 @@ func (h *Handler) SendMessage() httpcontext.HandlerFunc {
 			return
 		}
 
-		if h.service == nil || !h.service.IsEnabled() {
-			c.Fail(invalidParams(&customBusinessError{httpCode: http.StatusBadRequest, message: "Telegram bot is not enabled"}))
+		var setting models.TelegramSetting
+		if err := h.db.First(&setting).Error; err != nil {
+			c.Fail(invalidParams(fmt.Errorf("failed to get settings: %w", err)))
 			return
 		}
 
-		err := h.service.SendMessage(req.Message)
+		if (setting.BotToken == "" && setting.BotTokenEncrypted == "") || !setting.Enable {
+			c.Fail(invalidParams(&customBusinessError{httpCode: http.StatusBadRequest, message: "Telegram bot is not enabled or token not configured"}))
+			return
+		}
+
+		token := setting.BotToken
+		if token == "" {
+			token = setting.BotTokenEncrypted
+		}
+
+		msgService := telegram.NewService(
+			token,
+			setting.ChatID,
+			setting.ProxyURL,
+			setting.ProxyType,
+			setting.APIURL,
+			h.logger,
+		)
+
+		err := msgService.SendMessage(req.Message)
 		if err != nil {
 			c.Fail(invalidParams(err))
 			return

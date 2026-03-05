@@ -90,6 +90,26 @@ const router = createRouter({
           },
         },
         {
+          path: 'telegram',
+          name: 'Telegram',
+          component: () => import('@/views/dashboard/telegram/index.vue'),
+          meta: {
+            title: 'Telegram Bot',
+            requiresAuth: true,
+            requiresAdmin: true,
+          },
+        },
+        {
+          path: 'subscriptions',
+          name: 'Subscriptions',
+          component: () => import('@/views/dashboard/subscriptions/index.vue'),
+          meta: {
+            title: '订阅管理',
+            requiresAuth: true,
+            requiresAdmin: true,
+          },
+        },
+        {
           path: 'settings',
           name: 'Settings',
           component: () => import('@/views/dashboard/settings/index.vue'),

@@ -18,3 +18,5 @@ fe/node_modules
 fe/llm-prompt.txt
 fe/dist
 fe/.idea
+/assets
+/build

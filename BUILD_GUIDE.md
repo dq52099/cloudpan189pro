@@ -43,7 +43,65 @@ ls -la share.exe
 
 ## 步骤 3：重启服务
 
-### 查找当前进程
+### 方式一：一键构建并重启（推荐）
+
+```bash
+# 创建构建脚本
+cat > build_and_restart.sh << 'EOF'
+#!/bin/bash
+
+echo "=== 开始构建 ==="
+
+# 1. 构建前端
+echo "[1/3] 构建前端..."
+cd fe
+npm run build
+cd ..
+
+# 2. 构建后端
+echo "[2/3] 编译后端..."
+go build -o share.exe ./cmd/main.go
+
+# 3. 重启服务
+echo "[3/3] 重启服务..."
+
+# 查找并停止旧进程
+if command -v lsof &> /dev/null; then
+    PID=$(lsof -ti:12395)
+elif command -v netstat &> /dev/null; then
+    PID=$(netstat -ano | grep ":12395" | head -1 | awk '{print $NF}')
+fi
+
+if [ -n "$PID" ]; then
+    echo "停止旧进程: $PID"
+    kill -9 $PID 2>/dev/null || taskkill /F /PID $PID 2>/dev/null
+    sleep 2
+fi
+
+# 启动新服务
+mkdir -p logs
+nohup ./share.exe > logs/share.log 2>&1 &
+echo "服务已启动，PID: $!"
+
+# 等待启动
+sleep 3
+
+# 验证
+if grep -q "system running" logs/share.log 2>/dev/null; then
+    echo "✅ 服务启动成功！"
+else
+    echo "⚠️ 请检查日志 logs/share.log"
+fi
+EOF
+
+# 运行
+chmod +x build_and_restart.sh
+./build_and_restart.sh
+```
+
+### 方式二：手动重启
+
+#### 查找当前进程
 ```bash
 # Windows
 netstat -ano | findstr ":12395 "
@@ -52,7 +110,7 @@ netstat -ano | findstr ":12395 "
 lsof -i :12395
 ```
 
-### 停止旧进程
+#### 停止旧进程
 ```bash
 # Windows - 使用 PID
 taskkill /F /PID <PID>
@@ -61,7 +119,7 @@ taskkill /F /PID <PID>
 kill -9 <PID>
 ```
 
-### 启动新服务
+#### 启动新服务
 ```bash
 # Windows
 start /b "" ./share.exe
@@ -73,7 +131,7 @@ start /b "" ./share.exe
 nohup ./share.exe > logs/share.log 2>&1 &
 ```
 
-### 验证启动成功
+#### 验证启动成功
 ```bash
 # 检查日志
 tail -10 logs/share.log

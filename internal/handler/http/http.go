@@ -25,11 +25,13 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/handler/http/user"
 
+	subscriptionHandler "github.com/xxcheng123/cloudpan189-share/internal/handler/http/subscription"
 	telegramHandler "github.com/xxcheng123/cloudpan189-share/internal/handler/http/telegram"
 	autoingestlogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestlog"
 	autoingestplanSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestplan"
 	cloudbridgeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
 	cloudtokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
+	doubanSvi "github.com/xxcheng123/cloudpan189-share/internal/services/douban"
 	filetasklogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/filetasklog"
 	group2fileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/group2file"
 	loginlogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/loginlog"
@@ -39,6 +41,7 @@ import (
 	settingSvi "github.com/xxcheng123/cloudpan189-share/internal/services/setting"
 	storagefacadeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/storagefacade"
 	telegramSvi "github.com/xxcheng123/cloudpan189-share/internal/services/telegram"
+	tmdbSvi "github.com/xxcheng123/cloudpan189-share/internal/services/tmdb"
 	userSvi "github.com/xxcheng123/cloudpan189-share/internal/services/user"
 	userGroupSvi "github.com/xxcheng123/cloudpan189-share/internal/services/usergroup"
 	verifySvi "github.com/xxcheng123/cloudpan189-share/internal/services/verify"
@@ -113,6 +116,18 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 		mediaHandler        = media.NewHandler(mediaConfigService, mediaFileService, mountPointService, virtualFileService, verifyService, taskEngine)
 		telegramHTTPHandler = telegramHandler.NewHandler(db, telegramService, svc.GetLogger("telegram-http"))
 	)
+
+	var tmdbService tmdbSvi.Service
+	var doubanService doubanSvi.Service
+	var openaiService interface {
+		GenerateUpgradeKeyword(title, category string) (string, error)
+	}
+	if extServices != nil {
+		tmdbService = extServices.TMDB
+		doubanService = extServices.Douban
+		openaiService = extServices.OpenAI
+	}
+	subscriptionHTTPHandler := subscriptionHandler.NewHandler(db, tmdbService, doubanService, svc.GetLogger("subscription-http"), openaiService)
 
 	var (
 		userMiddleware = newAuthMiddleware(userService)
@@ -286,6 +301,20 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 			telegramRouter.GET("/users", wrap(telegramHTTPHandler.GetUserList()))
 			telegramRouter.POST("/user", wrap(telegramHTTPHandler.UpdateUser()))
 			telegramRouter.POST("/send", wrap(telegramHTTPHandler.SendMessage()))
+		}
+	}
+
+	{
+		subscriptionRouter := openapiRouter.Group("/subscription", wrap(userMiddleware.Auth(true)))
+		{
+			subscriptionRouter.GET("/tmdb/movies", wrap(subscriptionHTTPHandler.GetTMDbMovies()))
+			subscriptionRouter.GET("/tmdb/tvs", wrap(subscriptionHTTPHandler.GetTMDbTVs()))
+			subscriptionRouter.GET("/douban/movies", wrap(subscriptionHTTPHandler.GetDoubanMovies()))
+			subscriptionRouter.GET("/config", wrap(subscriptionHTTPHandler.GetConfig()))
+			subscriptionRouter.POST("/config", wrap(subscriptionHTTPHandler.UpdateConfig()))
+			subscriptionRouter.GET("/search", wrap(subscriptionHTTPHandler.SearchPan()))
+			subscriptionRouter.GET("/search/ai", wrap(subscriptionHTTPHandler.SearchPanWithAI()))
+			subscriptionRouter.POST("/mount", wrap(subscriptionHTTPHandler.MountSubscription()))
 		}
 	}
 

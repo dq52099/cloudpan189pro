@@ -116,6 +116,10 @@ Configuration files in `etc/` directory:
 - Go tests use standard testing package
 - Test files follow `*_test.go` pattern
 - Example: `internal/services/cloudbridge/fetch_files_test.go`
+- Run service tests: `go test ./internal/services/tmdb/... -v`
+- Run all tests: `go test ./...`
+
+### Unit Tests (New Features)
 
 ### API Endpoints
 

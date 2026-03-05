@@ -16,6 +16,7 @@ type Service interface {
 	GetPopularMovies(page int) ([]Movie, error)
 	GetPopularTVs(page int) ([]TV, error)
 	GetConfig() *Config
+	SetAPIKey(apiKey string)
 }
 
 type Config struct {
@@ -124,6 +125,18 @@ func (s *service) setupProxy() {
 
 func (s *service) GetConfig() *Config {
 	return s.config
+}
+
+func (s *service) SetAPIKey(apiKey string) {
+	s.config.APIKey = apiKey
+	s.logger.Info("TMDB API key updated", zap.String("apiKey", apiKey[:min(10, len(apiKey))]+"..."))
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (s *service) GetPopularMovies(page int) ([]Movie, error) {

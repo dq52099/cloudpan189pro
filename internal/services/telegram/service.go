@@ -90,7 +90,7 @@ func NewService(botToken, chatID, proxyURL, proxyType, apiURL string, logger *za
 		apiURL:    apiURL,
 		logger:    logger,
 		client: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 35 * time.Second,
 		},
 		ctx:      ctx,
 		cancel:   cancel,
@@ -448,8 +448,12 @@ func (s *service) handleShareLink(link string, chatID, userID int64) {
 	re := regexp.MustCompile(`cloud\.189\.cn\/t\/([a-zA-Z0-9]+)`)
 	matches := re.FindStringSubmatch(link)
 	if len(matches) < 2 {
-		s.sendMessageToChat(chatID, "无法识别分享链接，请检查链接格式")
-		return
+		re2 := regexp.MustCompile(`https?://[^/]+/t/([a-zA-Z0-9]+)`)
+		matches = re2.FindStringSubmatch(link)
+		if len(matches) < 2 {
+			s.sendMessageToChat(chatID, "无法识别分享链接，请检查链接格式")
+			return
+		}
 	}
 	shareCode := matches[1]
 
@@ -479,18 +483,91 @@ func (s *service) handleShareLink(link string, chatID, userID int64) {
 		return
 	}
 
-	name := data["name"].(string)
-	shareID := int64(data["shareId"].(float64))
-	fileID := data["id"].(string)
+	name, _ := data["name"].(string)
+	shareIDFloat, ok := data["shareId"].(float64)
+	if !ok {
+		s.sendMessageToChat(chatID, "无法获取ShareID")
+		return
+	}
+	shareID := int64(shareIDFloat)
+	fileID, _ := data["id"].(string)
 
-	msg := fmt.Sprintf(`✅ <b>分享链接解析成功</b>
+	s.sendMessageToChat(chatID, fmt.Sprintf(`📁 名称: %s\n🔗 ShareID: %d\n📂 FileID: %s\n\n正在自动创建挂载点...`, name, shareID, fileID))
 
-📁 名称: %s
+	localPath := fmt.Sprintf("/Telegram/%s", name)
+	if localPath == "/Telegram/" {
+		localPath = fmt.Sprintf("/Telegram/%s", shareCode)
+	}
+
+	batchAddReq := map[string]interface{}{
+		"items": []map[string]interface{}{
+			{
+				"localPath":         localPath,
+				"osType":            "subscribe_share_folder",
+				"shareCode":         shareCode,
+				"fileId":            fileID,
+				"enableDeepRefresh": true,
+			},
+		},
+	}
+	batchAddJSON, err := json.Marshal(batchAddReq)
+	if err != nil {
+		s.sendMessageToChat(chatID, fmt.Sprintf("创建挂载点失败: %v", err))
+		return
+	}
+	apiURL = s.apiURL
+	if apiURL == "" {
+		apiURL = "http://127.0.0.1:12395"
+	}
+	batchAddURL := apiURL + "/api/storage/batch_add"
+	req, err = http.NewRequest("POST", batchAddURL, bytes.NewReader(batchAddJSON))
+	if err != nil {
+		s.sendMessageToChat(chatID, fmt.Sprintf("创建挂载点失败: %v", err))
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err = s.client.Do(req)
+	if err != nil {
+		s.sendMessageToChat(chatID, fmt.Sprintf("创建挂载点失败: %v", err))
+		return
+	}
+	defer resp.Body.Close()
+
+	var batchResult map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&batchResult); err != nil {
+		s.sendMessageToChat(chatID, fmt.Sprintf("创建挂载点失败: %v", err))
+		return
+	}
+
+	if batchResult["code"] == 200 || batchResult["code"] == 0 {
+		results, _ := batchResult["data"].(map[string]interface{})["results"].([]interface{})
+		if len(results) > 0 {
+			firstResult, _ := results[0].(map[string]interface{})
+			if success, ok := firstResult["success"].(bool); ok && success {
+				mountID, _ := firstResult["id"].(float64)
+				msg := fmt.Sprintf(`✅ <b>挂载成功！</b>
+
+📁 本地路径: %s
 🔗 ShareID: %d
-📂 FileID: %s
+🆔 挂载ID: %d
 
-请通过 Web 界面创建挂载点，或使用批量添加功能。`, name, shareID, fileID)
-	s.sendMessageToChat(chatID, msg)
+请通过文件管理器查看，或等待后台扫描完成后使用。`, localPath, shareID, int64(mountID))
+				s.sendMessageToChat(chatID, msg)
+				return
+			}
+		}
+	}
+
+	errMsg, _ := batchResult["msg"].(string)
+	if errMsg == "" {
+		if results, ok := batchResult["data"].(map[string]interface{})["results"].([]interface{}); ok && len(results) > 0 {
+			if firstResult, ok := results[0].(map[string]interface{}); ok {
+				errMsg, _ = firstResult["error"].(string)
+			}
+		}
+	}
+	s.sendMessageToChat(chatID, fmt.Sprintf("❌ 创建挂载点失败: %s", errMsg))
 }
 
 func (s *service) sendMessageToChat(chatID int64, text string) {

@@ -2,6 +2,10 @@ package bootstrap
 
 import (
 	"bytes"
+	"database/sql/driver"
+	"encoding/json"
+	"time"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"golang.org/x/text/encoding/simplifiedchinese"
@@ -9,6 +13,48 @@ import (
 	"gorm.io/gorm"
 	"io"
 )
+
+type SystemSetting struct {
+	ID        int64     `gorm:"primaryKey" json:"id"`
+	Name      string    `gorm:"column:name;type:varchar(255);uniqueIndex" json:"name"`
+	Value     SubConfig `gorm:"column:value;type:json" json:"value"`
+	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime" json:"createdAt"`
+	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime" json:"updatedAt"`
+}
+
+func (s SystemSetting) TableName() string {
+	return "system_settings"
+}
+
+type SubConfig struct {
+	Enabled          bool   `json:"enabled"`
+	CronExpression   string `json:"cronExpression"`
+	PanSearchURL     string `json:"panSearchURL"`
+	EnableTMDB       bool   `json:"enableTMDB"`
+	EnableDouban     bool   `json:"enableDouban"`
+	DefaultMountPath string `json:"defaultMountPath"`
+	AutoMount        bool   `json:"autoMount"`
+	TMDBAPIKey       string `json:"tmdbAPIKey"`
+}
+
+func (sc SubConfig) Value() (driver.Value, error) {
+	if sc == (SubConfig{}) {
+		return nil, nil
+	}
+	return json.Marshal(sc)
+}
+
+func (sc *SubConfig) Scan(value interface{}) error {
+	if value == nil {
+		*sc = SubConfig{}
+		return nil
+	}
+	bytes, ok := value.([]byte)
+	if !ok {
+		return nil
+	}
+	return json.Unmarshal(bytes, sc)
+}
 
 func migrateDB(db *gorm.DB) (err error) {
 	return db.AutoMigrate(
@@ -30,6 +76,7 @@ func migrateDB(db *gorm.DB) (err error) {
 		new(models.Subscription),
 		new(models.MatchHistory),
 		new(models.DailyHotHistory),
+		new(SystemSetting),
 	)
 }
 

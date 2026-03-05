@@ -19,23 +19,18 @@ func (s *service) GetAutoRefreshList(ctx context.Context, req *GetAutoRefreshLis
 
 	query := s.getDB(ctx).Where("enable_auto_refresh = ?", true)
 
-	// 如果指定了tokenId，则过滤
 	if req.TokenId != nil {
 		query = query.Where("token_id = ?", *req.TokenId)
 	}
 
-	// 筛选在自动刷新时间范围内的挂载点
-	// 条件：当前时间 >= auto_refresh_begin_at 且 当前时间 <= auto_refresh_begin_at + auto_refresh_days天
-	// PostgreSQL 使用: auto_refresh_begin_at + (auto_refresh_days || ' days')::interval
 	query = query.Where("auto_refresh_begin_at IS NOT NULL").
 		Where("auto_refresh_begin_at <= ?", now).
-		Where("(auto_refresh_begin_at + (auto_refresh_days || ' days')::interval) >= ?", now)
+		Where("date(auto_refresh_begin_at, '+' || auto_refresh_days || ' days') >= ?", now.Format("2006-01-02"))
 
 	list := make([]*models.MountPoint, 0)
 
 	if err := query.Find(&list).Error; err != nil {
 		ctx.Error("查询需要自动刷新的挂载点列表失败", zap.Error(err))
-
 		return nil, err
 	}
 
