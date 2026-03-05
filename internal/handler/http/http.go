@@ -25,6 +25,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/handler/http/user"
 
+	resourceHandlerPkg "github.com/xxcheng123/cloudpan189-share/internal/handler/http/resource"
 	subscriptionHandler "github.com/xxcheng123/cloudpan189-share/internal/handler/http/subscription"
 	telegramHandler "github.com/xxcheng123/cloudpan189-share/internal/handler/http/telegram"
 	autoingestlogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestlog"
@@ -115,6 +116,7 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 		loginLogHandler     = loginlogHandler.NewHandler(loginLogService)
 		mediaHandler        = media.NewHandler(mediaConfigService, mediaFileService, mountPointService, virtualFileService, verifyService, taskEngine)
 		telegramHTTPHandler = telegramHandler.NewHandler(db, telegramService, svc.GetLogger("telegram-http"))
+		resourceHandler     = resourceHandlerPkg.NewHandler(db, svc.GetLogger("resource"), userService, userGroupService, mountPointService, cloudTokenService, mediaConfigService, mediaFileService, taskEngine)
 	)
 
 	var tmdbService tmdbSvi.Service
@@ -307,6 +309,7 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 	{
 		subscriptionRouter := openapiRouter.Group("/subscription", wrap(userMiddleware.Auth(true)))
 		{
+			subscriptionRouter.GET("/categories", wrap(subscriptionHTTPHandler.GetCategories()))
 			subscriptionRouter.GET("/tmdb/movies", wrap(subscriptionHTTPHandler.GetTMDbMovies()))
 			subscriptionRouter.GET("/tmdb/tvs", wrap(subscriptionHTTPHandler.GetTMDbTVs()))
 			subscriptionRouter.GET("/douban/movies", wrap(subscriptionHTTPHandler.GetDoubanMovies()))
@@ -315,6 +318,13 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 			subscriptionRouter.GET("/search", wrap(subscriptionHTTPHandler.SearchPan()))
 			subscriptionRouter.GET("/search/ai", wrap(subscriptionHTTPHandler.SearchPanWithAI()))
 			subscriptionRouter.POST("/mount", wrap(subscriptionHTTPHandler.MountSubscription()))
+		}
+	}
+
+	{
+		resourceRouter := openapiRouter.Group("/resource")
+		{
+			resourceRouter.GET("/summary", wrap(resourceHandler.Summary()))
 		}
 	}
 

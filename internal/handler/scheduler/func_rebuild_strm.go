@@ -16,17 +16,21 @@ import (
 )
 
 type RebuildStrmScheduler struct {
-	running    bool
-	mu         sync.Mutex
-	ctx        context.Context
-	cancel     context.CancelFunc
-	taskEngine taskengine.TaskEngine
+	running         bool
+	mu              sync.Mutex
+	ctx             context.Context
+	cancel          context.CancelFunc
+	taskEngine      taskengine.TaskEngine
+	firstRunSkipped bool
+	startupDelay    time.Duration
 }
 
 func NewRebuildStrmScheduler(taskEngine taskengine.TaskEngine) Scheduler {
 	return &RebuildStrmScheduler{
-		taskEngine: taskEngine,
-		running:    false,
+		taskEngine:      taskEngine,
+		running:         false,
+		firstRunSkipped: false,
+		startupDelay:    10 * time.Minute, // 启动后延迟10分钟再执行
 	}
 }
 
@@ -83,6 +87,18 @@ func (s *RebuildStrmScheduler) doJob() bool {
 				zap.String("stack", string(debug.Stack())))
 		}
 	}()
+
+	// 启动后首次执行，跳过并记录延迟时间
+	if !s.firstRunSkipped {
+		s.firstRunSkipped = true
+		s.ctx.Info("STRM定时重建执行器启动，已跳过首次执行", zap.Duration("delay", s.startupDelay))
+		select {
+		case <-s.ctx.Done():
+			return false
+		case <-time.After(s.startupDelay):
+			return true
+		}
+	}
 
 	if shared.MediaConfig != nil && shared.MediaConfig.Enable && shared.MediaConfig.AutoRebuildEnable {
 		s.doRebuild()

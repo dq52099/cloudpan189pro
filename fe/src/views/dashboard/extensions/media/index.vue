@@ -127,8 +127,12 @@
           </n-form-item>
 
           <n-form-item label="存储根路径">
-            <n-input v-model:value="initForm.storagePath" placeholder="/media_dir" clearable />
-            <div class="desc-sub">STRM文件输出根目录，必须与配置文件中mediaDir保持一致</div>
+            <n-input v-model:value="initForm.storagePath" placeholder="media_dir" />
+            <div class="desc-sub">
+              <n-text type="warning"
+                >⚠️ 必须配置为 "media_dir" 才能挂载成功并正常生成strm文件</n-text
+              >
+            </div>
           </n-form-item>
 
           <n-form-item label="自动清理空文件夹">
@@ -196,8 +200,7 @@
           <n-form-item label="存储根路径">
             <n-input
               v-model:value="editForm.storagePath"
-              placeholder="请填写 media_dir（存储根路径，必须如此配置才能挂载成功）"
-              clearable
+              placeholder="media_dir（必须配置为 media_dir 才能挂载成功）"
             />
           </n-form-item>
 
@@ -457,6 +460,10 @@ const handleSuffixCreate = (label: string): string => {
 const openInitModal = () => {
   if (!initForm.baseURL) {
     initForm.baseURL = window.location.origin
+  }
+  // 默认设置为 media_dir
+  if (!initForm.storagePath) {
+    initForm.storagePath = 'media_dir'
   }
   // 如果是首次初始化且后缀列表为空，则提供一组默认值
   if (!initForm.includedSuffixes || initForm.includedSuffixes.length === 0) {

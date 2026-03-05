@@ -15,8 +15,20 @@ import (
 type Service interface {
 	GetPopularMovies(page int) ([]Movie, error)
 	GetPopularTVs(page int) ([]TV, error)
+	GetMoviesByGenre(genreID int, page int) ([]Movie, error)
+	GetTVsByGenre(genreID int, page int) ([]TV, error)
+	GetGenreList() ([]Genre, error)
 	GetConfig() *Config
 	SetAPIKey(apiKey string)
+}
+
+type Genre struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+type GenreListResponse struct {
+	Genres []Genre `json:"genres"`
 }
 
 type Config struct {
@@ -177,6 +189,136 @@ func (s *service) GetPopularTVs(page int) ([]TV, error) {
 
 	apiURL := fmt.Sprintf("%s/tv/popular?api_key=%s&language=%s&region=%s&page=%d",
 		s.baseURL, s.config.APIKey, s.config.Language, s.config.Region, page)
+
+	req, err := http.NewRequestWithContext(context.Background(), "GET", apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("TMDB API returned status: %d", resp.StatusCode)
+	}
+
+	var result PopularTVsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return result.Results, nil
+}
+
+func (s *service) GetGenreList() ([]Genre, error) {
+	if s.config.APIKey == "" {
+		return nil, fmt.Errorf("TMDB API key is not set")
+	}
+
+	apiURL := fmt.Sprintf("%s/genre/movie/list?api_key=%s&language=%s",
+		s.baseURL, s.config.APIKey, s.config.Language)
+
+	req, err := http.NewRequestWithContext(context.Background(), "GET", apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("TMDB API returned status: %d", resp.StatusCode)
+	}
+
+	var result GenreListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return result.Genres, nil
+}
+
+var genreIDMap = map[string]int{
+	"movie_28":    28,
+	"movie_12":    12,
+	"movie_16":    16,
+	"movie_35":    35,
+	"movie_80":    80,
+	"movie_99":    99,
+	"movie_18":    18,
+	"movie_10751": 10751,
+	"movie_14":    14,
+	"movie_36":    36,
+	"movie_27":    27,
+	"movie_10402": 10402,
+	"movie_9648":  9648,
+	"movie_878":   878,
+	"movie_10770": 10770,
+	"movie_53":    53,
+	"movie_10752": 10752,
+	"movie_37":    37,
+	"tv_10759":    10759,
+	"tv_16":       16,
+	"tv_35":       35,
+	"tv_80":       80,
+	"tv_99":       99,
+	"tv_18":       18,
+	"tv_10751":    10751,
+	"tv_10762":    10762,
+	"tv_9648":     9648,
+	"tv_10763":    10763,
+	"tv_10764":    10764,
+	"tv_10765":    10765,
+	"tv_10766":    10766,
+	"tv_10767":    10767,
+	"tv_10768":    10768,
+	"tv_37":       37,
+}
+
+func (s *service) GetMoviesByGenre(genreID int, page int) ([]Movie, error) {
+	if s.config.APIKey == "" {
+		return nil, fmt.Errorf("TMDB API key is not set")
+	}
+
+	apiURL := fmt.Sprintf("%s/discover/movie?api_key=%s&language=%s&region=%s&with_genres=%d&sort_by=release_date.desc&page=%d",
+		s.baseURL, s.config.APIKey, s.config.Language, s.config.Region, genreID, page)
+
+	req, err := http.NewRequestWithContext(context.Background(), "GET", apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("TMDB API returned status: %d", resp.StatusCode)
+	}
+
+	var result PopularMoviesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return result.Results, nil
+}
+
+func (s *service) GetTVsByGenre(genreID int, page int) ([]TV, error) {
+	if s.config.APIKey == "" {
+		return nil, fmt.Errorf("TMDB API key is not set")
+	}
+
+	apiURL := fmt.Sprintf("%s/discover/tv?api_key=%s&language=%s&region=%s&with_genres=%d&sort_by=first_air_date.desc&page=%d",
+		s.baseURL, s.config.APIKey, s.config.Language, s.config.Region, genreID, page)
 
 	req, err := http.NewRequestWithContext(context.Background(), "GET", apiURL, nil)
 	if err != nil {

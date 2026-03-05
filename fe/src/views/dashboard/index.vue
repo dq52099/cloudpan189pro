@@ -54,24 +54,140 @@
           </n-descriptions>
         </n-card>
       </n-grid-item>
+
+      <!-- 资源统计展示区 -->
+      <n-grid-item :span="24">
+        <n-card title="资源统计" class="resource-card" v-loading="loadingSummary">
+          <n-grid :cols="6" :x-gap="16" :y-gap="16">
+            <n-grid-item>
+              <div class="stat-item">
+                <div class="stat-icon" style="background: #2080f0">
+                  <n-icon size="24"><PeopleOutline /></n-icon>
+                </div>
+                <div class="stat-content">
+                  <div class="stat-value">{{ summaryData.users.total }}</div>
+                  <div class="stat-label">用户总数</div>
+                </div>
+              </div>
+            </n-grid-item>
+            <n-grid-item>
+              <div class="stat-item">
+                <div class="stat-icon" style="background: #18a058">
+                  <n-icon size="24"><FolderOutline /></n-icon>
+                </div>
+                <div class="stat-content">
+                  <div class="stat-value">{{ summaryData.mountPoints.total }}</div>
+                  <div class="stat-label">挂载点</div>
+                </div>
+              </div>
+            </n-grid-item>
+            <n-grid-item>
+              <div class="stat-item">
+                <div class="stat-icon" style="background: #f0a20a">
+                  <n-icon size="24"><KeyOutline /></n-icon>
+                </div>
+                <div class="stat-content">
+                  <div class="stat-value">{{ summaryData.cloudTokens.total }}</div>
+                  <div class="stat-label">云盘令牌</div>
+                </div>
+              </div>
+            </n-grid-item>
+            <n-grid-item>
+              <div class="stat-item">
+                <div class="stat-icon" style="background: #9c27b0">
+                  <n-icon size="24"><PlayOutline /></n-icon>
+                </div>
+                <div class="stat-content">
+                  <div class="stat-value">
+                    {{ summaryData.media.enabled ? summaryData.media.strmFiles : 0 }}
+                  </div>
+                  <div class="stat-label">STRM文件</div>
+                </div>
+              </div>
+            </n-grid-item>
+            <n-grid-item>
+              <div class="stat-item">
+                <div class="stat-icon" style="background: #e42c1e">
+                  <n-icon size="24"><ServerOutline /></n-icon>
+                </div>
+                <div class="stat-content">
+                  <div class="stat-value">{{ summaryData.autoIngest.plans }}</div>
+                  <div class="stat-label">入库计划</div>
+                </div>
+              </div>
+            </n-grid-item>
+            <n-grid-item>
+              <div class="stat-item">
+                <div class="stat-icon" style="background: #00bcd4">
+                  <n-icon size="24"><TimeOutline /></n-icon>
+                </div>
+                <div class="stat-content">
+                  <div class="stat-value">{{ summaryData.tasks.running }}</div>
+                  <div class="stat-label">运行中任务</div>
+                </div>
+              </div>
+            </n-grid-item>
+          </n-grid>
+        </n-card>
+      </n-grid-item>
     </n-grid>
   </div>
 </template>
 
 <script setup lang="ts">
-import { NGrid, NGridItem, NCard, NDescriptions, NDescriptionsItem, NTag, NText } from 'naive-ui'
+import { ref, onMounted } from 'vue'
+import {
+  NGrid,
+  NGridItem,
+  NCard,
+  NDescriptions,
+  NDescriptionsItem,
+  NTag,
+  NText,
+  NIcon,
+} from 'naive-ui'
+import {
+  PeopleOutline,
+  FolderOutline,
+  KeyOutline,
+  PlayOutline,
+  ServerOutline,
+  TimeOutline,
+} from '@vicons/ionicons5'
 import { useSystemStore, useUserStore } from '@/stores'
+import { getResourceSummary, type ResourceSummary } from '@/api/resource'
 
 const userStore = useUserStore()
 const systemStore = useSystemStore()
 
-// 用户信息
 const userInfo = userStore.get()
-
-// 系统信息
 const systemInfo = systemStore.get()
 
-// 获取用户状态类型
+const loadingSummary = ref(false)
+const summaryData = ref<ResourceSummary>({
+  users: { total: 0, active: 0, disabled: 0 },
+  userGroups: 0,
+  mountPoints: { total: 0, enabled: 0, autoRefresh: 0 },
+  cloudTokens: { total: 0, active: 0 },
+  media: { enabled: false, strmFiles: 0, mediaFiles: 0 },
+  autoIngest: { plans: 0, logs24h: 0 },
+  tasks: { pending: 0, running: 0, failed: 0, completed: 0 },
+})
+
+const loadSummary = async () => {
+  loadingSummary.value = true
+  try {
+    const res = await getResourceSummary()
+    if (res.code === 200 && res.data) {
+      summaryData.value = res.data
+    }
+  } catch (err) {
+    console.error('加载资源统计失败', err)
+  } finally {
+    loadingSummary.value = false
+  }
+}
+
 const getUserStatusType = (status: number) => {
   switch (status) {
     case 1:
@@ -84,7 +200,6 @@ const getUserStatusType = (status: number) => {
   }
 }
 
-// 获取用户状态文本
 const getUserStatusText = (status: number) => {
   switch (status) {
     case 1:
@@ -96,6 +211,10 @@ const getUserStatusText = (status: number) => {
       return '禁用'
   }
 }
+
+onMounted(() => {
+  loadSummary()
+})
 </script>
 
 <style scoped>
@@ -137,6 +256,48 @@ const getUserStatusText = (status: number) => {
 
 .info-card :deep(.n-descriptions-item__content) {
   color: var(--n-text-color);
+}
+
+.resource-card {
+  margin-top: 16px;
+  background: var(--n-card-color);
+  border: 1px solid var(--n-border-color);
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 6%);
+}
+
+.stat-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: var(--n-color-hover);
+  border-radius: 8px;
+}
+
+.stat-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  color: #fff;
+}
+
+.stat-content {
+  flex: 1;
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--n-text-color);
+}
+
+.stat-label {
+  font-size: 12px;
+  color: var(--n-text-color-3);
 }
 
 /* 响应式设计 */

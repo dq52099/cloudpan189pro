@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 
 type Service interface {
 	GetPopularMovies() ([]Subject, error)
+	GetMoviesByTag(tag string) ([]Subject, error)
 	GetTop250(start, count int) ([]Subject, error)
 	GetPlaying() ([]Subject, error)
 	GetComing() ([]Subject, error)
@@ -53,7 +55,14 @@ func NewService(logger *zap.Logger) Service {
 }
 
 func (s *service) GetPopularMovies() ([]Subject, error) {
-	apiURL := "https://movie.douban.com/j/search_subjects?type=movie&tag=热门&page_limit=50&page_start=0"
+	return s.GetMoviesByTag("热门")
+}
+
+func (s *service) GetMoviesByTag(tag string) ([]Subject, error) {
+	if tag == "" {
+		tag = "热门"
+	}
+	apiURL := fmt.Sprintf("https://movie.douban.com/j/search_subjects?type=movie&tag=%s&page_limit=50&page_start=0", url.QueryEscape(tag))
 
 	cookieClient := &http.Client{
 		Timeout: 30 * time.Second,

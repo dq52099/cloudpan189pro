@@ -101,50 +101,238 @@ type HotMovieItem struct {
 	PosterPath    string  `json:"posterPath"`
 	Type          string  `json:"type"`
 	Description   string  `json:"description"`
+	Category      string  `json:"category,omitempty"`
 }
 
 type HotMoviesResponse struct {
-	Movies []HotMovieItem `json:"movies"`
-	Source string         `json:"source"`
+	Movies   []HotMovieItem `json:"movies"`
+	Source   string         `json:"source"`
+	Category string         `json:"category"`
+}
+
+type CategoryOption struct {
+	Value    string           `json:"value"`
+	Label    string           `json:"label"`
+	Children []CategoryOption `json:"children,omitempty"`
+}
+
+type CategoriesResponse struct {
+	TMDB   []CategoryOption `json:"tmdb"`
+	Douban []CategoryOption `json:"douban"`
+}
+
+func (h *Handler) GetCategories() httpcontext.HandlerFunc {
+	return func(c *httpcontext.Context) {
+		tmdbCategories := []CategoryOption{
+			{
+				Value: "movie",
+				Label: "电影",
+				Children: []CategoryOption{
+					{Value: "movie_popular", Label: "热门电影"},
+					{Value: "movie_toprated", Label: "高分电影"},
+					{Value: "movie_nowplaying", Label: "正在热映"},
+					{Value: "movie_upcoming", Label: "即将上映"},
+				},
+			},
+			{
+				Value: "tv",
+				Label: "电视剧",
+				Children: []CategoryOption{
+					{Value: "tv_popular", Label: "热门剧集"},
+					{Value: "tv_toprated", Label: "高分剧集"},
+					{Value: "tv_airing", Label: "正在播出"},
+				},
+			},
+			{
+				Value: "anime",
+				Label: "动漫",
+				Children: []CategoryOption{
+					{Value: "anime_popular", Label: "热门动漫"},
+					{Value: "anime_toprated", Label: "高分动漫"},
+				},
+			},
+			{
+				Value: "doc",
+				Label: "纪录片",
+				Children: []CategoryOption{
+					{Value: "doc_popular", Label: "热门纪录片"},
+					{Value: "doc_toprated", Label: "高分纪录片"},
+				},
+			},
+		}
+
+		doubanCategories := []CategoryOption{
+			{
+				Value: "all",
+				Label: "综合",
+				Children: []CategoryOption{
+					{Value: "热门", Label: "热门"},
+					{Value: "最新", Label: "最新"},
+					{Value: "经典", Label: "经典"},
+					{Value: "豆瓣高分", Label: "豆瓣高分"},
+					{Value: "冷门佳片", Label: "冷门佳片"},
+				},
+			},
+			{
+				Value: "chinese",
+				Label: "华语",
+				Children: []CategoryOption{
+					{Value: "华语", Label: "华语热门"},
+					{Value: "华语经典", Label: "华语经典"},
+					{Value: "华语高分", Label: "华语高分"},
+				},
+			},
+			{
+				Value: "western",
+				Label: "欧美",
+				Children: []CategoryOption{
+					{Value: "欧美", Label: "欧美热门"},
+					{Value: "欧美经典", Label: "欧美经典"},
+					{Value: "欧美高分", Label: "欧美高分"},
+				},
+			},
+			{
+				Value: "korean",
+				Label: "韩国",
+				Children: []CategoryOption{
+					{Value: "韩国", Label: "韩国热门"},
+					{Value: "韩国经典", Label: "韩国经典"},
+					{Value: "韩国高分", Label: "韩国高分"},
+				},
+			},
+			{
+				Value: "japanese",
+				Label: "日本",
+				Children: []CategoryOption{
+					{Value: "日本", Label: "日本热门"},
+					{Value: "日本经典", Label: "日本经典"},
+					{Value: "日本高分", Label: "日本高分"},
+				},
+			},
+			{
+				Value: "genre",
+				Label: "类型",
+				Children: []CategoryOption{
+					{Value: "动作", Label: "动作"},
+					{Value: "喜剧", Label: "喜剧"},
+					{Value: "爱情", Label: "爱情"},
+					{Value: "科幻", Label: "科幻"},
+					{Value: "动画", Label: "动画"},
+					{Value: "悬疑", Label: "悬疑"},
+					{Value: "惊悚", Label: "惊悚"},
+					{Value: "恐怖", Label: "恐怖"},
+				},
+			},
+		}
+
+		c.Success(CategoriesResponse{
+			TMDB:   tmdbCategories,
+			Douban: doubanCategories,
+		})
+	}
+}
+
+var tmdbCategoryGenreMap = map[string]struct {
+	genreType string
+	genreID   int
+}{
+	"movie_popular":    {genreType: "movie", genreID: 0},
+	"movie_toprated":   {genreType: "movie", genreID: 0},
+	"movie_nowplaying": {genreType: "movie", genreID: 0},
+	"movie_upcoming":   {genreType: "movie", genreID: 0},
+	"tv_popular":       {genreType: "tv", genreID: 0},
+	"tv_toprated":      {genreType: "tv", genreID: 0},
+	"tv_airing":        {genreType: "tv", genreID: 0},
+	"anime_popular":    {genreType: "movie", genreID: 16},
+	"anime_toprated":   {genreType: "movie", genreID: 16},
+	"doc_popular":      {genreType: "movie", genreID: 99},
+	"doc_toprated":     {genreType: "movie", genreID: 99},
 }
 
 func (h *Handler) GetTMDbMovies() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
-		items, err := h.tmdb.GetPopularMovies(1)
+		category := c.DefaultQuery("category", "movie_popular")
+		h.logger.Info("[热门数据加载] 正在获取TMDB热门数据", zap.String("category", category))
+
+		var items interface{}
+		var err error
+
+		catInfo, ok := tmdbCategoryGenreMap[category]
+		if !ok {
+			catInfo = tmdbCategoryGenreMap["movie_popular"]
+		}
+
+		if catInfo.genreID > 0 {
+			items, err = h.tmdb.GetMoviesByGenre(catInfo.genreID, 1)
+		} else if category == "movie_popular" || category == "movie_toprated" || category == "movie_nowplaying" || category == "movie_upcoming" {
+			items, err = h.tmdb.GetPopularMovies(1)
+		} else if category == "tv_popular" || category == "tv_toprated" || category == "tv_airing" {
+			items, err = h.tmdb.GetPopularTVs(1)
+		} else {
+			items, err = h.tmdb.GetPopularMovies(1)
+		}
+
 		if err != nil {
 			h.logger.Error("failed to get TMDB movies", zap.Error(err))
 			c.Fail(invalidParams(fmt.Errorf("获取TMDB热门电影失败: %w", err)))
 			return
 		}
 
-		movies := make([]HotMovieItem, 0, len(items))
-		for _, m := range items {
-			year := ""
-			if len(m.ReleaseDate) >= 4 {
-				year = m.ReleaseDate[:4]
+		movies := make([]HotMovieItem, 0)
+		if movieList, ok := items.([]tmdb.Movie); ok {
+			for _, m := range movieList {
+				year := ""
+				if len(m.ReleaseDate) >= 4 {
+					year = m.ReleaseDate[:4]
+				}
+				movies = append(movies, HotMovieItem{
+					ID:            m.ID,
+					Title:         m.Title,
+					OriginalTitle: m.OriginalTitle,
+					Year:          year,
+					Rating:        m.VoteAverage,
+					Cover:         "https://image.tmdb.org/t/p/w500" + m.PosterPath,
+					PosterPath:    m.PosterPath,
+					Type:          "movie",
+					Description:   m.Overview,
+					Category:      category,
+				})
 			}
-			movies = append(movies, HotMovieItem{
-				ID:            m.ID,
-				Title:         m.Title,
-				OriginalTitle: m.OriginalTitle,
-				Year:          year,
-				Rating:        m.VoteAverage,
-				Cover:         "https://image.tmdb.org/t/p/w500" + m.PosterPath,
-				PosterPath:    m.PosterPath,
-				Type:          "movie",
-				Description:   m.Overview,
-			})
+		} else if tvList, ok := items.([]tmdb.TV); ok {
+			for _, m := range tvList {
+				year := ""
+				if len(m.FirstAirDate) >= 4 {
+					year = m.FirstAirDate[:4]
+				}
+				movies = append(movies, HotMovieItem{
+					ID:            m.ID,
+					Title:         m.Name,
+					OriginalTitle: m.OriginalName,
+					Year:          year,
+					Rating:        m.VoteAverage,
+					Cover:         "https://image.tmdb.org/t/p/w500" + m.PosterPath,
+					PosterPath:    m.PosterPath,
+					Type:          "tv",
+					Description:   m.Overview,
+					Category:      category,
+				})
+			}
 		}
 
+		h.logger.Info("[热门数据加载] TMDB热门数据加载完成", zap.Int("count", len(movies)), zap.String("category", category))
 		c.Success(HotMoviesResponse{
-			Movies: movies,
-			Source: "tmdb",
+			Movies:   movies,
+			Source:   "tmdb",
+			Category: category,
 		})
 	}
 }
 
 func (h *Handler) GetTMDbTVs() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
+		category := c.DefaultQuery("category", "tv_popular")
+		h.logger.Info("[热门数据加载] 正在获取TMDB热门电视剧", zap.String("category", category))
+
 		items, err := h.tmdb.GetPopularTVs(1)
 		if err != nil {
 			h.logger.Error("failed to get TMDB TVs", zap.Error(err))
@@ -168,19 +356,25 @@ func (h *Handler) GetTMDbTVs() httpcontext.HandlerFunc {
 				PosterPath:    m.PosterPath,
 				Type:          "tv",
 				Description:   m.Overview,
+				Category:      category,
 			})
 		}
 
+		h.logger.Info("[热门数据加载] TMDB热门电视剧加载完成", zap.Int("count", len(movies)), zap.String("category", category))
 		c.Success(HotMoviesResponse{
-			Movies: movies,
-			Source: "tmdb_tv",
+			Movies:   movies,
+			Source:   "tmdb_tv",
+			Category: category,
 		})
 	}
 }
 
 func (h *Handler) GetDoubanMovies() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
-		items, err := h.douban.GetPopularMovies()
+		tag := c.DefaultQuery("category", "热门")
+		h.logger.Info("[热门数据加载] 正在获取豆瓣热门数据", zap.String("category", tag))
+
+		items, err := h.douban.GetMoviesByTag(tag)
 		if err != nil {
 			h.logger.Error("failed to get Douban movies", zap.Error(err))
 			c.Fail(invalidParams(fmt.Errorf("获取豆瓣热门电影失败: %w", err)))
@@ -199,12 +393,15 @@ func (h *Handler) GetDoubanMovies() httpcontext.HandlerFunc {
 				PosterPath:    "",
 				Type:          "movie",
 				Description:   "",
+				Category:      tag,
 			})
 		}
 
+		h.logger.Info("[热门数据加载] 豆瓣热门数据加载完成", zap.Int("count", len(movies)), zap.String("category", tag))
 		c.Success(HotMoviesResponse{
-			Movies: movies,
-			Source: "douban",
+			Movies:   movies,
+			Source:   "douban",
+			Category: tag,
 		})
 	}
 }
@@ -217,6 +414,9 @@ type SubscriptionConfig struct {
 	AutoMount        bool   `json:"autoMount"`
 	CronExpression   string `json:"cronExpression"`
 	TMDBAPIKey       string `json:"tmdbAPIKey"`
+	OpenAIAPIKey     string `json:"openaiAPIKey"`
+	OpenAIBaseURL    string `json:"openaiBaseURL"`
+	OpenAIModel      string `json:"openaiModel"`
 }
 
 type Setting struct {
@@ -250,6 +450,8 @@ func (h *Handler) GetConfig() httpcontext.HandlerFunc {
 					DefaultMountPath: "/热门订阅",
 					AutoMount:        false,
 					TMDBAPIKey:       h.tmdbAPIKey,
+					OpenAIBaseURL:    "https://api.openai.com",
+					OpenAIModel:      "gpt-4o-mini",
 				},
 			}
 			h.db.Create(&setting)
@@ -261,6 +463,9 @@ func (h *Handler) GetConfig() httpcontext.HandlerFunc {
 				AutoMount:        setting.Value.AutoMount,
 				CronExpression:   setting.Value.CronExpression,
 				TMDBAPIKey:       setting.Value.TMDBAPIKey,
+				OpenAIAPIKey:     setting.Value.OpenAIAPIKey,
+				OpenAIBaseURL:    setting.Value.OpenAIBaseURL,
+				OpenAIModel:      setting.Value.OpenAIModel,
 			}
 			if config.TMDBAPIKey == "" {
 				config.TMDBAPIKey = h.tmdbAPIKey
@@ -277,6 +482,9 @@ func (h *Handler) GetConfig() httpcontext.HandlerFunc {
 			AutoMount:        setting.Value.AutoMount,
 			CronExpression:   setting.Value.CronExpression,
 			TMDBAPIKey:       setting.Value.TMDBAPIKey,
+			OpenAIAPIKey:     setting.Value.OpenAIAPIKey,
+			OpenAIBaseURL:    setting.Value.OpenAIBaseURL,
+			OpenAIModel:      setting.Value.OpenAIModel,
 		}
 		if config.TMDBAPIKey == "" {
 			config.TMDBAPIKey = h.tmdbAPIKey
@@ -293,6 +501,9 @@ type UpdateConfigReq struct {
 	AutoMount        bool   `json:"autoMount"`
 	CronExpression   string `json:"cronExpression"`
 	TMDBAPIKey       string `json:"tmdbAPIKey"`
+	OpenAIAPIKey     string `json:"openaiAPIKey"`
+	OpenAIBaseURL    string `json:"openaiBaseURL"`
+	OpenAIModel      string `json:"openaiModel"`
 }
 
 func (h *Handler) UpdateConfig() httpcontext.HandlerFunc {
@@ -319,6 +530,9 @@ func (h *Handler) UpdateConfig() httpcontext.HandlerFunc {
 			DefaultMountPath: req.DefaultMountPath,
 			AutoMount:        req.AutoMount,
 			TMDBAPIKey:       req.TMDBAPIKey,
+			OpenAIAPIKey:     req.OpenAIAPIKey,
+			OpenAIBaseURL:    req.OpenAIBaseURL,
+			OpenAIModel:      req.OpenAIModel,
 		}
 
 		if setting.ID == 0 {

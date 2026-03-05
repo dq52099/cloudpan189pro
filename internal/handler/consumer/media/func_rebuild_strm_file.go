@@ -59,7 +59,7 @@ func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
 			return nil
 		}
 
-		logger.Info(fmt.Sprintf("开始重建 strm，共 %d 个挂载文件夹（根路径: %s）", len(mountpoints), shared.MediaConfig.StoragePath))
+		logger.Info(fmt.Sprintf("[strm生成] 开始重建 strm，共 %d 个挂载文件夹（根路径: %s）", len(mountpoints), shared.MediaConfig.StoragePath))
 
 		progress := &rebuildProgress{
 			totalFolders: int32(len(mountpoints)),
@@ -77,7 +77,7 @@ func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
 			if progress.totalFiles == 0 {
 				rate = 100
 			}
-			logger.Info(fmt.Sprintf("处理文件夹: %s (进度 %d/%d，成功率 %.1f%%)", mountpoint.FullPath, idx+1, len(mountpoints), rate))
+			logger.Info(fmt.Sprintf("[strm生成] 处理文件夹: %s (进度 %d/%d，成功率 %.1f%%)", mountpoint.FullPath, idx+1, len(mountpoints), rate))
 
 			h.walkBuildStrm(ctx.GetContext(), mountpoint.FileId, car.NewSubCar(mountpoint.FullPath), 0, progress)
 		}
@@ -86,7 +86,7 @@ func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
 		if progress.totalFiles == 0 {
 			finalRate = 100
 		}
-		logger.Info(fmt.Sprintf("strm重建完成：共处理 %d 个文件夹，成功 %d 个文件，失败 %d 个文件，成功率 %.1f%%",
+		logger.Info(fmt.Sprintf("[strm生成] strm重建完成：共处理 %d 个文件夹，成功 %d 个文件，失败 %d 个文件，成功率 %.1f%%",
 			progress.totalFolders, progress.successFiles, progress.failedFiles, finalRate))
 
 		return nil
@@ -176,7 +176,7 @@ func (h *handler) ForceRebuildStrmFile() taskcontext.HandlerFunc {
 			return nil
 		}
 
-		logger.Info(fmt.Sprintf("开始强制重建 strm，共 %d 个挂载文件夹（根路径: %s）", len(mountpoints), shared.MediaConfig.StoragePath))
+		logger.Info(fmt.Sprintf("[strm生成] 开始强制重建 strm，共 %d 个挂载文件夹（根路径: %s）", len(mountpoints), shared.MediaConfig.StoragePath))
 
 		progress := &rebuildProgress{
 			totalFolders: int32(len(mountpoints)),
@@ -197,7 +197,7 @@ func (h *handler) ForceRebuildStrmFile() taskcontext.HandlerFunc {
 			if progress.totalFiles == 0 {
 				rate = 100
 			}
-			logger.Info(fmt.Sprintf("强制重建 - 处理文件夹: %s (进度 %d/%d，成功率 %.1f%%)", mountpoint.FullPath, idx+1, len(mountpoints), rate))
+			logger.Info(fmt.Sprintf("[strm生成] 强制重建 - 处理文件夹: %s (进度 %d/%d，成功率 %.1f%%)", mountpoint.FullPath, idx+1, len(mountpoints), rate))
 
 			h.walkBuildStrm(ctx.GetContext(), mountpoint.FileId, car.NewSubCar(mountpoint.FullPath), 0, progress)
 		}
@@ -208,7 +208,7 @@ func (h *handler) ForceRebuildStrmFile() taskcontext.HandlerFunc {
 		if progress.totalFiles == 0 {
 			finalRate = 100
 		}
-		logger.Info(fmt.Sprintf("强制strm重建完成：共处理 %d 个文件夹，成功 %d 个文件，失败 %d 个文件，成功率 %.1f%%",
+		logger.Info(fmt.Sprintf("[strm生成] 强制strm重建完成：共处理 %d 个文件夹，成功 %d 个文件，失败 %d 个文件，成功率 %.1f%%",
 			progress.totalFolders, progress.successFiles, progress.failedFiles, finalRate))
 
 		return nil

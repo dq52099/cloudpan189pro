@@ -18,14 +18,15 @@ import (
 )
 
 type AutoIngestRefreshScheduler struct {
-	running bool
-	mu      sync.Mutex
-	ctx     context.Context
-	cancel  context.CancelFunc
-
+	running               bool
+	mu                    sync.Mutex
+	ctx                   context.Context
+	cancel                context.CancelFunc
 	autoIngestPlanService autoingestplanSvi.Service
 	autoIngestLogService  autoingestlogSvi.Service
 	taskEngine            taskengine.TaskEngine
+	firstRunSkipped       bool
+	startupDelay          time.Duration
 }
 
 func NewAutoIngestRefreshScheduler(
@@ -38,6 +39,8 @@ func NewAutoIngestRefreshScheduler(
 		taskEngine:            taskEngine,
 		autoIngestPlanService: autoIngestPlanService,
 		autoIngestLogService:  autoIngestLogService,
+		firstRunSkipped:       false,
+		startupDelay:          3 * time.Minute, // 启动后延迟3分钟再执行
 	}
 }
 
@@ -86,6 +89,18 @@ func (s *AutoIngestRefreshScheduler) doJob() bool {
 				zap.String("stack", string(debug.Stack())))
 		}
 	}()
+
+	// 启动后首次执行，跳过并记录延迟时间
+	if !s.firstRunSkipped {
+		s.firstRunSkipped = true
+		ctx.Info("自动入库执行器启动，已跳过首次执行", zap.Duration("delay", s.startupDelay))
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(s.startupDelay):
+			return true
+		}
+	}
 
 	select {
 	case <-ctx.Done():

@@ -4,11 +4,34 @@
       <n-tab-pane name="hot" tab="热门数据">
         <div class="hot-section">
           <div class="source-tabs">
-            <n-radio-group v-model:value="selectedSource" name="source">
-              <n-radio-button value="tmdb_movie">TMDB 电影</n-radio-button>
-              <n-radio-button value="tmdb_tv">TMDB 电视剧</n-radio-button>
-              <n-radio-button value="douban">豆瓣热门</n-radio-button>
+            <n-radio-group
+              v-model:value="selectedSource"
+              name="source"
+              @update:value="handleSourceChange"
+            >
+              <n-radio-button value="tmdb">TMDB</n-radio-button>
+              <n-radio-button value="douban">豆瓣</n-radio-button>
             </n-radio-group>
+          </div>
+          <div class="category-tabs" v-if="selectedSource === 'tmdb'">
+            <n-cascader
+              v-model:value="selectedCategory"
+              :options="tmdbCategories"
+              :default-value="['movie', 'movie_popular']"
+              @update:value="handleCategoryChange"
+              placeholder="选择分类"
+              style="width: 300px"
+            />
+          </div>
+          <div class="category-tabs" v-else>
+            <n-cascader
+              v-model:value="selectedCategory"
+              :options="doubanCategories"
+              :default-value="['all', '热门']"
+              @update:value="handleCategoryChange"
+              placeholder="选择分类"
+              style="width: 300px"
+            />
           </div>
           <div class="movies-grid" v-loading="loading">
             <div
@@ -126,6 +149,29 @@
                 <span style="font-size: 12px; color: #999">Cron 表达式，默认每天凌晨 2 点执行</span>
               </template>
             </n-form-item>
+            <n-divider>AI 配置</n-divider>
+            <n-form-item label="OpenAI API Key">
+              <n-input v-model:value="configForm.openaiAPIKey" placeholder="sk-..." show-password />
+              <template #feedback>
+                <span style="font-size: 12px; color: #999"
+                  >用于 AI 智能推荐和资源质量分析，不配置则使用规则匹配</span
+                >
+              </template>
+            </n-form-item>
+            <n-form-item label="API 地址">
+              <n-input
+                v-model:value="configForm.openaiBaseURL"
+                placeholder="https://api.openai.com"
+              />
+              <template #feedback>
+                <span style="font-size: 12px; color: #999"
+                  >可使用代理或兼容 OpenAI 的 API 地址</span
+                >
+              </template>
+            </n-form-item>
+            <n-form-item label="模型">
+              <n-input v-model:value="configForm.openaiModel" placeholder="gpt-4o-mini" />
+            </n-form-item>
             <n-form-item>
               <n-button type="primary" @click="handleSaveConfig" :loading="savingConfig">
                 保存配置
@@ -187,6 +233,7 @@ import { ref, watch, onMounted } from 'vue'
 import { useMessage } from 'naive-ui'
 import { SearchOutline } from '@vicons/ionicons5'
 import {
+  getCategories,
   getTMDbMovies,
   getTMDbTVs,
   getDoubanMovies,
@@ -198,14 +245,19 @@ import {
   type HotMovieItem,
   type SubscriptionConfig,
   type SearchResult,
+  type CategoryOption,
 } from '@/api/subscription'
 
 const message = useMessage()
 
 const activeTab = ref('hot')
-const selectedSource = ref('tmdb_movie')
+const selectedSource = ref('douban')
+const selectedCategory = ref<string[]>(['all', '热门'])
 const loading = ref(false)
 const movies = ref<HotMovieItem[]>([])
+
+const tmdbCategories = ref<CategoryOption[]>([])
+const doubanCategories = ref<CategoryOption[]>([])
 
 const searchKeyword = ref('')
 const searching = ref(false)
@@ -221,6 +273,9 @@ const configForm = ref<SubscriptionConfig>({
   autoMount: false,
   cronExpression: '0 2 * * *',
   tmdbAPIKey: '',
+  openaiAPIKey: '',
+  openaiBaseURL: 'https://api.openai.com',
+  openaiModel: 'gpt-4o-mini',
 })
 const savingConfig = ref(false)
 
@@ -235,16 +290,41 @@ const mountForm = ref({
   cover: '',
 })
 
+const loadCategories = async () => {
+  try {
+    const res = await getCategories()
+    if (res.code === 200 && res.data) {
+      tmdbCategories.value = res.data.tmdb || []
+      doubanCategories.value = res.data.douban || []
+    }
+  } catch (err) {
+    console.error('加载分类失败', err)
+  }
+}
+
 const loadHotData = async () => {
+  if (selectedSource.value === 'tmdb' && !configForm.value.tmdbAPIKey) {
+    message.warning('TMDB API Key 未配置，已自动切换到豆瓣数据源')
+    selectedSource.value = 'douban'
+    selectedCategory.value = ['all', '热门']
+    return
+  }
   loading.value = true
   try {
     let res
-    if (selectedSource.value === 'tmdb_movie') {
-      res = await getTMDbMovies()
-    } else if (selectedSource.value === 'tmdb_tv') {
-      res = await getTMDbTVs()
+    const category = selectedCategory.value[selectedCategory.value.length - 1]
+    if (selectedSource.value === 'tmdb') {
+      if (
+        category.startsWith('movie') ||
+        category.startsWith('anime') ||
+        category.startsWith('doc')
+      ) {
+        res = await getTMDbMovies(category)
+      } else {
+        res = await getTMDbTVs(category)
+      }
     } else {
-      res = await getDoubanMovies()
+      res = await getDoubanMovies(category)
     }
     if (res.code === 200) {
       movies.value = res.data?.movies || []
@@ -260,11 +340,25 @@ const loadHotData = async () => {
   }
 }
 
+const handleSourceChange = () => {
+  if (selectedSource.value === 'tmdb') {
+    selectedCategory.value = ['movie', 'movie_popular']
+  } else {
+    selectedCategory.value = ['all', '热门']
+  }
+  loadHotData()
+}
+
+const handleCategoryChange = () => {
+  loadHotData()
+}
+
 const loadConfig = async () => {
   try {
     const res = await getSubscriptionConfig()
     if (res.code === 200 && res.data) {
       configForm.value = res.data
+      tmdbApiKey.value = !!res.data.tmdbAPIKey
     }
   } catch (err) {
     console.error('加载配置失败', err)
@@ -272,7 +366,13 @@ const loadConfig = async () => {
 }
 
 watch(selectedSource, () => {
-  loadHotData()
+  if (selectedSource.value === 'tmdb' && !configForm.value.tmdbAPIKey) {
+    message.warning('TMDB API Key 未配置，已自动切换到豆瓣数据源')
+    selectedSource.value = 'douban'
+    selectedCategory.value = ['all', '热门']
+    return
+  }
+  handleSourceChange()
 })
 
 const showDetail = (movie: HotMovieItem) => {
@@ -391,9 +491,15 @@ const handleMount = async () => {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
+  await loadConfig()
+  await loadCategories()
+  if (!configForm.value.tmdbAPIKey) {
+    message.warning('TMDB API Key 未配置，已自动切换到豆瓣数据源')
+    selectedSource.value = 'douban'
+    selectedCategory.value = ['all', '热门']
+  }
   loadHotData()
-  loadConfig()
 })
 </script>
 
@@ -409,6 +515,10 @@ onMounted(() => {
 }
 
 .source-tabs {
+  margin-bottom: 16px;
+}
+
+.category-tabs {
   margin-bottom: 20px;
 }
 

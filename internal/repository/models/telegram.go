@@ -135,6 +135,9 @@ type SubscriptionConfig struct {
 	DefaultMountPath string `json:"defaultMountPath"`
 	AutoMount        bool   `json:"autoMount"`
 	TMDBAPIKey       string `json:"tmdbAPIKey"`
+	OpenAIAPIKey     string `json:"openaiAPIKey"`
+	OpenAIBaseURL    string `json:"openaiBaseURL"`
+	OpenAIModel      string `json:"openaiModel"`
 }
 
 func (sc SubscriptionConfig) Value() (driver.Value, error) {

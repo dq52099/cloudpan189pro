@@ -22,6 +22,8 @@ type RefreshFileScheduler struct {
 	cancel            context.CancelFunc
 	mountPointService mountpoint.Service
 	taskEngine        taskengine.TaskEngine
+	firstRunSkipped   bool
+	startupDelay      time.Duration
 }
 
 func NewRefreshFileScheduler(mountPointService mountpoint.Service, taskEngine taskengine.TaskEngine) Scheduler {
@@ -29,6 +31,8 @@ func NewRefreshFileScheduler(mountPointService mountpoint.Service, taskEngine ta
 		mountPointService: mountPointService,
 		taskEngine:        taskEngine,
 		running:           false,
+		firstRunSkipped:   false,
+		startupDelay:      5 * time.Minute, // 启动后延迟5分钟再执行
 	}
 }
 
@@ -78,6 +82,18 @@ func (s *RefreshFileScheduler) doJob() bool {
 				zap.String("stack", string(debug.Stack())))
 		}
 	}()
+
+	// 启动后首次执行，跳过并记录延迟时间
+	if !s.firstRunSkipped {
+		s.firstRunSkipped = true
+		ctx.Info("文件刷新执行器启动，已跳过首次执行", zap.Duration("delay", s.startupDelay))
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(s.startupDelay):
+			return true
+		}
+	}
 
 	select {
 	case <-ctx.Done():

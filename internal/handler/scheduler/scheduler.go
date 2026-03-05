@@ -14,6 +14,7 @@ import (
 	cloudtokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
 	filetasklogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/filetasklog"
 	mountpointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
+	subscriptionSvi "github.com/xxcheng123/cloudpan189-share/internal/services/subscription"
 
 	stdContext "context"
 )
@@ -73,6 +74,13 @@ func Start(svc bootstrap.ServiceContext) (func(), error) {
 
 	rebuildStrmScheduler := NewRebuildStrmScheduler(taskEngine)
 	if err := rebuildStrmScheduler.Start(ctx); err != nil {
+		errs = append(errs, err)
+	}
+
+	// 订阅定时任务（每日热门资源+AI质量分析）
+	subscriptionService := subscriptionSvi.NewService(svc.GetDBWithoutContext(), logger.Named("subscription"), nil)
+	subscriptionScheduler := NewSubscriptionScheduler(subscriptionService)
+	if err := subscriptionScheduler.Start(ctx); err != nil {
 		errs = append(errs, err)
 	}
 
