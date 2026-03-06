@@ -129,7 +129,7 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 		doubanService = extServices.Douban
 		openaiService = extServices.OpenAI
 	}
-	subscriptionHTTPHandler := subscriptionHandler.NewHandler(db, tmdbService, doubanService, svc.GetLogger("subscription-http"), openaiService)
+	subscriptionHTTPHandler := subscriptionHandler.NewHandler(db, tmdbService, doubanService, storageFacadeService, svc.GetLogger("subscription-http"), openaiService)
 
 	var (
 		userMiddleware = newAuthMiddleware(userService)
@@ -303,6 +303,7 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 			telegramRouter.GET("/users", wrap(telegramHTTPHandler.GetUserList()))
 			telegramRouter.POST("/user", wrap(telegramHTTPHandler.UpdateUser()))
 			telegramRouter.POST("/send", wrap(telegramHTTPHandler.SendMessage()))
+			telegramRouter.POST("/process_share", wrap(telegramHTTPHandler.ProcessShareLink()))
 		}
 	}
 

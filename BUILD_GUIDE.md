@@ -80,7 +80,7 @@ fi
 
 # 启动新服务
 mkdir -p logs
-nohup ./share.exe > logs/share.log 2>&1 &
+nohup <编译后的程序> > logs/share.log 2>&1 &
 echo "服务已启动，PID: $!"
 
 # 等待启动
@@ -122,13 +122,13 @@ kill -9 <PID>
 #### 启动新服务
 ```bash
 # Windows
-start /b "" ./share.exe
+start /b "" <编译后的程序>
 
 # Linux
-./share.exe &
+$ ./share.exe &
 
 # 或使用 nohup
-nohup ./share.exe > logs/share.log 2>&1 &
+nohup <编译后的程序> > logs/share.log 2>&1 &
 ```
 
 #### 验证启动成功

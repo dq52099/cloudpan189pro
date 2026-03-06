@@ -278,3 +278,64 @@ func (h *Handler) SendMessage() httpcontext.HandlerFunc {
 		c.Success(gin.H{"message": "Message sent successfully"})
 	}
 }
+
+type ProcessShareLinkReq struct {
+	ShareURL  string `json:"shareUrl" binding:"required"`
+	ChatID    string `json:"chatID"`
+	MountPath string `json:"mountPath"`
+	AutoMount bool   `json:"autoMount"`
+}
+
+func (h *Handler) ProcessShareLink() httpcontext.HandlerFunc {
+	return func(c *httpcontext.Context) {
+		var req ProcessShareLinkReq
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.Fail(invalidParams(err))
+			return
+		}
+
+		var setting models.TelegramSetting
+		if err := h.db.First(&setting).Error; err != nil {
+			c.Fail(invalidParams(fmt.Errorf("failed to get settings: %w", err)))
+			return
+		}
+
+		token := setting.BotToken
+		if token == "" {
+			token = setting.BotTokenEncrypted
+		}
+
+		targetChatID := req.ChatID
+		if targetChatID == "" {
+			targetChatID = setting.ChatID
+		}
+
+		msgService := telegram.NewService(
+			token,
+			targetChatID,
+			setting.ProxyURL,
+			setting.ProxyType,
+			setting.APIURL,
+			h.logger,
+		)
+
+		result, err := msgService.ParseAndMountShareLink(req.ShareURL, req.MountPath, req.AutoMount)
+		if err != nil {
+			c.Fail(invalidParams(err))
+			return
+		}
+
+		if result.Success {
+			c.Success(gin.H{
+				"success":   true,
+				"message":   result.Message,
+				"mountPath": result.MountPath,
+				"shareID":   result.ShareID,
+				"fileID":    result.FileID,
+			})
+		} else {
+			errMsg := result.Message
+			c.Fail(invalidParams(fmt.Errorf("%s", errMsg)))
+		}
+	}
+}

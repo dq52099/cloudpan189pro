@@ -300,10 +300,18 @@ func (s *service) GetDailyHotMovies() ([]HotResource, error) {
 	if s.config.EnableTMDB && s.tmdbService != nil {
 		movies, err := s.tmdbService.GetPopularMovies(1)
 		if err == nil {
-			for _, _ = range movies {
+			for _, movie := range movies {
+				year := ""
+				if len(movie.ReleaseDate) >= 4 {
+					year = movie.ReleaseDate[:4]
+				}
 				results = append(results, HotResource{
-					Source:   "tmdb",
+					Title:    movie.Title,
+					Year:     year,
 					Category: "movie",
+					Rating:   movie.VoteAverage,
+					Cover:    "https://image.tmdb.org/t/p/w500" + movie.PosterPath,
+					Source:   "tmdb",
 				})
 			}
 		}
@@ -312,10 +320,14 @@ func (s *service) GetDailyHotMovies() ([]HotResource, error) {
 	if s.config.EnableDouban && s.doubanService != nil {
 		movies, err := s.doubanService.GetPopularMovies()
 		if err == nil {
-			for _, _ = range movies {
+			for _, movie := range movies {
 				results = append(results, HotResource{
-					Source:   "douban",
+					Title:    movie.Title,
+					Year:     movie.Year,
 					Category: "movie",
+					Rating:   movie.Rating,
+					Cover:    movie.Cover,
+					Source:   "douban",
 				})
 			}
 		}
@@ -330,10 +342,18 @@ func (s *service) GetDailyHotTVs() ([]HotResource, error) {
 	if s.config.EnableTMDB && s.tmdbService != nil {
 		tvs, err := s.tmdbService.GetPopularTVs(1)
 		if err == nil {
-			for _, _ = range tvs {
+			for _, tv := range tvs {
+				year := ""
+				if len(tv.FirstAirDate) >= 4 {
+					year = tv.FirstAirDate[:4]
+				}
 				results = append(results, HotResource{
-					Source:   "tmdb",
+					Title:    tv.Name,
+					Year:     year,
 					Category: "tv",
+					Rating:   tv.VoteAverage,
+					Cover:    "https://image.tmdb.org/t/p/w500" + tv.PosterPath,
+					Source:   "tmdb",
 				})
 			}
 		}

@@ -494,11 +494,18 @@ const handleMount = async () => {
 onMounted(async () => {
   await loadConfig()
   await loadCategories()
-  if (!configForm.value.tmdbAPIKey) {
+
+  // 设置默认分类
+  if (configForm.value.tmdbAPIKey) {
+    selectedSource.value = 'tmdb'
+    selectedCategory.value = ['movie', 'movie_popular']
+  } else {
     message.warning('TMDB API Key 未配置，已自动切换到豆瓣数据源')
     selectedSource.value = 'douban'
     selectedCategory.value = ['all', '热门']
   }
+
+  // 加载热门数据
   loadHotData()
 })
 </script>

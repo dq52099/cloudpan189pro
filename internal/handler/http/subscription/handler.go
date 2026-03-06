@@ -1,10 +1,13 @@
 package subscription
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -13,26 +16,30 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/douban"
+	"github.com/xxcheng123/cloudpan189-share/internal/services/storagefacade"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/tmdb"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
 type Handler struct {
-	db        *gorm.DB
-	tmdb      tmdb.Service
-	douban    douban.Service
-	logger    *zap.Logger
-	openaiSvc interface {
+	db                   *gorm.DB
+	tmdb                 tmdb.Service
+	douban               douban.Service
+	logger               *zap.Logger
+	storageFacadeService storagefacade.Service
+	openaiSvc            interface {
 		GenerateUpgradeKeyword(title, category string) (string, error)
 	}
 	tmdbAPIKey string
 }
 
-func NewHandler(db *gorm.DB, tmdbSvc tmdb.Service, doubanSvc douban.Service, logger *zap.Logger, openaiSvc interface {
+func NewHandler(db *gorm.DB, tmdbSvc tmdb.Service, doubanSvc douban.Service, storageSvc storagefacade.Service, logger *zap.Logger, openaiSvc interface {
 	GenerateUpgradeKeyword(title, category string) (string, error)
 }) *Handler {
 	db.AutoMigrate(&Setting{})
+
+	logger.Info("Creating subscription handler", zap.Any("storageSvc", storageSvc != nil))
 
 	var tmdbAPIKey string
 	cfg := tmdbSvc.GetConfig()
@@ -47,12 +54,13 @@ func NewHandler(db *gorm.DB, tmdbSvc tmdb.Service, doubanSvc douban.Service, log
 	}
 
 	return &Handler{
-		db:         db,
-		tmdb:       tmdbSvc,
-		douban:     doubanSvc,
-		logger:     logger,
-		openaiSvc:  openaiSvc,
-		tmdbAPIKey: tmdbAPIKey,
+		db:                   db,
+		tmdb:                 tmdbSvc,
+		douban:               doubanSvc,
+		storageFacadeService: storageSvc,
+		logger:               logger,
+		openaiSvc:            openaiSvc,
+		tmdbAPIKey:           tmdbAPIKey,
 	}
 }
 
@@ -591,7 +599,13 @@ func (h *Handler) SearchPan() httpcontext.HandlerFunc {
 
 		h.logger.Info("Searching pan", zap.String("url", searchURL))
 
-		req, err := http.NewRequestWithContext(c.Request.Context(), "GET", searchURL, nil)
+		postData := map[string]interface{}{
+			"kw":          keyword,
+			"cloud_types": []string{"tianyi"},
+		}
+		postJSON, _ := json.Marshal(postData)
+
+		req, err := http.NewRequestWithContext(c.Request.Context(), "POST", searchURL, bytes.NewReader(postJSON))
 		if err != nil {
 			c.Fail(invalidParams(fmt.Errorf("请求失败: %w", err)))
 			return
@@ -600,8 +614,20 @@ func (h *Handler) SearchPan() httpcontext.HandlerFunc {
 		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 		req.Header.Set("Accept", "application/json, text/plain, */*")
 		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+		req.Header.Set("Referer", "https://so.252035.xyz/")
+		req.Header.Set("Content-Type", "application/json")
 
-		client := &http.Client{Timeout: 60 * time.Second}
+		client := &http.Client{Timeout: 120 * time.Second}
+
+		// 使用代理（如果配置了）
+		proxyURL := os.Getenv("TG_PROXY")
+		if proxyURL != "" {
+			if proxyURL_, err := url.Parse(proxyURL); err == nil {
+				client.Transport = &http.Transport{Proxy: http.ProxyURL(proxyURL_)}
+				h.logger.Info("Using proxy for pan search", zap.String("proxy", proxyURL))
+			}
+		}
+
 		resp, err := client.Do(req)
 		if err != nil {
 			h.logger.Error("Pan search request failed", zap.Error(err))
@@ -612,7 +638,16 @@ func (h *Handler) SearchPan() httpcontext.HandlerFunc {
 			}
 			return
 		}
-		defer resp.Body.Close()
+
+		bodyBytes, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			h.logger.Error("Failed to read response body", zap.Error(err))
+			c.Fail(invalidParams(fmt.Errorf("读取响应失败: %v", err)))
+			return
+		}
+
+		h.logger.Info("Response", zap.Int("status", resp.StatusCode), zap.Int("body_len", len(bodyBytes)), zap.String("body", string(bodyBytes)))
 
 		if resp.StatusCode != http.StatusOK {
 			h.logger.Warn("Pan search returned non-OK status", zap.Int("status", resp.StatusCode), zap.String("url", searchURL))
@@ -637,7 +672,7 @@ func (h *Handler) SearchPan() httpcontext.HandlerFunc {
 		}
 
 		var result PanSearchResponseV2
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		if err := json.Unmarshal(bodyBytes, &result); err != nil {
 			h.logger.Error("Failed to parse pan search response", zap.Error(err))
 			c.Fail(invalidParams(fmt.Errorf("解析响应失败: %w", err)))
 			return
@@ -684,19 +719,94 @@ func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 			ShareURL  string `json:"shareUrl" binding:"required"`
 			ShareCode string `json:"shareCode"`
 			Cover     string `json:"cover"`
+			MountPath string `json:"mountPath"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.Fail(invalidParams(err))
 			return
 		}
 
-		defaultMountPath := "/热门订阅"
+		shareCode := req.ShareCode
+		if shareCode == "" {
+			re := regexp.MustCompile(`/t/([a-zA-Z0-9]+)`)
+			matches := re.FindStringSubmatch(req.ShareURL)
+			if len(matches) >= 2 {
+				shareCode = matches[1]
+			}
+		}
 
+		if shareCode == "" {
+			c.Fail(invalidParams(fmt.Errorf("无法从分享链接中提取分享码")))
+			return
+		}
+
+		defaultMountPath := "/热门订阅"
+		mountPath := req.MountPath
+		if mountPath == "" {
+			mountPath = defaultMountPath + "/" + req.Title
+		}
+
+		if h.storageFacadeService == nil {
+			c.Fail(invalidParams(fmt.Errorf("storage service is nil, please restart the application")))
+			return
+		}
+
+		ctx := c.GetContext()
+
+		shareInfoURL := fmt.Sprintf("http://127.0.0.1:12395/api/storage/advance/share_info?shareCode=%s", shareCode)
+		shareReq, err := http.NewRequest("GET", shareInfoURL, nil)
+		if err != nil {
+			c.Fail(invalidParams(fmt.Errorf("获取分享信息失败: %v", err)))
+			return
+		}
+		httpClient := &http.Client{Timeout: 30 * time.Second}
+		shareResp, err := httpClient.Do(shareReq)
+		if err != nil {
+			c.Fail(invalidParams(fmt.Errorf("获取分享信息失败: %v", err)))
+			return
+		}
+		defer shareResp.Body.Close()
+
+		type ShareInfoResp struct {
+			Code int `json:"code"`
+			Data struct {
+				ID       string `json:"id"`
+				ShareID  int64  `json:"shareId"`
+				Name     string `json:"name"`
+				IsFolder bool   `json:"isFolder"`
+			} `json:"data"`
+		}
+
+		var shareInfo ShareInfoResp
+		if err := json.NewDecoder(shareResp.Body).Decode(&shareInfo); err != nil {
+			c.Fail(invalidParams(fmt.Errorf("解析分享信息失败: %v", err)))
+			return
+		}
+
+		if shareInfo.Code != 200 {
+			c.Fail(invalidParams(fmt.Errorf("分享信息获取失败，code: %d", shareInfo.Code)))
+			return
+		}
+
+		storageReq := &storagefacade.CreateStorageRequest{
+			LocalPath:  mountPath,
+			OsType:     "subscribe_share_folder",
+			CloudToken: 0,
+			FileId:     shareInfo.Data.ID,
+		}
+		id, err := h.storageFacadeService.CreateStorage(ctx, storageReq)
+		if err != nil {
+			h.logger.Error("Failed to create storage", zap.Error(err), zap.String("path", mountPath))
+			c.Fail(invalidParams(fmt.Errorf("创建挂载点失败: %v", err)))
+			return
+		}
 		c.Success(gin.H{
-			"message":   "挂载功能需要通过自动入库计划实现",
-			"mountPath": defaultMountPath + "/" + req.Title,
+			"message":   "挂载成功",
+			"mountPath": mountPath,
 			"shareURL":  req.ShareURL,
-			"shareCode": req.ShareCode,
+			"shareCode": shareCode,
+			"fileId":    id,
+			"name":      shareInfo.Data.Name,
 		})
 	}
 }
@@ -734,8 +844,9 @@ func (h *Handler) SearchPanWithAI() httpcontext.HandlerFunc {
 		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 		req.Header.Set("Accept", "application/json, text/plain, */*")
 		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+		req.Header.Set("Referer", "https://so.252035.xyz/")
 
-		client := &http.Client{Timeout: 60 * time.Second}
+		client := &http.Client{Timeout: 120 * time.Second}
 		resp, err := client.Do(req)
 		if err != nil {
 			h.logger.Error("Pan search request failed", zap.Error(err))

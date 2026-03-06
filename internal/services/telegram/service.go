@@ -16,6 +16,11 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	shareLinkRegex  = regexp.MustCompile(`cloud\.189\.cn\/t\/([a-zA-Z0-9]+)`)
+	shareLinkRegex2 = regexp.MustCompile(`https?://[^/]+/t/([a-zA-Z0-9]+)`)
+)
+
 type Service interface {
 	SendMessage(msg string) error
 	SendNotification(title, content string) error
@@ -25,6 +30,15 @@ type Service interface {
 	StartBot() error
 	StopBot()
 	TestConnection() error
+	ParseAndMountShareLink(shareURL, mountPath string, autoMount bool) (*MountResult, error)
+}
+
+type MountResult struct {
+	Success   bool
+	Message   string
+	MountPath string
+	ShareID   int64
+	FileID    string
 }
 
 type telegramMessage struct {
@@ -599,4 +613,133 @@ func (s *service) GetMe() (map[string]interface{}, error) {
 		return nil, err
 	}
 	return result, nil
+}
+
+func (s *service) ParseAndMountShareLink(shareURL, mountPath string, autoMount bool) (*MountResult, error) {
+	matches := shareLinkRegex.FindStringSubmatch(shareURL)
+	if len(matches) < 2 {
+		matches = shareLinkRegex2.FindStringSubmatch(shareURL)
+		if len(matches) < 2 {
+			return &MountResult{Success: false, Message: "无法识别分享链接，请检查链接格式"}, nil
+		}
+	}
+	shareCode := matches[1]
+
+	storageAPIURL := "http://127.0.0.1:12395"
+	apiURL := fmt.Sprintf("%s/api/storage/advance/share_info?shareCode=%s", storageAPIURL, shareCode)
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return &MountResult{Success: false, Message: fmt.Sprintf("解析失败: %v", err)}, nil
+	}
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return &MountResult{Success: false, Message: fmt.Sprintf("解析失败: %v", err)}, nil
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return &MountResult{Success: false, Message: fmt.Sprintf("解析失败: %v", err)}, nil
+	}
+
+	data, ok := result["data"].(map[string]interface{})
+	if !ok {
+		return &MountResult{Success: false, Message: "无法获取分享信息"}, nil
+	}
+
+	name, nameOk := data["name"].(string)
+	if !nameOk {
+		name = ""
+	}
+	shareIDFloat, ok := data["shareId"].(float64)
+	if !ok {
+		return &MountResult{Success: false, Message: "无法获取ShareID"}, nil
+	}
+	shareID := int64(shareIDFloat)
+	fileID, fileIDOk := data["id"].(string)
+	if !fileIDOk {
+		fileID = ""
+	}
+
+	if !autoMount {
+		return &MountResult{
+			Success:   true,
+			Message:   "分享链接解析成功",
+			MountPath: mountPath,
+			ShareID:   shareID,
+			FileID:    fileID,
+		}, nil
+	}
+
+	localPath := mountPath
+	if localPath == "" {
+		localPath = fmt.Sprintf("/Telegram/%s", name)
+		if localPath == "/Telegram/" {
+			localPath = fmt.Sprintf("/Telegram/%s", shareCode)
+		}
+	}
+
+	batchAddReq := map[string]interface{}{
+		"items": []map[string]interface{}{
+			{
+				"localPath":         localPath,
+				"osType":            "subscribe_share_folder",
+				"shareCode":         shareCode,
+				"fileId":            fileID,
+				"enableDeepRefresh": true,
+			},
+		},
+	}
+	batchAddJSON, err := json.Marshal(batchAddReq)
+	if err != nil {
+		return &MountResult{Success: false, Message: fmt.Sprintf("创建挂载点失败: %v", err)}, nil
+	}
+	apiURL = s.apiURL
+	if apiURL == "" {
+		apiURL = "http://127.0.0.1:12395"
+	}
+	batchAddURL := apiURL + "/api/storage/batch_add"
+	req, err = http.NewRequest("POST", batchAddURL, bytes.NewReader(batchAddJSON))
+	if err != nil {
+		return &MountResult{Success: false, Message: fmt.Sprintf("创建挂载点失败: %v", err)}, nil
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err = s.client.Do(req)
+	if err != nil {
+		return &MountResult{Success: false, Message: fmt.Sprintf("创建挂载点失败: %v", err)}, nil
+	}
+	defer resp.Body.Close()
+
+	var batchResult map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&batchResult); err != nil {
+		return &MountResult{Success: false, Message: fmt.Sprintf("创建挂载点失败: %v", err)}, nil
+	}
+
+	if batchResult["code"] == 200 || batchResult["code"] == 0 {
+		results, _ := batchResult["data"].(map[string]interface{})["results"].([]interface{})
+		if len(results) > 0 {
+			firstResult, _ := results[0].(map[string]interface{})
+			if success, ok := firstResult["success"].(bool); ok && success {
+				return &MountResult{
+					Success:   true,
+					Message:   "挂载成功",
+					MountPath: localPath,
+					ShareID:   shareID,
+					FileID:    fileID,
+				}, nil
+			}
+		}
+	}
+
+	errMsg, _ := batchResult["msg"].(string)
+	if errMsg == "" {
+		if results, ok := batchResult["data"].(map[string]interface{})["results"].([]interface{}); ok && len(results) > 0 {
+			if firstResult, ok := results[0].(map[string]interface{}); ok {
+				errMsg, _ = firstResult["error"].(string)
+			}
+		}
+	}
+	return &MountResult{Success: false, Message: fmt.Sprintf("创建挂载点失败: %s", errMsg)}, nil
 }

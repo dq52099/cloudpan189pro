@@ -255,12 +255,12 @@ func TestSearchResultStruct(t *testing.T) {
 	sr := SearchResult{
 		Title:    "测试",
 		ShareURL: "https://test.com",
-		FileID:   123,
+		FileID:   "123",
 		Size:     "1GB",
 	}
 
-	if sr.FileID != 123 {
-		t.Errorf("Expected file ID 123, got %d", sr.FileID)
+	if sr.FileID != "123" {
+		t.Errorf("Expected file ID 123, got %s", sr.FileID)
 	}
 }
 
