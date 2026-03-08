@@ -27,6 +27,8 @@ type Handler interface {
 	UpdatePlan() httpcontext.HandlerFunc
 	// DeleteErrorLogs 删除错误日志
 	DeleteErrorLogs() httpcontext.HandlerFunc
+	// ClearLogs 清空所有日志
+	ClearLogs() httpcontext.HandlerFunc
 	// RetryPlan 重试计划（重新获取历史记录）
 	RetryPlan() httpcontext.HandlerFunc
 	// BatchRetry 批量重试计划
@@ -35,6 +37,8 @@ type Handler interface {
 	BatchRefresh() httpcontext.HandlerFunc
 	// BatchDelete 批量删除计划
 	BatchDelete() httpcontext.HandlerFunc
+	// BatchEnable 批量启用计划
+	BatchEnable() httpcontext.HandlerFunc
 	// BatchDisable 批量停用计划
 	BatchDisable() httpcontext.HandlerFunc
 }

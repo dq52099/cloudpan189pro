@@ -45,3 +45,15 @@ export const getFileLogList = (
 export const getTaskEngineList = (): Promise<ApiResponse<TaskEngineListResponse>> => {
   return api.get('/task_state/task_engine/list').then((res) => res.data)
 }
+
+// 清空任务日志请求参数
+export interface ClearTaskLogsRequest {
+  duration?: number // 保留最近多少小时的日志，不传则清空所有
+}
+
+// 清空任务日志
+export const clearTaskLogs = (
+  params?: ClearTaskLogsRequest
+): Promise<ApiResponse> => {
+  return api.post('/task_state/file_log/clear', params).then((res) => res.data)
+}

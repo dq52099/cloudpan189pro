@@ -67,9 +67,9 @@
                 {{ config?.autoRebuildEnable ? '已启用' : '未启用' }}
               </n-tag>
               <div class="desc-sub" v-if="config?.autoRebuildEnable">
-                每 {{ config?.autoRebuildInterval || 24 }} 小时自动重建STRM文件
+                每天 {{ config?.autoRebuildCron || '0 2 * *' }} 自动重建STRM文件
               </div>
-              <div class="desc-sub" v-else>启用后将按设定间隔自动重建STRM文件</div>
+              <div class="desc-sub" v-else>启用后将按设定时间自动重建STRM文件</div>
             </n-descriptions-item>
           </n-descriptions>
 
@@ -170,21 +170,19 @@
           <n-form-item label="定时重建strm">
             <n-space vertical>
               <n-switch v-model:value="initForm.autoRebuildEnable" />
-              <div class="desc-sub">启用后将按设定间隔自动重建STRM文件（强制覆盖）</div>
+              <div class="desc-sub">启用后将按设定时间自动重建STRM文件（强制覆盖）</div>
             </n-space>
           </n-form-item>
 
-          <n-form-item v-if="initForm.autoRebuildEnable" label="重建间隔">
-            <n-space>
-              <n-input-number
-                v-model:value="initForm.autoRebuildInterval"
-                :min="1"
-                :max="168"
-                style="width: 120px"
+          <n-form-item v-if="initForm.autoRebuildEnable" label="重建时间">
+            <n-space vertical>
+              <n-input
+                v-model:value="initForm.autoRebuildCron"
+                placeholder="0 2 * * *"
+                style="width: 200px"
               />
-              <n-text>小时</n-text>
+              <div class="desc-sub">cron表达式，默认每天凌晨2点 (0 2 * * *)</div>
             </n-space>
-            <div class="desc-sub">每隔多少小时自动重建一次STRM文件（1-168小时）</div>
           </n-form-item>
 
           <n-space justify="end">
@@ -239,21 +237,19 @@
           <n-form-item label="定时重建strm">
             <n-space vertical>
               <n-switch v-model:value="editForm.autoRebuildEnable" />
-              <div class="desc-sub">启用后将按设定间隔自动重建STRM文件（强制覆盖）</div>
+              <div class="desc-sub">启用后将按设定时间自动重建STRM文件（强制覆盖）</div>
             </n-space>
           </n-form-item>
 
-          <n-form-item v-if="editForm.autoRebuildEnable" label="重建间隔">
-            <n-space>
-              <n-input-number
-                v-model:value="editForm.autoRebuildInterval"
-                :min="1"
-                :max="168"
-                style="width: 120px"
+          <n-form-item v-if="editForm.autoRebuildEnable" label="重建时间">
+            <n-space vertical>
+              <n-input
+                v-model:value="editForm.autoRebuildCron"
+                placeholder="0 2 * * *"
+                style="width: 200px"
               />
-              <n-text>小时</n-text>
+              <div class="desc-sub">cron表达式，默认每天凌晨2点 (0 2 * * *)</div>
             </n-space>
-            <div class="desc-sub">每隔多少小时自动重建一次STRM文件（1-168小时）</div>
           </n-form-item>
 
           <n-space justify="end">
@@ -316,7 +312,7 @@ const editForm = reactive<ConfigUpdateRequest>({
   baseURL: '',
   includedSuffixes: [],
   autoRebuildEnable: false,
-  autoRebuildInterval: 24,
+  autoRebuildCron: '0 2 * * *',
 })
 
 // 初始化表单
@@ -328,7 +324,7 @@ const initForm = reactive<ConfigInitRequest>({
   baseURL: '',
   includedSuffixes: [],
   autoRebuildEnable: false,
-  autoRebuildInterval: 24,
+  autoRebuildCron: '0 2 * * *',
 })
 
 const conflictPolicyOptions = [

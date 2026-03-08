@@ -35,6 +35,14 @@
         />
         <n-button type="primary" @click="handleSearch" style="margin-right: 8px"> 搜索 </n-button>
         <n-button @click="handleReset"> 重置 </n-button>
+        <n-button type="error" ghost :loading="state.clearing" @click="handleClearLogs" style="margin-left: 16px">
+          <template #icon>
+            <n-icon>
+              <TrashOutline />
+            </n-icon>
+          </template>
+          清空日志
+        </n-button>
       </div>
       <div class="header-right">
         <n-button :loading="state.loading" @click="handleRefresh">
@@ -162,6 +170,7 @@ import {
   NAlert,
   NProgress,
   useMessage,
+  useDialog,
   type DataTableColumns,
   type PaginationProps,
 } from 'naive-ui'
@@ -172,8 +181,9 @@ import {
   CloseCircleOutline,
   TimeOutline,
   PlayOutline,
+  TrashOutline,
 } from '@vicons/ionicons5'
-import { getFileLogList } from '@/api/taskstate'
+import { getFileLogList, clearTaskLogs } from '@/api/taskstate'
 import { formatDate } from '@/utils/format'
 import {
   TASK_TYPE_OPTIONS,
@@ -187,6 +197,7 @@ import {
 const state = reactive({
   tableData: [] as Models.FileTaskLog[],
   loading: false,
+  clearing: false,
   searchKeyword: '',
   statusFilter: null as string | null,
   typeFilter: null as string | null,
@@ -197,6 +208,7 @@ const state = reactive({
 
 // 消息提示
 const message = useMessage()
+const dialog = useDialog()
 
 // 状态选项（使用常量定义）
 const statusOptions = TASK_STATUS_OPTIONS
@@ -284,6 +296,34 @@ const handleReset = () => {
 // 刷新
 const handleRefresh = () => {
   fetchTaskLogList()
+}
+
+// 清空日志
+const handleClearLogs = () => {
+  dialog.warning({
+    title: '清空任务日志',
+    content: '确定要清空所有任务日志吗？此操作不可撤销。',
+    positiveText: '确认清空',
+    negativeText: '取消',
+    onPositiveClick: () => {
+      state.clearing = true
+      clearTaskLogs()
+        .then((res) => {
+          if (res.code === 200) {
+            message.success('任务日志已清空')
+            fetchTaskLogList()
+          } else {
+            message.error(res.msg || '清空失败')
+          }
+        })
+        .catch((err) => {
+          message.error(err instanceof Error ? err.message : '清空失败')
+        })
+        .finally(() => {
+          state.clearing = false
+        })
+    },
+  })
 }
 
 // 查看详情
@@ -472,7 +512,9 @@ onMounted(() => {
 
 <style scoped>
 .task-logs-page {
-  padding: 0;
+  padding: 20px;
+  background: var(--n-card-color);
+  border-radius: 12px;
 }
 
 .header {
@@ -481,44 +523,52 @@ onMounted(() => {
   justify-content: space-between;
   align-items: flex-start;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 16px;
+  padding: 16px;
+  background: var(--n-color-hover);
+  border-radius: 12px;
 }
 
 .header-left {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 12px;
 }
 
 .header-right {
   display: flex;
   align-items: center;
+  gap: 12px;
 }
 
 .task-logs-table {
-  background: var(--n-card-color);
-  border-radius: 6px;
+  background: transparent;
+  border-radius: 12px;
 }
 
 .task-logs-table :deep(.n-data-table-th) {
   text-align: center;
   font-weight: 600;
+  background: var(--n-color-hover);
 }
 
 .task-logs-table :deep(.n-data-table-td) {
   text-align: center;
+  padding: 12px 8px;
 }
 
 .task-detail {
   max-height: 600px;
   overflow-y: auto;
+  padding: 8px;
 }
 
 .task-detail h4 {
   margin: 16px 0 8px;
   color: var(--n-text-color);
   font-weight: 600;
+  font-size: 15px;
 }
 
 .task-description,
@@ -532,6 +582,7 @@ onMounted(() => {
 .task-addition :deep(.n-code) {
   max-height: 200px;
   overflow-y: auto;
+  border-radius: 8px;
 }
 
 /* 响应式设计 */

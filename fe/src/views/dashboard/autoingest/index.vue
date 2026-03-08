@@ -73,6 +73,17 @@
       </n-button>
       <n-button
         size="small"
+        type="success"
+        @click="handleBatchEnable"
+        :disabled="!hasDisabledPlans"
+      >
+        <template #icon>
+          <n-icon><CheckmarkCircleOutline /></n-icon>
+        </template>
+        批量启用
+      </n-button>
+      <n-button
+        size="small"
         type="warning"
         @click="handleBatchDisable"
         :disabled="!hasEnabledPlans"
@@ -92,7 +103,7 @@
     </div>
 
     <!-- 头部区域（Logs） -->
-    <div v-else class="header">
+    <div v-else-if="activeTab === 'logs'" class="header">
       <div class="header-left">
         <n-select
           v-model:value="logQuery.planId"
@@ -124,11 +135,8 @@
           </template>
           重置
         </n-button>
-        <n-button type="warning" @click="handleRetryAllFailed" style="margin-left: 8px">
-          批量重试失败
-        </n-button>
         <n-button type="error" @click="handleDeleteErrorLogs" style="margin-left: 8px">
-          删除错误日志
+          清空日志
         </n-button>
       </div>
       <div class="header-right">
@@ -145,6 +153,7 @@
       :pagination="planPagination"
       :row-key="(row: Models.AutoIngestPlan) => row.id"
       v-model:checked-row-keys="selectedPlanIds"
+      @update:checked-row-keys="handlePlanSelectionChange"
       class="autoingest-table"
       remote
     />
@@ -192,6 +201,7 @@ import {
   NTab,
   NTag,
   useMessage,
+  useDialog,
   type DataTableColumns,
   type PaginationProps,
 } from 'naive-ui'
@@ -206,17 +216,18 @@ import {
 } from '@vicons/ionicons5'
 import {
   getAutoIngestPlanList,
+  getAutoIngestLogList,
+  deleteAutoIngestPlan,
   enableAutoIngestPlan,
   disableAutoIngestPlan,
   refreshAutoIngestPlan,
-  deleteAutoIngestPlan,
-  getAutoIngestLogList,
   retryFailedAutoIngest,
-  deleteErrorLogs,
+  clearAutoIngestLogs,
   retryAutoIngestPlan,
   batchRetryPlan,
   batchRefreshPlan,
   batchDeletePlan,
+  batchEnablePlan,
   batchDisablePlan,
   type PlanLogResult,
 } from '@/api/autoingest'
@@ -228,6 +239,7 @@ import EditPlanModal from '@/components/autoingest/EditPlanModal.vue'
 import { type ApiResponse, type BatchOperationResponse } from '@/utils/api'
 
 const message = useMessage()
+const dialog = useDialog()
 
 // Tabs
 const activeTab = ref<'plans' | 'logs'>('plans')
@@ -266,6 +278,15 @@ const selectedPlanRows = ref<Models.AutoIngestPlan[]>([])
 const hasEnabledPlans = computed(() => {
   return selectedPlanRows.value.some((p) => p.enabled)
 })
+const hasDisabledPlans = computed(() => {
+  return selectedPlanRows.value.some((p) => !p.enabled)
+})
+
+// 处理复选框选择变化
+const handlePlanSelectionChange = (keys: any) => {
+  selectedPlanIds.value = keys as number[]
+  selectedPlanRows.value = planTable.value.filter((p) => keys.includes(p.id))
+}
 
 // 批量操作处理函数
 const handleBatchRetry = () => {
@@ -302,6 +323,25 @@ const handleBatchRefresh = () => {
     .catch((err: unknown) => {
       console.error('批量扫描失败', err)
       message.error('批量扫描失败')
+    })
+}
+
+const handleBatchEnable = () => {
+  batchEnablePlan({ ids: selectedPlanIds.value })
+    .then((res: ApiResponse<BatchOperationResponse>) => {
+      if (res.code === 200) {
+        message.success(
+          `批量启用完成：成功 ${res.data?.success || 0}，失败 ${res.data?.failed || 0}`
+        )
+        selectedPlanIds.value = []
+        fetchPlanList()
+      } else {
+        message.error(res.msg || '批量启用失败')
+      }
+    })
+    .catch((err: unknown) => {
+      console.error('批量启用失败', err)
+      message.error('批量启用失败')
     })
 }
 
@@ -717,40 +757,29 @@ const handleLogReset = () => {
   fetchLogList()
 }
 
-// 批量重试所有失败任务
-const handleRetryAllFailed = () => {
-  const planId = logQuery.planId
-  retryFailedAutoIngest({ planId })
-    .then((res) => {
-      if (res.code === 200 || res.code === 0) {
-        message.success('已下发重试任务')
-        fetchLogList()
-      } else {
-        message.error(res.msg || '重试失败')
-      }
-    })
-    .catch((err: unknown) => {
-      console.error('重试失败', err)
-      message.error('重试失败')
-    })
-}
-
-// 删除错误日志
+// 清空日志
 const handleDeleteErrorLogs = () => {
-  const planId = logQuery.planId
-  deleteErrorLogs({ planId })
-    .then((res) => {
-      if (res.code === 200 || res.code === 0) {
-        message.success(`已删除 ${res.data} 条错误日志`)
-        fetchLogList()
-      } else {
-        message.error(res.msg || '删除失败')
-      }
-    })
-    .catch((err: unknown) => {
-      console.error('删除失败', err)
-      message.error('删除失败')
-    })
+  dialog.warning({
+    title: '清空日志',
+    content: '确定要清空所有运行日志吗？此操作不可撤销。',
+    positiveText: '确认清空',
+    negativeText: '取消',
+    onPositiveClick: () => {
+      clearAutoIngestLogs()
+        .then((res) => {
+          if (res.code === 200 || res.code === 0) {
+            message.success(`已清空 ${res.data} 条日志`)
+            fetchLogList()
+          } else {
+            message.error(res.msg || '清空失败')
+          }
+        })
+        .catch((err: unknown) => {
+          console.error('清空失败', err)
+          message.error('清空失败')
+        })
+    },
+  })
 }
 
 const logColumns: DataTableColumns<Models.AutoIngestLog> = [

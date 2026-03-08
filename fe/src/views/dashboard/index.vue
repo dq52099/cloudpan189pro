@@ -58,7 +58,7 @@
       <!-- 资源统计展示区 -->
       <n-grid-item :span="24">
         <n-card title="资源统计" class="resource-card" v-loading="loadingSummary">
-          <n-grid :cols="6" :x-gap="16" :y-gap="16">
+          <n-grid :cols="5" :x-gap="24" :y-gap="24">
             <n-grid-item>
               <div class="stat-item">
                 <div class="stat-icon" style="background: #2080f0">
@@ -95,6 +95,39 @@
             <n-grid-item>
               <div class="stat-item">
                 <div class="stat-icon" style="background: #9c27b0">
+                  <n-icon size="24"><ShareSocialOutline /></n-icon>
+                </div>
+                <div class="stat-content">
+                  <div class="stat-value">{{ summaryData.subscribeShares }}</div>
+                  <div class="stat-label">订阅分享</div>
+                </div>
+              </div>
+            </n-grid-item>
+            <n-grid-item>
+              <div class="stat-item">
+                <div class="stat-icon" style="background: #ff9800">
+                  <n-icon size="24"><FolderOpenOutline /></n-icon>
+                </div>
+                <div class="stat-content">
+                  <div class="stat-value">{{ summaryData.virtualFiles.folders }}</div>
+                  <div class="stat-label">文件夹数</div>
+                </div>
+              </div>
+            </n-grid-item>
+            <n-grid-item>
+              <div class="stat-item">
+                <div class="stat-icon" style="background: #00acc1">
+                  <n-icon size="24"><DocumentOutline /></n-icon>
+                </div>
+                <div class="stat-content">
+                  <div class="stat-value">{{ summaryData.virtualFiles.files }}</div>
+                  <div class="stat-label">文件数</div>
+                </div>
+              </div>
+            </n-grid-item>
+            <n-grid-item>
+              <div class="stat-item">
+                <div class="stat-icon" style="background: #7b1fa2">
                   <n-icon size="24"><PlayOutline /></n-icon>
                 </div>
                 <div class="stat-content">
@@ -149,10 +182,13 @@ import {
 import {
   PeopleOutline,
   FolderOutline,
+  FolderOpenOutline,
+  DocumentOutline,
   KeyOutline,
   PlayOutline,
   ServerOutline,
   TimeOutline,
+  ShareSocialOutline,
 } from '@vicons/ionicons5'
 import { useSystemStore, useUserStore } from '@/stores'
 import { getResourceSummary, type ResourceSummary } from '@/api/resource'
@@ -169,6 +205,8 @@ const summaryData = ref<ResourceSummary>({
   userGroups: 0,
   mountPoints: { total: 0, enabled: 0, autoRefresh: 0 },
   cloudTokens: { total: 0, active: 0 },
+  virtualFiles: { folders: 0, files: 0 },
+  subscribeShares: 0,
   media: { enabled: false, strmFiles: 0, mediaFiles: 0 },
   autoIngest: { plans: 0, logs24h: 0 },
   tasks: { pending: 0, running: 0, failed: 0, completed: 0 },

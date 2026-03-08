@@ -104,9 +104,9 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 
 	var (
 		userHandler           = user.NewHandler(userService, userGroupService, loginLogService)
-		settingHandler        = setting.NewHandler(userService, settingService)
+		settingHandler        = setting.NewHandler(userService, settingService, taskEngine)
 		userGroupHandler      = usergroup.NewHandler(userGroupService, group2FileService, userService)
-		storageHandler        = storage.NewHandler(taskEngine, virtualFileService, cloudBridgeService, cloudTokenService, mountPointService, fileTaskLogService, storageFacadeService)
+		storageHandler        = storage.NewHandler(taskEngine, virtualFileService, cloudBridgeService, cloudTokenService, mountPointService, fileTaskLogService, storageFacadeService, mediaFileService)
 		storageAdvanceHandler = advance.NewHandler(cloudBridgeService, cloudTokenService)
 		cloudTokenHandler     = cloudtoken.NewHandler(cloudTokenService, mountPointService)
 		fileHandler           = file.NewHandler(virtualFileService, verifyService, cloudTokenService, cloudBridgeService, mountPointService, group2FileService, taskEngine)
@@ -181,6 +181,7 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 			storageRouter.POST("/batch_add", wrap(storageHandler.BatchAdd()))
 			storageRouter.POST("/delete", wrap(storageHandler.Delete()))
 			storageRouter.POST("/batch_delete", wrap(storageHandler.BatchDelete()))
+			storageRouter.POST("/clear_all", wrap(storageHandler.ClearAll()))
 			storageRouter.POST("/batch_parse_text", wrap(storageHandler.BatchParseFromText()))
 			storageRouter.POST("/batch_refresh", wrap(storageHandler.BatchRefresh()))
 			storageRouter.POST("/batch_modify_token", wrap(storageHandler.BatchModifyToken()))
@@ -273,9 +274,11 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 			autoIngestRouter.POST("/plan/retry", wrap(autoIngestHandler.RetryPlan()))
 			autoIngestRouter.GET("/log/list", wrap(autoIngestHandler.LogList()))
 			autoIngestRouter.POST("/log/delete_error", wrap(autoIngestHandler.DeleteErrorLogs()))
+			autoIngestRouter.POST("/log/clear", wrap(autoIngestHandler.ClearLogs()))
 			autoIngestRouter.POST("/plan/batch_retry", wrap(autoIngestHandler.BatchRetry()))
 			autoIngestRouter.POST("/plan/batch_refresh", wrap(autoIngestHandler.BatchRefresh()))
 			autoIngestRouter.POST("/plan/batch_delete", wrap(autoIngestHandler.BatchDelete()))
+			autoIngestRouter.POST("/plan/batch_enable", wrap(autoIngestHandler.BatchEnable()))
 			autoIngestRouter.POST("/plan/batch_disable", wrap(autoIngestHandler.BatchDisable()))
 		}
 	}

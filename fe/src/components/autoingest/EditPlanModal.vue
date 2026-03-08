@@ -167,7 +167,7 @@ const form = reactive<
   id: 0,
   name: '',
   parentPath: '',
-  onConflict: 'rename',
+  onConflict: 'abandon',
   autoIngestInterval: 30,
   tokenId: undefined,
   refreshStrategy: {
@@ -297,7 +297,7 @@ const resetAll = () => {
   // 保留 id，其余恢复到默认（下次打开由 props.plan 再次填充）
   form.name = ''
   form.parentPath = ''
-  form.onConflict = 'rename'
+  form.onConflict = 'abandon'
   form.autoIngestInterval = 30
   form.tokenId = undefined
   form.refreshStrategy.enableAutoRefresh = false

@@ -125,6 +125,11 @@ export const deleteErrorLogs = (data: { planId?: number }): Promise<ApiResponse<
   return api.post('/auto_ingest/log/delete_error', data).then((res) => res.data)
 }
 
+// 清空所有日志
+export const clearAutoIngestLogs = (): Promise<ApiResponse<number>> => {
+  return api.post('/auto_ingest/log/clear').then((res) => res.data)
+}
+
 // 重试计划（重新获取历史记录）
 export const retryAutoIngestPlan = (data: { id: number }): Promise<ApiResponse> => {
   return api.post('/auto_ingest/plan/retry', data).then((res) => res.data)
@@ -165,4 +170,11 @@ export const batchDisablePlan = (
   data: BatchRetryPlanRequest
 ): Promise<ApiResponse<BatchOperationResponse>> => {
   return api.post('/auto_ingest/plan/batch_disable', data).then((res) => res.data)
+}
+
+// 批量启用计划
+export const batchEnablePlan = (
+  data: BatchRetryPlanRequest
+): Promise<ApiResponse<BatchOperationResponse>> => {
+  return api.post('/auto_ingest/plan/batch_enable', data).then((res) => res.data)
 }

@@ -5,6 +5,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/shared"
+	"go.uber.org/zap"
 )
 
 // 使用指针以便区分“未提供”和“提供零值”的场景
@@ -73,6 +74,13 @@ func (h *handler) ModifyAddition() httpcontext.HandlerFunc {
 
 		if req.WorkerCount != nil {
 			merged.WorkerCount = *req.WorkerCount
+			if h.taskEngine != nil {
+				if err := h.taskEngine.SetWorkerCount(*req.WorkerCount); err != nil {
+					ctx.GetContext().Warn("热更新工作流数失败", zap.Error(err))
+				} else {
+					ctx.GetContext().Info("热更新工作流数成功", zap.Int("count", *req.WorkerCount))
+				}
+			}
 		}
 
 		if req.EnableStorageAutoRefresh != nil {

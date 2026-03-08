@@ -22,6 +22,7 @@ type Service interface {
 	DeleteStrmByFullPath(ctx context.Context, fullPath string) error
 	ClearEmptyDir(ctx context.Context, entryPath string) error
 	Clear(ctx context.Context, rootPath string) error
+	ClearAll(ctx context.Context) error
 }
 
 type service struct {

@@ -209,6 +209,49 @@
           </div>
         </div>
       </div>
+
+      <!-- 工作流数 -->
+      <div class="setting-item">
+        <div class="item-left">
+          <div class="item-title">工作流数</div>
+          <div class="item-desc">任务引擎的工作线程数，建议 4-8</div>
+        </div>
+        <div class="item-right">
+          <div class="right-inline">
+            <n-slider
+              v-model:value="additionForm.workerCount"
+              :min="1"
+              :max="32"
+              :step="1"
+              style="width: 340px"
+              @change="handleWorkerCountChange"
+            />
+            <n-button
+              size="small"
+              type="primary"
+              :loading="savingWorkerCount"
+              @click="handleWorkerCountChange"
+            >
+              保存
+            </n-button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 存储自动刷新 -->
+      <div class="setting-item">
+        <div class="item-left">
+          <div class="item-title">存储自动刷新</div>
+          <div class="item-desc">开启后，挂载的存储将自动定时刷新文件列表</div>
+        </div>
+        <div class="item-right">
+          <n-switch
+            v-model:value="additionForm.enableStorageAutoRefresh"
+            :loading="savingStorageAutoRefresh"
+            @update:value="handleToggleStorageAutoRefresh"
+          />
+        </div>
+      </div>
     </section>
   </div>
 </template>
@@ -280,6 +323,8 @@ const additionForm = reactive<Models.SettingAddition>({
   multipleStreamThreadCount: 4,
   multipleStreamChunkSize: 4 * 1024 * 1024, // 4 MiB
   taskThreadCount: 1,
+  workerCount: 4,
+  enableStorageAutoRefresh: true,
 })
 
 // 初始化完成标记，防止初始渲染触发自动保存
@@ -291,6 +336,8 @@ const savingMultipleStream = ref(false)
 const savingThreadCount = ref(false)
 const savingChunkSize = ref(false)
 const savingTaskThreads = ref(false)
+const savingWorkerCount = ref(false)
+const savingStorageAutoRefresh = ref(false)
 
 // 通用保存函数：仅提交传入字段
 const saveAdditionField = (payload: Record<string, unknown>, setLoading: (v: boolean) => void) => {
@@ -311,6 +358,16 @@ const saveAdditionField = (payload: Record<string, unknown>, setLoading: (v: boo
     .finally(() => {
       setLoading(false)
     })
+}
+
+// 工作流数量保存
+const handleWorkerCountChange = () => {
+  saveAdditionField({ workerCount: additionForm.workerCount }, (v) => (savingWorkerCount.value = v))
+}
+
+// 存储自动刷新保存
+const handleToggleStorageAutoRefresh = (val: boolean) => {
+  saveAdditionField({ enableStorageAutoRefresh: val }, (v) => (savingStorageAutoRefresh.value = v))
 }
 
 // 开机关联保存
@@ -493,6 +550,8 @@ onMounted(() => {
         additionForm.multipleStreamThreadCount = res.data.multipleStreamThreadCount ?? 4
         additionForm.multipleStreamChunkSize = res.data.multipleStreamChunkSize ?? 4 * 1024 * 1024
         additionForm.taskThreadCount = res.data.taskThreadCount ?? 1
+        additionForm.workerCount = res.data.workerCount ?? 4
+        additionForm.enableStorageAutoRefresh = res.data.enableStorageAutoRefresh ?? true
       } else {
         message.error(res.msg || '获取附加设置失败')
       }

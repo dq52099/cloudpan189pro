@@ -217,3 +217,13 @@ export const toggleAutoRefresh = (data: ToggleAutoRefreshRequest): Promise<ApiRe
 export const modifyToken = (data: ModifyTokenRequest): Promise<ApiResponse> => {
   return api.post('/storage/modify_token', data).then((res) => res.data)
 }
+
+// 清空所有存储挂载
+export interface ClearAllStorageRequest {
+  deleteFiles?: boolean // 是否同时删除源文件
+}
+
+// 清空所有存储挂载
+export const clearAllStorage = (data?: ClearAllStorageRequest): Promise<ApiResponse<number>> => {
+  return api.post('/storage/clear_all', data).then((res) => res.data)
+}

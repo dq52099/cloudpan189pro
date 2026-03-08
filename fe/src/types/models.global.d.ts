@@ -122,6 +122,8 @@ declare namespace Models {
     multipleStreamThreadCount: number
     multipleStreamChunkSize: number
     taskThreadCount: number
+    workerCount: number
+    enableStorageAutoRefresh: boolean
   }
 
   // 任务引擎统计信息（对应后端 TaskStats）
@@ -222,7 +224,7 @@ declare namespace Models {
     baseURL: string
     includedSuffixes: string[] // 包括的后缀格式 不包括的将过滤 如果为空则表示不过滤
     autoRebuildEnable?: boolean // 定时重建strm开关
-    autoRebuildInterval?: number // 定时重建间隔（小时）
+    autoRebuildCron?: string // 定时重建cron表达式
     createdAt: string
     updatedAt: string
   }

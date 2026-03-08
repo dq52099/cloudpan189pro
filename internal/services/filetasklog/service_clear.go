@@ -7,7 +7,7 @@ import (
 )
 
 func (s *service) Clear(ctx context.Context) error {
-	if err := s.getDB(ctx).Unscoped().Delete(&models.FileTaskLog{}).Error; err != nil {
+	if err := s.getDB(ctx).Exec("DELETE FROM file_task_logs").Error; err != nil {
 		ctx.Error("清空任务日志失败", zap.Error(err))
 		return err
 	}

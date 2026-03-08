@@ -25,6 +25,8 @@ type TaskEngine interface {
 	GetStats() TaskStats
 	GetRunningTasks() []*TaskInfo
 	GetPendingTasks() []*TaskInfo
+
+	SetWorkerCount(count int) error
 }
 
 type taskEngine struct {
@@ -403,4 +405,33 @@ func (t *taskEngine) GetPendingTasks() []*TaskInfo {
 	}
 
 	return tasks
+}
+
+func (t *taskEngine) SetWorkerCount(count int) error {
+	if count <= 0 || count > 64 {
+		return fmt.Errorf("invalid worker count: %d", count)
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// 总是更新 WorkerCount 配置
+	oldCount := t.options.WorkerCount
+	t.options.WorkerCount = count
+
+	// 如果engine已启动，需要动态调整workers
+	if t.running {
+		if count > oldCount {
+			needAdd := count - oldCount
+			t.workerGroup.Add(needAdd)
+			for i := 0; i < needAdd; i++ {
+				go t.worker(fmt.Sprintf("worker_%d", oldCount+i))
+			}
+			t.logger.Info("added workers", zap.Int("added", needAdd), zap.Int("total", count))
+		} else if count < oldCount {
+			t.logger.Info("worker count decreased, will naturally shrink on next worker exit", zap.Int("old", oldCount), zap.Int("new", count))
+		}
+	}
+
+	return nil
 }

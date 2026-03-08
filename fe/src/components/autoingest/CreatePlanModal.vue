@@ -265,7 +265,7 @@ const detailForm = reactive<
   parentPath: '',
   upUserId: '', // 注意：提交时使用 parsedSubscribeUserId
   cloudToken: undefined,
-  onConflict: 'rename',
+  onConflict: 'abandon',
   autoIngestInterval: 30,
   oneClickAddHistory: false,
   refreshStrategy: {
@@ -433,7 +433,7 @@ const resetAll = () => {
   detailForm.name = ''
   detailForm.parentPath = ''
   detailForm.cloudToken = undefined
-  detailForm.onConflict = 'rename'
+  detailForm.onConflict = 'abandon'
   detailForm.autoIngestInterval = 30
   detailForm.oneClickAddHistory = false
   detailForm.refreshStrategy.enableAutoRefresh = false

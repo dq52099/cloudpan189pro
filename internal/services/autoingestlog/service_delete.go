@@ -28,3 +28,8 @@ func (s *service) DeleteErrorLogsByPlanId(ctx appContext.Context, planId int64) 
 	result := db.Delete(&models.AutoIngestLog{})
 	return result.RowsAffected, result.Error
 }
+
+func (s *service) Clear(ctx appContext.Context) (int64, error) {
+	result := s.getDB(ctx).Exec("DELETE FROM auto_ingest_logs")
+	return result.RowsAffected, result.Error
+}

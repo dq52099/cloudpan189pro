@@ -8,6 +8,7 @@ import (
 	cloudbridgeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
 	cloudtokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
 	filetasklogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/filetasklog"
+	mediafileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mediafile"
 	mountPointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 	storageFacadeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/storagefacade"
 	virtualfileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/virtualfile"
@@ -26,6 +27,7 @@ type Handler interface {
 	Refresh() httpcontext.HandlerFunc
 	ToggleAutoRefresh() httpcontext.HandlerFunc
 	ModifyToken() httpcontext.HandlerFunc
+	ClearAll() httpcontext.HandlerFunc
 }
 
 var bi = httpcontext.NewBusinessGenerator(consts.BusCodeStorageStartCode)
@@ -76,6 +78,7 @@ type handler struct {
 	mountPointService    mountPointSvi.Service
 	fileTaskLogService   filetasklogSvi.Service
 	storageFacadeService storageFacadeSvi.Service
+	mediaFileService     mediafileSvi.Service
 }
 
 func NewHandler(
@@ -86,6 +89,7 @@ func NewHandler(
 	mountPointService mountPointSvi.Service,
 	fileTaskLogService filetasklogSvi.Service,
 	storageFacadeService storageFacadeSvi.Service,
+	mediaFileService mediafileSvi.Service,
 ) Handler {
 	return &handler{
 		virtualFileService:   virtualFileService,
@@ -95,5 +99,6 @@ func NewHandler(
 		taskEngine:           taskEngine,
 		fileTaskLogService:   fileTaskLogService,
 		storageFacadeService: storageFacadeService,
+		mediaFileService:     mediaFileService,
 	}
 }

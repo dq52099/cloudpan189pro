@@ -52,15 +52,20 @@ const handleTabChange = (name: 'engine' | 'file' | 'login') => {
 
 <style scoped>
 .logs-tabs-page {
-  padding: 24px;
+  padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
+}
+
+.logs-tabs-page :deep(.n-tabs-tab) {
+  padding: 8px 16px;
+  font-size: 15px;
 }
 
 .content {
   background: var(--n-card-color);
-  border-radius: 6px;
-  padding: 24px 0;
+  border-radius: 12px;
+  overflow: hidden;
 }
 </style>

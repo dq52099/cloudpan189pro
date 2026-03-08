@@ -74,7 +74,12 @@ type SummaryResponse struct {
 		Total  int64 `json:"total"`
 		Active int64 `json:"active"`
 	} `json:"cloudTokens"`
-	Media struct {
+	VirtualFiles struct {
+		Folders int64 `json:"folders"`
+		Files   int64 `json:"files"`
+	} `json:"virtualFiles"`
+	SubscribeShares int64 `json:"subscribeShares"`
+	Media           struct {
 		Enabled    bool  `json:"enabled"`
 		StrmFiles  int64 `json:"strmFiles"`
 		MediaFiles int64 `json:"mediaFiles"`
@@ -108,12 +113,16 @@ func (h *handler) Summary() httpcontext.HandlerFunc {
 		h.db.Model(&models.CloudToken{}).Count(&resp.CloudTokens.Total)
 		h.db.Model(&models.CloudToken{}).Where("enable = ?", true).Count(&resp.CloudTokens.Active)
 
+		h.db.Model(&models.VirtualFile{}).Where("is_dir = ?", true).Count(&resp.VirtualFiles.Folders)
+		h.db.Model(&models.VirtualFile{}).Where("is_dir = ?", false).Count(&resp.VirtualFiles.Files)
+		h.db.Model(&models.MountPoint{}).Where("os_type = ?", "subscribe_share_folder").Count(&resp.SubscribeShares)
+
 		if h.mediaConfigService != nil {
 			config, err := h.mediaConfigService.Query(ctx.GetContext())
 			if err == nil && config != nil {
 				resp.Media.Enabled = config.Enable
 				if config.Enable {
-					h.db.Model(&models.MediaFile{}).Where("is_str = ?", true).Count(&resp.Media.StrmFiles)
+					h.db.Model(&models.MediaFile{}).Where("media_type = ?", "strm").Count(&resp.Media.StrmFiles)
 					h.db.Model(&models.MediaFile{}).Count(&resp.Media.MediaFiles)
 				}
 			}

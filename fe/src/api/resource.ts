@@ -16,6 +16,11 @@ export interface ResourceSummary {
     total: number
     active: number
   }
+  virtualFiles: {
+    folders: number
+    files: number
+  }
+  subscribeShares: number
   media: {
     enabled: boolean
     strmFiles: number

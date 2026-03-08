@@ -36,20 +36,35 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 			ctx.AbortWithInvalidParams(err)
 			return
 		}
-		if len(req.IDs) > 0 {
-			tracker, _ := h.fileTaskLogService.Create(
-				ctx.GetContext(),
-				"批量删除", // 自定义Topic名
-				fmt.Sprintf("批量删除 %d 个挂载点", len(req.IDs)),
-				filetasklogSvi.WithFile(req.IDs[0]), // 以第一个ID作为代表
-				filetasklogSvi.WithDesc(fmt.Sprintf("ID列表: %v", req.IDs)),
-			)
-			if tracker != nil {
-				_ = h.fileTaskLogService.Completed(ctx.GetContext(), tracker)
+
+		// 转换为file_id
+		fileIDs := make([]int64, 0, len(req.IDs))
+		for _, id := range req.IDs {
+			mp, err := h.mountPointService.Query(ctx.GetContext(), id)
+			if err != nil {
+				ctx.GetContext().Warn("查询挂载点失败，跳过", zap.Int64("id", id), zap.Error(err))
+				continue
 			}
+			fileIDs = append(fileIDs, mp.FileId)
 		}
 
-		task := &topic.FileBatchDeleteRequest{IDs: req.IDs}
+		if len(fileIDs) == 0 {
+			ctx.Fail(busCodeStorageMountPointNotFound)
+			return
+		}
+
+		tracker, _ := h.fileTaskLogService.Create(
+			ctx.GetContext(),
+			"批量删除",
+			fmt.Sprintf("批量删除 %d 个挂载点", len(req.IDs)),
+			filetasklogSvi.WithFile(fileIDs[0]),
+			filetasklogSvi.WithDesc(fmt.Sprintf("ID列表: %v", fileIDs)),
+		)
+		if tracker != nil {
+			_ = h.fileTaskLogService.Completed(ctx.GetContext(), tracker)
+		}
+
+		task := &topic.FileBatchDeleteRequest{IDs: fileIDs}
 		body, _ := json.Marshal(task)
 
 		err := h.taskEngine.PushMessage(
@@ -64,7 +79,7 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 			return
 		}
 
-		ctx.GetContext().Info("批量删除请求已加入队列", zap.Int("count", len(req.IDs)))
+		ctx.GetContext().Info("批量删除请求已加入队列", zap.Int("count", len(fileIDs)))
 		ctx.Success("删除任务已提交，后台处理中")
 	}
 }

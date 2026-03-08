@@ -10,6 +10,7 @@ import (
 	"github.com/casbin/casbin/v2"
 	"github.com/xxcheng123/cloudpan189-share/internal/configs"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
+	"github.com/xxcheng123/cloudpan189-share/internal/shared"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 	"moul.io/zapgorm2"
@@ -108,6 +109,15 @@ func newServiceContext(c *configs.RuntimeConfig) (ServiceContext, error) {
 	}
 
 	taskEngine := initTaskEngine(logger, c.TaskEngine)
+
+	// 如果数据库中设置了 WorkerCount，优先使用数据库值
+	if shared.SettingAddition.WorkerCount > 0 {
+		if err := taskEngine.SetWorkerCount(shared.SettingAddition.WorkerCount); err != nil {
+			logger.Warn("从数据库设置工作流数失败", zap.Error(err))
+		} else {
+			logger.Info("已从数据库加载工作流数", zap.Int("workerCount", shared.SettingAddition.WorkerCount))
+		}
+	}
 
 	gLogger := zapgorm2.New(logger)
 	gLogger.SetAsDefault()

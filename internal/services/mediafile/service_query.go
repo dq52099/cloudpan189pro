@@ -10,7 +10,7 @@ import (
 func (s *service) QueryStrm(ctx context.Context, fid int64) (*models.MediaFile, error) {
 	file := new(models.MediaFile)
 	if err := s.getDB(ctx).Where("fid = ?", fid).Where("media_type = ?", media.TypeStrm).First(&file).Error; err != nil {
-		ctx.Error("文件查询信息失败", zap.Int64("fid", fid), zap.Error(err))
+		ctx.Debug("文件查询信息失败", zap.Int64("fid", fid), zap.Error(err))
 
 		return nil, err
 	}
@@ -21,7 +21,7 @@ func (s *service) QueryStrm(ctx context.Context, fid int64) (*models.MediaFile, 
 func (s *service) QueryByPath(ctx context.Context, path string) (*models.MediaFile, error) {
 	file := new(models.MediaFile)
 	if err := s.getDB(ctx).Where("path = ?", path).First(&file).Error; err != nil {
-		ctx.Error("文件查询信息失败", zap.String("path", path), zap.Error(err))
+		ctx.Debug("文件查询信息失败", zap.String("path", path), zap.Error(err))
 
 		return nil, err
 	}

@@ -5,7 +5,7 @@ import (
 
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
-
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/taskengine"
 	settingSvi "github.com/xxcheng123/cloudpan189-share/internal/services/setting"
 	userSvi "github.com/xxcheng123/cloudpan189-share/internal/services/user"
 )
@@ -35,13 +35,15 @@ var (
 type handler struct {
 	userService    userSvi.Service
 	settingService settingSvi.Service
+	taskEngine     taskengine.TaskEngine
 	initTime       time.Time
 }
 
-func NewHandler(userService userSvi.Service, settingService settingSvi.Service) Handler {
+func NewHandler(userService userSvi.Service, settingService settingSvi.Service, taskEngine taskengine.TaskEngine) Handler {
 	return &handler{
 		userService:    userService,
 		settingService: settingService,
+		taskEngine:     taskEngine,
 		initTime:       time.Now(),
 	}
 }

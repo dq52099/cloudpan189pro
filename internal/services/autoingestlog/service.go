@@ -25,6 +25,9 @@ type Service interface {
 
 	// DeleteErrorLogsByPlanId 删除指定计划的所有错误日志
 	DeleteErrorLogsByPlanId(ctx appContext.Context, planId int64) (int64, error)
+
+	// Clear 清空所有日志
+	Clear(ctx appContext.Context) (int64, error)
 }
 
 // service 与构造函数，保持与 autoingestplan/mountpoint/filetasklog 风格一致

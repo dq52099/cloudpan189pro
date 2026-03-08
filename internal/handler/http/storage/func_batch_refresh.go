@@ -62,7 +62,7 @@ func (h *handler) BatchRefresh() httpcontext.HandlerFunc {
 			}
 
 			taskReq := &topic.FileScanFileRequest{
-				FileId: id,
+				FileId: mountPoint.FileId,
 				Deep:   req.Deep,
 			}
 			body, _ := json.Marshal(taskReq)

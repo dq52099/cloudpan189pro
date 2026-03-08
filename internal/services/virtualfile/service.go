@@ -35,6 +35,7 @@ type Service interface {
 	BatchUpdatePlus(ctx context.Context, values []utils.Field, exps []clause.Expression) error
 	GroupCountByTopId(ctx context.Context, req *GroupCountByTopIdRequest) ([]*GroupCountByTopId, error)
 	ClearUnusedAncestorFolder(ctx context.Context, subId int64) error
+	ClearAll(ctx context.Context) error
 }
 
 type service struct {

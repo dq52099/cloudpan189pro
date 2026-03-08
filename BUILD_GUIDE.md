@@ -1,5 +1,82 @@
 # 项目编译构建指南
 
+## 开发流程
+
+### 1. 构建前端
+```bash
+cd fe
+npm run build
+```
+
+### 2. 编译后端
+```bash
+go build -o output/share.exe ./cmd/main.go
+```
+
+### 3. 检查服务状态
+```bash
+# 查找进程
+netstat -ano | findstr ":12395 " | findstr LISTENING
+
+# 或
+tasklist | findstr share
+```
+
+### 4. 停止旧服务
+```bash
+taskkill //F //IM share.exe
+# 或
+taskkill //F //PID <PID>
+```
+
+### 5. 启动新服务
+```bash
+# 前台运行（查看日志）
+./output/share.exe
+
+# 后台运行
+./output/share.exe > logs/share.log 2>&1 &
+```
+
+### 6. 验证服务运行
+```bash
+# 检查端口
+netstat -ano | findstr ":12395 " | findstr LISTENING
+
+# 检查日志
+type logs\share.log
+```
+
+---
+
+## 一键启动（推荐）
+
+直接在项目根目录运行：
+
+```bat
+cd fe && npm run build && cd .. && go build -o output/share.exe ./cmd/main.go && taskkill //F //IM share.exe 2>nul & timeout /t 1 /nobreak >nul & output/share.exe > logs/share.log 2>&1
+```
+
+或者分步执行：
+```bat
+cd fe
+npm run build
+cd ..
+go build -o output/share.exe ./cmd/main.go
+taskkill //F //IM share.exe 2>nul
+timeout /t 1 /nobreak >nul
+output/share.exe > logs/share.log 2>&1
+```
+
+---
+
+```bash
+# 构建前端 -> 编译后端 -> 重启服务
+cd fe && npm run build && cd .. && go build -o output/share.exe ./cmd/main.go && taskkill //F //IM share.exe 2>nul & sleep 1 && ./output/share.exe > logs/share.log 2>&1 &
+```
+
+---
+
 ## 前置说明
 
 - 前端使用 Vue.js + Vite

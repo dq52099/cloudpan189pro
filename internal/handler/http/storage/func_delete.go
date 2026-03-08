@@ -57,7 +57,7 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 		_ = h.virtualFileService.ClearUnusedAncestorFolder(ctx.GetContext(), mountPointInfo.FileId)
 
 		taskReq := &topic.FileBatchDeleteRequest{
-			IDs: []int64{req.ID},
+			IDs: []int64{mountPointInfo.FileId},
 		}
 
 		body, _ := json.Marshal(taskReq)

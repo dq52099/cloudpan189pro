@@ -2,50 +2,86 @@
   <div class="storages-page">
     <!-- 头部区域 -->
     <div class="header">
-      <div class="header-left">
-        <n-input
-          v-model:value="searchKeyword"
-          placeholder="请输入路径搜索"
-          clearable
-          style="width: 200px; margin-right: 12px"
-          @keyup.enter="handleSearch"
-        >
-          <template #prefix>
-            <n-icon :size="16" :depth="3">
-              <SearchOutline />
-            </n-icon>
-          </template>
-        </n-input>
-        <n-select
-          v-model:value="selectedTaskLogStatus"
-          placeholder="扫描状态"
-          clearable
-          style="width: 120px; margin-right: 12px"
-          :options="taskLogStatusOptions"
-          @update:value="handleSearch"
-        />
-        <n-button type="primary" @click="handleSearch" style="margin-right: 8px">
-          <template #icon>
-            <n-icon>
-              <SearchOutline />
-            </n-icon>
-          </template>
-          搜索
-        </n-button>
-        <n-button @click="handleReset">
-          <template #icon>
-            <n-icon>
-              <RefreshOutline />
-            </n-icon>
-          </template>
-          重置
-        </n-button>
-        <n-text v-if="pageAutoRefreshStore.autoRefreshEnabled">
-          上次刷新时间：{{ refreshTime.format('YYYY-MM-DD HH:mm:ss') }}
-        </n-text>
+      <!-- 第一行 -->
+      <div class="header-row">
+        <div class="header-search">
+          <n-input
+            v-model:value="searchKeyword"
+            placeholder="请输入路径搜索"
+            clearable
+            style="width: 200px; margin-right: 12px"
+            @keyup.enter="handleSearch"
+          >
+            <template #prefix>
+              <n-icon :size="16" :depth="3">
+                <SearchOutline />
+              </n-icon>
+            </template>
+          </n-input>
+          <n-select
+            v-model:value="selectedTaskLogStatus"
+            placeholder="扫描状态"
+            clearable
+            style="width: 120px; margin-right: 12px"
+            :options="taskLogStatusOptions"
+            @update:value="handleSearch"
+          />
+          <n-button type="primary" @click="handleSearch" style="margin-right: 8px">
+            <template #icon>
+              <n-icon>
+                <SearchOutline />
+              </n-icon>
+            </template>
+            搜索
+          </n-button>
+          <n-button @click="handleReset">
+            <template #icon>
+              <n-icon>
+                <RefreshOutline />
+              </n-icon>
+            </template>
+            重置
+          </n-button>
+          <n-text v-if="pageAutoRefreshStore.autoRefreshEnabled" depth="3" style="margin-left: 8px">
+            上次刷新：{{ refreshTime.format('YYYY-MM-DD HH:mm:ss') }}
+          </n-text>
+        </div>
+        <div class="header-actions-left">
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button text @click="handlePageSettings" style="font-size: 16px">
+                <template #icon>
+                  <n-icon>
+                    <SettingsOutline />
+                  </n-icon>
+                </template>
+              </n-button>
+            </template>
+            页面设置
+          </n-tooltip>
+          <n-dropdown trigger="click" :options="addMountOptions" @select="handleSelectMountType">
+            <n-button type="primary">
+              <template #icon>
+                <n-icon>
+                  <AddOutline />
+                </n-icon>
+              </template>
+              新增挂载
+            </n-button>
+          </n-dropdown>
+          <n-button type="error" ghost @click="handleClearAll">
+            <template #icon>
+              <n-icon>
+                <TrashOutline />
+              </n-icon>
+            </template>
+            清空所有
+          </n-button>
+          <n-button v-if="!isBatchMode" @click="enterBatchMode">批量管理</n-button>
+        </div>
       </div>
-      <div class="header-right batch-mode">
-        <template v-if="isBatchMode">
+      <!-- 第二行 -->
+      <div v-if="isBatchMode" class="header-row" style="justify-content: flex-end; gap: 24px;">
           <n-button
             :type="isAllSelected ? 'warning' : 'default'"
             @click="toggleSelectAll"
@@ -106,37 +142,10 @@
             删除选中 ({{ selectedIds.length }})
           </n-button>
           <n-button @click="exitBatchMode" class="batch-btn">取消</n-button>
-        </template>
-        <template v-else>
-          <n-button @click="enterBatchMode" style="margin-right: 12px">批量管理</n-button>
-        </template>
-        <n-tooltip trigger="hover">
-          <template #trigger>
-            <n-button text @click="handlePageSettings" style="margin-right: 8px; font-size: 16px">
-              <template #icon>
-                <n-icon>
-                  <SettingsOutline />
-                </n-icon>
-              </template>
-            </n-button>
-          </template>
-          页面设置
-        </n-tooltip>
-        <!-- 下拉菜单 -->
-        <n-dropdown trigger="click" :options="addMountOptions" @select="handleSelectMountType">
-          <n-button type="primary">
-            <template #icon>
-              <n-icon>
-                <AddOutline />
-              </n-icon>
-            </template>
-            新增挂载
-          </n-button>
-        </n-dropdown>
+        </div>
       </div>
-    </div>
 
-    <!-- 加载状态 -->
+      <!-- 加载状态 -->
     <div v-if="loading" class="loading-container">
       <n-spin size="large">
         <template #description>
@@ -601,6 +610,7 @@ import {
   batchDeleteStorage,
   batchRefreshStorage,
   batchModifyToken,
+  clearAllStorage,
 } from '@/api/storage'
 import type { StorageInfo } from '@/api/storage'
 import { getCloudTokenList } from '@/api/cloudtoken'
@@ -1114,6 +1124,28 @@ const handleBatchDelete = () => {
   })
 }
 
+// 处理清空所有
+const handleClearAll = () => {
+  dialog.warning({
+    title: '清空所有挂载点',
+    content: '确定要清空所有存储挂载点吗？此操作会同时删除挂载点、媒体文件和虚拟文件，不可恢复！',
+    positiveText: '确认清空',
+    negativeText: '取消',
+    onPositiveClick: () => {
+      message.loading('正在清空所有数据...')
+
+      clearAllStorage()
+        .then((res) => {
+          message.success(`已清空 ${res?.data || 0} 个挂载点`)
+          fetchStorageList()
+        })
+        .catch((error) => {
+          message.error(error?.message || '清空失败')
+        })
+    },
+  })
+}
+
 // 处理批量刷新
 const handleBatchRefresh = (deep: boolean) => {
   if (selectedIds.value.length === 0) return
@@ -1365,14 +1397,81 @@ onUnmounted(() => {
 /* 头部搜索区域 */
 .header {
   margin-bottom: 24px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   padding: 20px;
   background: var(--n-card-color);
   border-radius: 12px;
   box-shadow: 0 2px 8px rgb(0 0 0 / 6%);
   border: 1px solid var(--n-border-color);
+}
+
+.header-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-row + .header-row {
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.header-row.batch-actions {
+  justify-content: flex-start;
+}
+
+.header-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.header-actions-left {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.header-row + .header-row {
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.header-actions.batch-mode {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--n-border-color);
+}
+
+.header-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.header-actions-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-actions.batch-mode {
+  flex-wrap: wrap;
 }
 
 .header-left {

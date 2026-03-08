@@ -63,9 +63,7 @@ func (sa *SettingAddition) applyDefaults() {
 		sa.WorkerCount = 5
 	}
 
-	if !sa.EnableStorageAutoRefresh {
-		sa.EnableStorageAutoRefresh = true
-	}
+	// 不再强制设置 EnableStorageAutoRefresh 默认为 true，保持用户设置的值
 }
 
 // Value 实现 driver.Valuer 接口 - 将结构体转换为数据库值
