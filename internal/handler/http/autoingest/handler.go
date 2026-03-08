@@ -29,6 +29,14 @@ type Handler interface {
 	DeleteErrorLogs() httpcontext.HandlerFunc
 	// RetryPlan 重试计划（重新获取历史记录）
 	RetryPlan() httpcontext.HandlerFunc
+	// BatchRetry 批量重试计划
+	BatchRetry() httpcontext.HandlerFunc
+	// BatchRefresh 批量刷新计划
+	BatchRefresh() httpcontext.HandlerFunc
+	// BatchDelete 批量删除计划
+	BatchDelete() httpcontext.HandlerFunc
+	// BatchDisable 批量停用计划
+	BatchDisable() httpcontext.HandlerFunc
 }
 
 var bi = httpcontext.NewBusinessGenerator(consts.BusCodeAutoIngestStartCode)

@@ -19,7 +19,7 @@ func (s *service) BatchDelete(ctx context.Context, ids []int64) error {
 		return nil
 	}
 
-	db := s.getDB(ctx).Debug().Unscoped().Where("file_id IN ?", ids).Delete(&models.MountPoint{})
+	db := s.getDB(ctx).Debug().Unscoped().Where("id IN ?", ids).Delete(&models.MountPoint{})
 
 	if db.Error != nil {
 		ctx.Error("批量删除挂载点失败", zap.Error(db.Error), zap.Int64s("ids", ids))

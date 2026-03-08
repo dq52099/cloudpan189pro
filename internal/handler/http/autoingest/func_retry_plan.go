@@ -63,7 +63,8 @@ func (h *handler) RetryPlan() httpcontext.HandlerFunc {
 
 		// 触发刷新任务
 		taskReq := &topic.AutoIngestRefreshSubscribeRequest{
-			PlanId: req.ID,
+			PlanId:  req.ID,
+			IsRetry: true,
 		}
 
 		taskBody, _ := json.Marshal(taskReq)

@@ -118,6 +118,26 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 						shouldNext = false
 					}
 
+					// 重试时扫描已存在目录
+					if req.IsRetry {
+						fullPath := path.Join(plan.ParentPath, item.Name)
+						existingFile, err := h.virtualFileService.QueryByPath(ctx.GetContext(), fullPath)
+						if err == nil && existingFile != nil {
+							scanReq := &topic.FileScanFileRequest{
+								FileId: existingFile.ID,
+								Deep:   true,
+							}
+							scanBody, _ := json.Marshal(scanReq)
+							if err = h.taskEngine.PushMessage(
+								ctx.GetContext().
+									WithValue(consts.CtxKeyFullPath, fullPath).
+									WithValue(consts.CtxKeyInvokeHandlerName, "入库执行器"),
+								scanReq.Topic(), scanBody); err != nil {
+								logger.Error("下发已存在文件扫描任务失败", zap.Error(err))
+							}
+						}
+					}
+
 					continue
 				}
 

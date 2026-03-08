@@ -25,6 +25,9 @@ type Service interface {
 	FindStaleTasksByDuration(ctx context.Context, duration time.Duration) ([]*models.FileTaskLog, error)
 
 	WithError(ctx context.Context, key LogKey, err error) error
+
+	Clear(ctx context.Context) error
+	ClearByDuration(ctx context.Context, duration string) error
 }
 
 type service struct {

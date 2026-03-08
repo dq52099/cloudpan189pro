@@ -26,7 +26,8 @@ func (r FileClearFileRequest) Topic() taskengine.Topic {
 }
 
 type AutoIngestRefreshSubscribeRequest struct {
-	PlanId int64 `json:"planId"`
+	PlanId  int64 `json:"planId"`
+	IsRetry bool  `json:"isRetry"` // 是否是重试操作
 }
 
 func (r AutoIngestRefreshSubscribeRequest) Topic() taskengine.Topic {

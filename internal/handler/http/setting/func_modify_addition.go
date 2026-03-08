@@ -14,6 +14,8 @@ type modifyAdditionRequest struct {
 	MultipleStreamThreadCount *int   `json:"multipleStreamThreadCount" binding:"omitempty,min=1,max=64" example:"4"`    // 多线程数量（可选）
 	MultipleStreamChunkSize   *int64 `json:"multipleStreamChunkSize" binding:"omitempty,min=1048576" example:"4194304"` // 分片大小，单位字节（可选，>=1MiB）
 	TaskThreadCount           *int   `json:"taskThreadCount" binding:"omitempty,min=1,max=32" example:"1"`              // 任务线程数量（可选）
+	WorkerCount               *int   `json:"workerCount" binding:"omitempty,min=1,max=32" example:"5"`                  // 工作流数量（可选）
+	EnableStorageAutoRefresh  *bool  `json:"enableStorageAutoRefresh" example:"true"`                                   // 是否启用存储自动刷新（可选）
 }
 
 // ModifyAddition 修改系统附加设置（可选字段更新）
@@ -69,6 +71,14 @@ func (h *handler) ModifyAddition() httpcontext.HandlerFunc {
 			merged.TaskThreadCount = *req.TaskThreadCount
 		}
 
+		if req.WorkerCount != nil {
+			merged.WorkerCount = *req.WorkerCount
+		}
+
+		if req.EnableStorageAutoRefresh != nil {
+			merged.EnableStorageAutoRefresh = *req.EnableStorageAutoRefresh
+		}
+
 		// 更新数据库
 		if err := h.settingService.Update(ctx.GetContext(),
 			utils.WithField("addition", merged),
@@ -85,6 +95,8 @@ func (h *handler) ModifyAddition() httpcontext.HandlerFunc {
 			MultipleStreamThreadCount: merged.MultipleStreamThreadCount,
 			MultipleStreamChunkSize:   merged.MultipleStreamChunkSize,
 			TaskThreadCount:           merged.TaskThreadCount,
+			WorkerCount:               merged.WorkerCount,
+			EnableStorageAutoRefresh:  merged.EnableStorageAutoRefresh,
 		}
 
 		ctx.Success()

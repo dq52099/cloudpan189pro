@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bytedance/gopkg/util/gopool"
+	"github.com/robfig/cron/v3"
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/taskengine"
@@ -16,21 +17,18 @@ import (
 )
 
 type RebuildStrmScheduler struct {
-	running         bool
-	mu              sync.Mutex
-	ctx             context.Context
-	cancel          context.CancelFunc
-	taskEngine      taskengine.TaskEngine
-	firstRunSkipped bool
-	startupDelay    time.Duration
+	running    bool
+	mu         sync.Mutex
+	ctx        context.Context
+	cancel     context.CancelFunc
+	taskEngine taskengine.TaskEngine
+	cron       *cron.Cron
 }
 
 func NewRebuildStrmScheduler(taskEngine taskengine.TaskEngine) Scheduler {
 	return &RebuildStrmScheduler{
-		taskEngine:      taskEngine,
-		running:         false,
-		firstRunSkipped: false,
-		startupDelay:    10 * time.Minute, // 启动后延迟10分钟再执行
+		taskEngine: taskEngine,
+		running:    false,
 	}
 }
 
@@ -70,8 +68,6 @@ func (s *RebuildStrmScheduler) Stop() {
 }
 
 func (s *RebuildStrmScheduler) doJob() bool {
-	interval := 60 // 默认每60秒检查一次配置
-
 	s.mu.Lock()
 	running := s.running
 	s.mu.Unlock()
@@ -88,43 +84,40 @@ func (s *RebuildStrmScheduler) doJob() bool {
 		}
 	}()
 
-	// 启动后首次执行，跳过并记录延迟时间
-	if !s.firstRunSkipped {
-		s.firstRunSkipped = true
-		s.ctx.Info("STRM定时重建执行器启动，已跳过首次执行", zap.Duration("delay", s.startupDelay))
-		select {
-		case <-s.ctx.Done():
-			return false
-		case <-time.After(s.startupDelay):
-			return true
-		}
+	// 检查是否启用自动重建
+	if shared.MediaConfig == nil || !shared.MediaConfig.Enable || !shared.MediaConfig.AutoRebuildEnable {
+		return true
 	}
 
-	if shared.MediaConfig != nil && shared.MediaConfig.Enable && shared.MediaConfig.AutoRebuildEnable {
+	// 检查cron表达式
+	cronExpr := shared.MediaConfig.AutoRebuildCron
+	if cronExpr == "" {
+		cronExpr = "0 2 * * *" // 默认每天凌晨2点
+	}
+
+	// 解析cron表达式
+	schedule, err := cron.ParseStandard(cronExpr)
+	if err != nil {
+		s.ctx.Error("解析cron表达式失败", zap.String("cron", cronExpr), zap.Error(err))
+		return true
+	}
+
+	now := time.Now()
+	nextRun := schedule.Next(now.Add(-time.Hour)) // 获取上次应该运行的时间
+	lastRun := schedule.Next(now.Add(-time.Hour * 24))
+
+	// 检查是否应该执行
+	if now.Sub(lastRun) < time.Hour && now.After(nextRun) {
 		s.doRebuild()
 	}
 
-	select {
-	case <-s.ctx.Done():
-		return false
-	case <-time.After(time.Duration(interval) * time.Second):
-		return true
-	}
+	return true
 }
 
 func (s *RebuildStrmScheduler) doRebuild() {
 	logger := s.ctx.Logger
 
-	if shared.MediaConfig == nil || !shared.MediaConfig.Enable || !shared.MediaConfig.AutoRebuildEnable {
-		return
-	}
-
-	interval := shared.MediaConfig.AutoRebuildInterval
-	if interval <= 0 {
-		interval = 24 // 默认24小时
-	}
-
-	logger.Debug("检查是否需要定时重建strm", zap.Int("interval_hours", interval))
+	logger.Info("STRM定时重建任务已下发", zap.String("cron", shared.MediaConfig.AutoRebuildCron))
 
 	taskReq := &topic.MediaRebuildStrmFileRequest{}
 	body, _ := json.Marshal(taskReq)
@@ -134,7 +127,5 @@ func (s *RebuildStrmScheduler) doRebuild() {
 			WithValue(consts.CtxKeyInvokeHandlerName, "STRM定时重建执行器"),
 		taskReq.Topic(), body); err != nil {
 		logger.Error("下发STRM定时重建任务失败", zap.Error(err))
-	} else {
-		logger.Info("STRM定时重建任务已下发", zap.Int("interval_hours", interval))
 	}
 }

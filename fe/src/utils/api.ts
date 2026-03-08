@@ -8,6 +8,12 @@ export interface ApiResponse<T = unknown> {
   data?: T
 }
 
+// 批量操作响应
+export interface BatchOperationResponse {
+  success: number
+  failed: number
+}
+
 // 创建 axios 实例
 export const api = axios.create({
   baseURL: '/api',

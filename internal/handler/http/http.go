@@ -234,6 +234,7 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 		{
 			taskStateRouter.GET("/file_log/list", wrap(taskStateHandler.FileLogList()))
 			taskStateRouter.GET("/task_engine/list", wrap(taskStateHandler.TaskEngineList()))
+			taskStateRouter.POST("/file_log/clear", wrap(taskStateHandler.ClearTaskLogs()))
 		}
 	}
 
@@ -272,6 +273,10 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 			autoIngestRouter.POST("/plan/retry", wrap(autoIngestHandler.RetryPlan()))
 			autoIngestRouter.GET("/log/list", wrap(autoIngestHandler.LogList()))
 			autoIngestRouter.POST("/log/delete_error", wrap(autoIngestHandler.DeleteErrorLogs()))
+			autoIngestRouter.POST("/plan/batch_retry", wrap(autoIngestHandler.BatchRetry()))
+			autoIngestRouter.POST("/plan/batch_refresh", wrap(autoIngestHandler.BatchRefresh()))
+			autoIngestRouter.POST("/plan/batch_delete", wrap(autoIngestHandler.BatchDelete()))
+			autoIngestRouter.POST("/plan/batch_disable", wrap(autoIngestHandler.BatchDisable()))
 		}
 	}
 

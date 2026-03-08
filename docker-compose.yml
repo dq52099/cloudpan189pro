@@ -1,6 +1,6 @@
 services:
   app:
-    image: daiqian520/cloudpan189pro
+    image: dq52099/cloudpan189pro:latest
     container_name: cloudpan189pro
     restart: unless-stopped
     ports:

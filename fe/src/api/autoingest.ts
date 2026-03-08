@@ -129,3 +129,40 @@ export const deleteErrorLogs = (data: { planId?: number }): Promise<ApiResponse<
 export const retryAutoIngestPlan = (data: { id: number }): Promise<ApiResponse> => {
   return api.post('/auto_ingest/plan/retry', data).then((res) => res.data)
 }
+
+// ===== 批量操作 =====
+
+// 批量重试计划
+export interface BatchRetryPlanRequest {
+  ids: number[]
+}
+export interface BatchOperationResponse {
+  success: number
+  failed: number
+}
+export const batchRetryPlan = (
+  data: BatchRetryPlanRequest
+): Promise<ApiResponse<BatchOperationResponse>> => {
+  return api.post('/auto_ingest/plan/batch_retry', data).then((res) => res.data)
+}
+
+// 批量刷新计划
+export const batchRefreshPlan = (
+  data: BatchRetryPlanRequest
+): Promise<ApiResponse<BatchOperationResponse>> => {
+  return api.post('/auto_ingest/plan/batch_refresh', data).then((res) => res.data)
+}
+
+// 批量删除计划
+export const batchDeletePlan = (
+  data: BatchRetryPlanRequest
+): Promise<ApiResponse<BatchOperationResponse>> => {
+  return api.post('/auto_ingest/plan/batch_delete', data).then((res) => res.data)
+}
+
+// 批量停用计划
+export const batchDisablePlan = (
+  data: BatchRetryPlanRequest
+): Promise<ApiResponse<BatchOperationResponse>> => {
+  return api.post('/auto_ingest/plan/batch_disable', data).then((res) => res.data)
+}

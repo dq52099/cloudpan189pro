@@ -11,6 +11,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/taskengine"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
+	"github.com/xxcheng123/cloudpan189-share/internal/shared"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
 )
@@ -82,6 +83,11 @@ func (s *RefreshFileScheduler) doJob() bool {
 				zap.String("stack", string(debug.Stack())))
 		}
 	}()
+
+	// 检查是否启用存储自动刷新
+	if !shared.SettingAddition.EnableStorageAutoRefresh {
+		return true
+	}
 
 	// 启动后首次执行，跳过并记录延迟时间
 	if !s.firstRunSkipped {

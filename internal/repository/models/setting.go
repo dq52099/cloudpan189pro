@@ -41,6 +41,8 @@ type SettingAddition struct {
 	MultipleStreamThreadCount int    `json:"multipleStreamThreadCount"`
 	MultipleStreamChunkSize   int64  `json:"multipleStreamChunkSize"`
 	TaskThreadCount           int    `json:"taskThreadCount"`
+	WorkerCount               int    `json:"workerCount"`
+	EnableStorageAutoRefresh  bool   `json:"enableStorageAutoRefresh"`
 }
 
 // applyDefaults 统一填充默认值，确保零值时也能获得期望配置
@@ -55,6 +57,14 @@ func (sa *SettingAddition) applyDefaults() {
 
 	if sa.TaskThreadCount <= 0 {
 		sa.TaskThreadCount = 1
+	}
+
+	if sa.WorkerCount <= 0 {
+		sa.WorkerCount = 5
+	}
+
+	if !sa.EnableStorageAutoRefresh {
+		sa.EnableStorageAutoRefresh = true
 	}
 }
 

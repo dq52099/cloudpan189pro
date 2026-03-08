@@ -19,7 +19,7 @@ mysql:
 taskEngine:
   workerCount: 4
   bufferSize: 89120
-  processTimeout: 1800
+  processTimeout: 7200
   maxRetry: 3
 
 # Telegram Bot 配置

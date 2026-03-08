@@ -20,6 +20,7 @@ func (s *service) ToggleStatus(ctx context.Context, key LogKey, status string, o
 
 	if err = s.getDB(ctx).
 		Where("id = ?", key.GetID()).
+		Select("status", "end_at", "duration", "result", "error_msg", "desc", "completed", "total").
 		Updates(mp).Error; err != nil {
 		ctx.Error("切换文件任务状态失败", zap.Error(err))
 	}

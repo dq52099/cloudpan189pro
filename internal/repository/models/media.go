@@ -37,10 +37,14 @@ type MediaConfig struct {
 	BaseURL          string                      `gorm:"column:base_url;type:varchar(255);not null" json:"baseURL"`
 	// AutoRebuildEnable 定时重建strm开关
 	AutoRebuildEnable bool `gorm:"column:auto_rebuild_enable;type:boolean;not null;default:false" json:"autoRebuildEnable"`
-	// AutoRebuildInterval 定时重建间隔（小时）
-	AutoRebuildInterval int       `gorm:"column:auto_rebuild_interval;type:int;not null;default:24" json:"autoRebuildInterval"`
-	CreatedAt           time.Time `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
-	UpdatedAt           time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
+	// AutoRebuildInterval 定时重建间隔（小时）- 已废弃，使用Cron表达式
+	AutoRebuildInterval int `gorm:"column:auto_rebuild_interval;type:int;not null;default:24" json:"autoRebuildInterval"`
+	// AutoRebuildCron 定时重建cron表达式
+	AutoRebuildCron string `gorm:"column:auto_rebuild_cron;type:varchar(50);not null;default:'0 2 * * *'" json:"autoRebuildCron"`
+	// LastRebuildTime 上次重建时间
+	LastRebuildTime time.Time `gorm:"column:last_rebuild_time;type:timestamp" json:"lastRebuildTime"`
+	CreatedAt       time.Time `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
+	UpdatedAt       time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
 }
 
 func (m *MediaConfig) TableName() string {

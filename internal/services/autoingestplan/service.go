@@ -21,6 +21,7 @@ type Service interface {
 	// 查询
 	List(ctx context.Context, req *ListRequest) ([]*models.AutoIngestPlan, error)
 	Count(ctx context.Context, req *ListRequest) (int64, error)
+	ListByIDs(ctx context.Context, ids []int64) ([]*models.AutoIngestPlan, error)
 
 	// 状态/配置
 	Enable(ctx context.Context, id int64) error

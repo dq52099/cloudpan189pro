@@ -51,6 +51,46 @@
       </div>
     </div>
 
+    <!-- 批量操作栏（Plans） -->
+    <div v-if="activeTab === 'plans' && selectedPlanIds.length > 0" class="batch-actions">
+      <n-text depth="2">已选择 {{ selectedPlanIds.length }} 项</n-text>
+      <n-button size="small" type="info" @click="handleBatchRetry" :disabled="!hasEnabledPlans">
+        <template #icon>
+          <n-icon><RefreshOutline /></n-icon>
+        </template>
+        批量重试
+      </n-button>
+      <n-button
+        size="small"
+        type="primary"
+        @click="handleBatchRefresh"
+        :disabled="!hasEnabledPlans"
+      >
+        <template #icon>
+          <n-icon><RefreshOutline /></n-icon>
+        </template>
+        批量扫描
+      </n-button>
+      <n-button
+        size="small"
+        type="warning"
+        @click="handleBatchDisable"
+        :disabled="!hasEnabledPlans"
+      >
+        <template #icon>
+          <n-icon><CloseCircleOutline /></n-icon>
+        </template>
+        批量停用
+      </n-button>
+      <n-button size="small" type="error" @click="handleBatchDelete">
+        <template #icon>
+          <n-icon><TrashOutline /></n-icon>
+        </template>
+        批量删除
+      </n-button>
+      <n-button size="small" @click="selectedPlanIds = []">取消选择</n-button>
+    </div>
+
     <!-- 头部区域（Logs） -->
     <div v-else class="header">
       <div class="header-left">
@@ -103,6 +143,8 @@
       :data="planTable"
       :loading="planLoading"
       :pagination="planPagination"
+      :row-key="(row: Models.AutoIngestPlan) => row.id"
+      v-model:checked-row-keys="selectedPlanIds"
       class="autoingest-table"
       remote
     />
@@ -136,7 +178,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, h, onMounted } from 'vue'
+import { ref, reactive, h, onMounted, computed } from 'vue'
 import {
   NDataTable,
   NButton,
@@ -172,6 +214,10 @@ import {
   retryFailedAutoIngest,
   deleteErrorLogs,
   retryAutoIngestPlan,
+  batchRetryPlan,
+  batchRefreshPlan,
+  batchDeletePlan,
+  batchDisablePlan,
   type PlanLogResult,
 } from '@/api/autoingest'
 import { getCloudTokenList } from '@/api/cloudtoken'
@@ -179,7 +225,7 @@ import dayjs from 'dayjs'
 import { AUTO_INGEST_SOURCE_TYPE_OPTIONS } from '@/constants/autoIngest'
 import CreatePlanModal from '@/components/autoingest/CreatePlanModal.vue'
 import EditPlanModal from '@/components/autoingest/EditPlanModal.vue'
-import { type ApiResponse } from '@/utils/api'
+import { type ApiResponse, type BatchOperationResponse } from '@/utils/api'
 
 const message = useMessage()
 
@@ -214,6 +260,89 @@ const planQuery = reactive({
   name: '' as string | undefined,
 })
 
+// 批量选择
+const selectedPlanIds = ref<number[]>([])
+const selectedPlanRows = ref<Models.AutoIngestPlan[]>([])
+const hasEnabledPlans = computed(() => {
+  return selectedPlanRows.value.some((p) => p.enabled)
+})
+
+// 批量操作处理函数
+const handleBatchRetry = () => {
+  batchRetryPlan({ ids: selectedPlanIds.value })
+    .then((res: ApiResponse<BatchOperationResponse>) => {
+      if (res.code === 200) {
+        message.success(
+          `批量重试完成：成功 ${res.data?.success || 0}，失败 ${res.data?.failed || 0}`
+        )
+        selectedPlanIds.value = []
+        fetchPlanList()
+      } else {
+        message.error(res.msg || '批量重试失败')
+      }
+    })
+    .catch((err: unknown) => {
+      console.error('批量重试失败', err)
+      message.error('批量重试失败')
+    })
+}
+
+const handleBatchRefresh = () => {
+  batchRefreshPlan({ ids: selectedPlanIds.value })
+    .then((res: ApiResponse<BatchOperationResponse>) => {
+      if (res.code === 200) {
+        message.success(
+          `批量扫描完成：成功 ${res.data?.success || 0}，失败 ${res.data?.failed || 0}`
+        )
+        selectedPlanIds.value = []
+      } else {
+        message.error(res.msg || '批量扫描失败')
+      }
+    })
+    .catch((err: unknown) => {
+      console.error('批量扫描失败', err)
+      message.error('批量扫描失败')
+    })
+}
+
+const handleBatchDisable = () => {
+  batchDisablePlan({ ids: selectedPlanIds.value })
+    .then((res: ApiResponse<BatchOperationResponse>) => {
+      if (res.code === 200) {
+        message.success(
+          `批量停用完成：成功 ${res.data?.success || 0}，失败 ${res.data?.failed || 0}`
+        )
+        selectedPlanIds.value = []
+        fetchPlanList()
+      } else {
+        message.error(res.msg || '批量停用失败')
+      }
+    })
+    .catch((err: unknown) => {
+      console.error('批量停用失败', err)
+      message.error('批量停用失败')
+    })
+}
+
+const handleBatchDelete = () => {
+  batchDeletePlan({ ids: selectedPlanIds.value })
+    .then((res: ApiResponse<BatchOperationResponse>) => {
+      if (res.code === 200) {
+        message.success(
+          `批量删除完成：成功 ${res.data?.success || 0}，失败 ${res.data?.failed || 0}`
+        )
+        selectedPlanIds.value = []
+        fetchPlanList()
+      } else {
+        message.error(res.msg || '批量删除失败')
+      }
+    })
+    .catch((err: unknown) => {
+      console.error('批量删除失败', err)
+      message.error('批量删除失败')
+    })
+}
+
 // 分页（对齐用户组管理）
 const planPagination = reactive<PaginationProps>({
   page: 1,
@@ -245,6 +374,9 @@ const handlePlanReset = () => {
 }
 
 const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
+  {
+    type: 'selection',
+  },
   {
     title: '计划名称',
     key: 'name',
@@ -735,6 +867,17 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+/* 批量操作栏 */
+.batch-actions {
+  margin: 8px 0;
+  padding: 8px 12px;
+  background: var(--n-color-hover);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .header-left {

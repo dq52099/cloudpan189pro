@@ -102,8 +102,8 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 			}()
 
 			// 如果是根目录，直接返回子目录
-			if inputFile.ID == 0 || inputFile.OsType == models.OsTypeFolder {
-				ctx.Info("根目录或者目录直接返回子目录查询")
+			if inputFile.ID == 0 {
+				ctx.Info("根目录直接返回子目录查询")
 
 				return lo.Filter(childrenFiles, func(item *models.VirtualFile, index int) bool {
 					return item.IsDir
@@ -412,7 +412,16 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 				return item.IsDir && item.ID > 0
 			})
 
-			nextWalkFiles = append(createdDirFiles, filesToDeep...)
+			// 深度扫描时，已存在的目录文件也需要继续遍历
+			var existingDirFiles []*models.VirtualFile
+			if req.Deep {
+				existingDirFiles = lo.Filter(childrenFiles, func(item *models.VirtualFile, _ int) bool {
+					return item.IsDir && item.ID > 0
+				})
+			}
+
+			nextWalkFiles = append(createdDirFiles, existingDirFiles...)
+			nextWalkFiles = append(nextWalkFiles, filesToDeep...)
 
 			if len(nextWalkFiles) > 0 {
 				ctx.Debug("继续执行下次遍历", zap.Int("next_walk_files_len", len(nextWalkFiles)))
