@@ -11,20 +11,58 @@
 ### 后端 (Go)
 
 ```bash
-make build; make build-frontend; make build-backend; make build-multi-arch  # 构建
-make dev; go test -v ./...; go test -v ./internal/services/... -run TestName  # 开发测试
-make lint; make lint-clean  # Lint
-make docker-build; make docker-run; make docker-stop; make docker-logs  # Docker
-make swag-init; make swag-fmt  # Swagger
-make clean; make clean-all  # 清理
+# 构建
+make build              # 构建前端+后端
+make build-frontend     # 仅构建前端
+make build-backend      # 仅构建后端
+make build-multi-arch   # 多架构构建 (linux/windows/darwin, amd64/arm64)
+
+# 开发测试
+make dev                # 启动开发服务器
+go test -v ./...        # 运行所有测试
+go test -v ./internal/services/... -run TestName  # 运行单个测试
+
+# Lint
+make lint               # 运行 linter
+make lint-clean         # 清理 linter 缓存
+
+# Docker
+make docker-build       # 构建 Docker 镜像
+make docker-run         # 运行容器
+make docker-stop        # 停止容器
+make docker-logs        # 查看日志
+
+# Swagger
+make swag-init          # 生成 Swagger 文档
+make swag-fmt           # 格式化 Swagger 注释
+
+# 清理
+make clean              # 清理构建产物
+make clean-all          # 完整清理
 ```
 
 ### 前端 (Vue.js)
 
 ```bash
 cd fe
-npm run dev; npm run build; npm run lint; npm run format; npm run lint:css
+npm run dev           # 开发服务器
+npm run build         # 构建 (vue-tsc && vite build)
+npm run lint          # ESLint (自动修复)
+npm run format        # Prettier 格式化
+npm run lint:css      # Stylelint CSS 检查
 ```
+
+### 测试环境变量
+
+测试数据通过环境变量存储 (见 `internal/consts` 的 `EnvKeyTest*`):
+
+```bash
+export TEST_ACCESS_TOKEN=xxx
+export TEST_PERSON_FILE_ID=xxx
+go test -v ./... -run TestName
+```
+
+使用 `bootstrap.NewMockServiceContext()` 创建测试上下文。
 
 ## 代码规范
 
@@ -61,9 +99,13 @@ import (
 实现 `httpcontext.BusinessError` 接口，使用内置函数创建错误:
 
 ```go
-unauthorizedBusinessError("自定义消息")           // 未授权错误
-invalidParamsBusinessError(err)                  // 参数错误
-&businessError{httpCode: http.StatusBadRequest, businessCode: 40000, message: "自定义错误"}  // 自定义错误
+unauthorizedBusinessError("自定义消息")     // 未授权错误
+invalidParamsBusinessError(err)             // 参数错误
+&businessError{
+    httpCode:     http.StatusBadRequest,
+    businessCode: 40000,
+    message:      "自定义错误",
+}                                           // 自定义错误
 ```
 
 #### 标签规范
@@ -75,24 +117,25 @@ invalidParamsBusinessError(err)                  // 参数错误
 #### 测试规范
 
 - 测试文件: `*_test.go`
-- 测试数据: 环境变量存储 (见 `internal/consts` 的 `EnvKeyTest*`)
+- 测试数据: 环境变量存储
 - 测试上下文: 使用 `bootstrap.NewMockServiceContext()`
-
-```bash
-export TEST_ACCESS_TOKEN=xxx; export TEST_PERSON_FILE_ID=xxx; go test -v ./... -run TestName
-```
 
 ### Vue.js 前端
 
 #### 技术栈
 
-Vue 3 + TypeScript, Vite, Pinia, Naive UI, Vue Router
+Vue 3 + TypeScript, Vite, Pinia, Naive UI, Vue Router, ESLint, Prettier
 
 #### 目录结构
 
 ```
 fe/src/
-├── api/; ├── components/; ├── stores/; ├── views/; ├── utils/; └── router/
+├── api/          # API 请求
+├── components/   # 公共组件
+├── stores/       # Pinia 状态管理
+├── views/        # 页面视图
+├── utils/        # 工具函数
+└── router/       # 路由配置
 ```
 
 #### 命名规范
@@ -103,23 +146,36 @@ fe/src/
 
 #### 规范
 
-- TypeScript 严格模式; `<script setup lang="ts">`; scoped CSS; 使用 Naive UI
+- TypeScript 严格模式
+- `<script setup lang="ts">`
+- scoped CSS
+- 使用 Naive UI 组件库
 
 ## 项目结构
 
 ```
 .
-├── cmd/main.go  # 后端入口
-├── internal/    # 后端代码
-│   ├── bootstrap/; consts/; framework/; handler/; middleware/; repository/; services/
-├── fe/          # 前端
-├── etc/         # 配置
-└── data/        # SQLite
+├── cmd/main.go              # 后端入口
+├── internal/                # 后端代码
+│   ├── bootstrap/           # 启动配置
+│   ├── consts/              # 常量定义
+│   ├── framework/           # 框架层
+│   ├── handler/             # 处理器 (http/consumer/scheduler)
+│   ├── middleware/          # 中间件
+│   ├── pkgs/                # 公共包
+│   ├── repository/          # 数据层
+│   ├── services/            # 业务逻辑
+│   └── types/               # 类型定义
+├── fe/                      # 前端代码
+├── etc/                     # 配置文件
+└── data/                    # SQLite 数据目录
 ```
 
 ## 数据库
 
-- 默认: SQLite (`data/share.db`); 支持: MySQL, PostgreSQL; ORM: GORM
+- 默认: SQLite (`data/share.db`)
+- 支持: MySQL, PostgreSQL
+- ORM: GORM
 
 ## 关键约束
 
@@ -130,8 +186,19 @@ fe/src/
 5. 中文注释
 6. 运行 `make lint` 确保代码通过检查
 7. 运行 `make build` 确保前后端都能正常构建
+8. 确保所有测试通过后再提交
 
 ## Lint 配置
 
 golangci-lint 配置见 `.golangci.yml`，主要启用:
-- nlreturn (return 前必须有空行); errcheck (检查错误处理); wsl (空行风格)
+
+- `nlreturn`: return 前必须有空行
+- `errcheck`: 检查错误处理
+- `wsl`: 空行风格 (allow-first-in-block: true)
+
+## 常用开发流程
+
+1. 修改代码后运行 `make lint` 检查代码
+2. 运行 `go test ./...` 确保测试通过
+3. 运行 `make build` 确保构建成功
+4. 提交前确认前后端都能正常构建

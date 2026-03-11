@@ -2,8 +2,10 @@ package filetasklog
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
+	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -95,5 +97,25 @@ func (s *service) FlushCount(ctx context.Context, key LogKey, counters ...Counte
 		ctx.Error("刷新文件任务日志计数失败", zap.Error(err))
 	}
 
+	s.checkAndComplete(ctx, key)
+
 	return
+}
+
+func (s *service) checkAndComplete(ctx context.Context, key LogKey) {
+	var task models.FileTaskLog
+	if err := s.getDB(ctx).Where("id = ?", key.GetID()).First(&task).Error; err != nil {
+		return
+	}
+
+	if task.Status == "running" && task.Total > 0 && task.Completed >= task.Total {
+		if err := s.getDB(ctx).Model(&task).Updates(map[string]any{
+			"status": models.StatusCompleted,
+			"end_at": task.BeginAt.Add(time.Since(task.BeginAt)),
+		}).Error; err != nil {
+			ctx.Warn("自动标记任务完成失败", zap.Error(err))
+		} else {
+			ctx.Debug("任务已自动完成", zap.Int64("task_id", key.GetID()))
+		}
+	}
 }

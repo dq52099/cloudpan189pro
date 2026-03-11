@@ -46,6 +46,16 @@ func (r MediaRebuildStrmFileRequest) Topic() taskengine.Topic {
 	return taskengine.Topic(KeyMediaRebuildStrmFile)
 }
 
+// 单个挂载点STRM重建请求
+type MediaRebuildStrmFileByMountPointRequest struct {
+	MountPointFileId int64  `json:"mountPointFileId"`
+	MountPointPath   string `json:"mountPointPath"`
+}
+
+func (r MediaRebuildStrmFileByMountPointRequest) Topic() taskengine.Topic {
+	return taskengine.Topic(KeyMediaRebuildStrmFileByMountPoint)
+}
+
 // 2. 定义请求结构体
 type FileBatchDeleteRequest struct {
 	IDs []int64 `json:"ids"`
@@ -54,6 +64,15 @@ type FileBatchDeleteRequest struct {
 // 3. 实现接口
 func (r FileBatchDeleteRequest) Topic() taskengine.Topic {
 	return taskengine.Topic(KeyFileBatchDelete)
+}
+
+// 单个文件删除请求
+type FileDeleteRequest struct {
+	FileId int64 `json:"fileId"`
+}
+
+func (r FileDeleteRequest) Topic() taskengine.Topic {
+	return taskengine.Topic(KeyFileDelete)
 }
 
 // 批量解析文本请求 (仅用于 API，不用于 Task)

@@ -15,9 +15,15 @@ type batchDeleteRequest struct {
 	IDs []int64 `json:"ids" binding:"required,min=1"`
 }
 
+type batchDeleteResponse struct {
+	Total   int `json:"total"`
+	Success int `json:"success"`
+	Failed  int `json:"failed"`
+}
+
 // BatchDelete 批量删除存储挂载
 // @Summary 批量删除存储挂载
-// @Description 批量删除指定的存储挂载点，将任务推送到后台异步处理
+// @Description 批量删除指定的存储挂载点，为每个挂载点创建独立任务，由工作流并发处理
 // @Tags 存储管理
 // @Accept json
 // @Produce json
@@ -37,49 +43,53 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 			return
 		}
 
-		// 转换为file_id
-		fileIDs := make([]int64, 0, len(req.IDs))
-		for _, id := range req.IDs {
-			mp, err := h.mountPointService.Query(ctx.GetContext(), id)
-			if err != nil {
-				ctx.GetContext().Warn("查询挂载点失败，跳过", zap.Int64("id", id), zap.Error(err))
-				continue
-			}
-			fileIDs = append(fileIDs, mp.FileId)
-		}
-
-		if len(fileIDs) == 0 {
-			ctx.Fail(busCodeStorageMountPointNotFound)
-			return
-		}
-
+		// 创建任务日志
 		tracker, _ := h.fileTaskLogService.Create(
 			ctx.GetContext(),
 			"批量删除",
 			fmt.Sprintf("批量删除 %d 个挂载点", len(req.IDs)),
-			filetasklogSvi.WithFile(fileIDs[0]),
-			filetasklogSvi.WithDesc(fmt.Sprintf("ID列表: %v", fileIDs)),
+			filetasklogSvi.WithFile(0),
+			filetasklogSvi.WithDesc(fmt.Sprintf("ID列表: %v", req.IDs)),
 		)
 		if tracker != nil {
-			_ = h.fileTaskLogService.Completed(ctx.GetContext(), tracker)
+			_ = h.fileTaskLogService.Running(ctx.GetContext(), tracker)
+			_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithTotalCounter(len(req.IDs)))
 		}
 
-		task := &topic.FileBatchDeleteRequest{IDs: fileIDs}
-		body, _ := json.Marshal(task)
+		// 为每个挂载点创建独立任务
+		successCount := 0
+		for _, id := range req.IDs {
+			mountPoint, err := h.mountPointService.Query(ctx.GetContext(), id)
+			if err != nil {
+				ctx.GetContext().Warn("查询挂载点失败，跳过", zap.Int64("id", id), zap.Error(err))
+				continue
+			}
 
-		err := h.taskEngine.PushMessage(
-			ctx.GetContext().WithValue(consts.CtxKeyInvokeHandlerName, "批量删除"),
-			task.Topic(),
-			body,
-		)
+			taskReq := &topic.FileDeleteRequest{
+				FileId: mountPoint.FileId,
+			}
+			body, _ := json.Marshal(taskReq)
+			err = h.taskEngine.PushMessage(
+				ctx.GetContext().
+					WithValue(consts.CtxKeyFullPath, mountPoint.FullPath).
+					WithValue(consts.CtxKeyInvokeHandlerName, "删除文件").
+					WithValue(consts.CtxKeyTaskTracker, tracker),
+				taskReq.Topic(),
+				body,
+			)
 
-		if err != nil {
-			ctx.GetContext().Error("推送删除任务失败", zap.Error(err))
-			ctx.Fail(busCodeStorageSendTaskFail.WithError(err))
-			return
+			if err != nil {
+				ctx.GetContext().Warn("推送删除任务失败，跳过", zap.Int64("id", id), zap.Error(err))
+				continue
+			}
+			successCount++
 		}
 
-		ctx.GetContext().Info("批量删除请求已加入队列", zap.Int("count", len(fileIDs)))
-		ctx.Success("删除任务已提交，后台处理中")
+		ctx.GetContext().Info("批量删除请求已加入队列", zap.Int("total", len(req.IDs)), zap.Int("success", successCount))
+		ctx.Success(batchDeleteResponse{
+			Total:   len(req.IDs),
+			Success: successCount,
+			Failed:  len(req.IDs) - successCount,
+		})
 	}
 }

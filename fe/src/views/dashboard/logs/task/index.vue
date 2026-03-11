@@ -34,24 +34,28 @@
           placeholder="选择时间范围"
         />
         <n-button type="primary" @click="handleSearch" style="margin-right: 8px"> 搜索 </n-button>
-        <n-button @click="handleReset"> 重置 </n-button>
-        <n-button type="error" ghost :loading="state.clearing" @click="handleClearLogs" style="margin-left: 16px">
-          <template #icon>
-            <n-icon>
-              <TrashOutline />
-            </n-icon>
-          </template>
-          清空日志
-        </n-button>
-      </div>
-      <div class="header-right">
-        <n-button :loading="state.loading" @click="handleRefresh">
+        <n-button @click="handleReset" style="margin-right: 8px"> 重置 </n-button>
+        <n-button :loading="state.loading" @click="handleRefresh" style="margin-right: 8px">
           <template #icon>
             <n-icon>
               <RefreshOutline />
             </n-icon>
           </template>
           刷新
+        </n-button>
+        <n-button
+          type="error"
+          ghost
+          :loading="state.clearing"
+          @click="handleClearLogs"
+          style="margin-left: 8px"
+        >
+          <template #icon>
+            <n-icon>
+              <TrashOutline />
+            </n-icon>
+          </template>
+          清空日志
         </n-button>
       </div>
     </div>
@@ -349,7 +353,8 @@ const getTypeTagType = (type: string) => {
 
 // 获取类型文本
 const getTypeText = (type: string) => {
-  return TASK_TYPE_TEXT_MAP[type as keyof typeof TASK_TYPE_TEXT_MAP] || type
+  const map = TASK_TYPE_TEXT_MAP as Record<string, string>
+  return map[type] || type
 }
 
 // 格式化时长
@@ -532,8 +537,8 @@ onMounted(() => {
 .header-left {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
+  flex-wrap: nowrap;
+  gap: 8px;
 }
 
 .header-right {

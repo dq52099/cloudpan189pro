@@ -13,4 +13,7 @@ const (
 	// CtxKeyFullPath 表示当前处理的文件的入口文件
 	// CtxKeyFileFullPath  表示当前处理的文件的完整路径 递归调用时，会更新为当前文件的完整路径
 	CtxKeyFileFullPath = "__ctx_file_full_path__"
+
+	// CtxKeyTaskTracker 任务跟踪器，用于批量任务汇总进度
+	CtxKeyTaskTracker = "__ctx_task_tracker__"
 )

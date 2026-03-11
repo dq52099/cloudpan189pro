@@ -48,7 +48,7 @@ func Start(svc bootstrap.ServiceContext) error {
 	var (
 		fileHandler       = file.NewHandler(logger, virtualFileService, cloudBridgeService, cloudTokenService, mountPointService, fileTaskLogService, mediaFileService, verifyService)
 		autoIngestHandler = autoingest.NewHandler(taskEngine, cloudBridgeService, autoIngestPlanService, authIngestLogService, storageFacadeService, virtualFileService)
-		mediaHandler      = media.NewHandler(mediaFileService, mountPointService, virtualFileService, verifyService)
+		mediaHandler      = media.NewHandler(mediaFileService, mountPointService, virtualFileService, verifyService, fileTaskLogService)
 	)
 
 	{
@@ -60,6 +60,13 @@ func Start(svc bootstrap.ServiceContext) error {
 
 		if err := taskEngine.RegisterProcessor(new(topic.FileBatchDeleteRequest).Topic(), wrap(fileHandler.HandleBatchDelete())); err != nil {
 			logger.Error("注册文件批量删除处理器失败")
+
+			return err
+		}
+
+		if err := taskEngine.RegisterProcessor(new(topic.FileDeleteRequest).Topic(), wrap(fileHandler.HandleDelete())); err != nil {
+			logger.Error("注册文件删除处理器失败")
+
 			return err
 		}
 
@@ -87,6 +94,12 @@ func Start(svc bootstrap.ServiceContext) error {
 
 		if err := taskEngine.RegisterProcessor(new(topic.MediaRebuildStrmFileRequest).Topic(), wrap(mediaHandler.RebuildStrmFile())); err != nil {
 			logger.Error("注册媒体文件STRM重建处理器失败")
+
+			return err
+		}
+
+		if err := taskEngine.RegisterProcessor(new(topic.MediaRebuildStrmFileByMountPointRequest).Topic(), wrap(mediaHandler.RebuildStrmFileByMountPoint())); err != nil {
+			logger.Error("注册媒体文件STRM重建处理器(按挂载点)失败")
 
 			return err
 		}

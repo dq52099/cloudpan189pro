@@ -27,6 +27,7 @@ type Handler interface {
 	ScanFile() taskcontext.HandlerFunc
 	ClearFile() taskcontext.HandlerFunc
 	HandleBatchDelete() taskcontext.HandlerFunc
+	HandleDelete() taskcontext.HandlerFunc
 }
 
 type handler struct {

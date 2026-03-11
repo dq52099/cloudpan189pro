@@ -4,6 +4,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/taskengine"
+	filetasklogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/filetasklog"
 	mediaconfigSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mediaconfig"
 	mediafileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mediafile"
 	mountpointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
@@ -46,6 +47,7 @@ type handler struct {
 	mountpointService  mountpointSvi.Service
 	virtualfileService virtualfileSvi.Service
 	verifyService      verifySvi.Service
+	fileTaskLogService filetasklogSvi.Service
 	taskEngine         taskengine.TaskEngine
 }
 
@@ -56,6 +58,7 @@ func NewHandler(
 	mountpointService mountpointSvi.Service,
 	virtualfileService virtualfileSvi.Service,
 	verifyService verifySvi.Service,
+	fileTaskLogService filetasklogSvi.Service,
 	taskEngine taskengine.TaskEngine,
 ) Handler {
 	return &handler{
@@ -64,6 +67,7 @@ func NewHandler(
 		mountpointService:  mountpointService,
 		virtualfileService: virtualfileService,
 		verifyService:      verifyService,
+		fileTaskLogService: fileTaskLogService,
 		taskEngine:         taskEngine,
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/taskcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/filetasklog"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/virtualfile"
@@ -29,13 +30,14 @@ func (h *handler) HandleBatchDelete() taskcontext.HandlerFunc {
 			ctx.GetContext(),
 			req.Topic().String(),
 			fmt.Sprintf("批量删除 %d 个挂载点", len(req.IDs)),
-			filetasklog.WithFile(0),
+			filetasklog.WithFile(req.IDs[0]),
 			filetasklog.WithDesc(fmt.Sprintf("批量删除任务, 共 %d 个挂载点", len(req.IDs))),
 		)
 		if logErr != nil {
 			h.logger.Error("创建任务日志失败", zap.Error(logErr))
 		} else {
 			_ = h.fileTaskLogService.Running(ctx.GetContext(), tracker)
+			_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklog.WithTotalCounter(len(req.IDs)))
 		}
 
 		defer func() {
@@ -58,6 +60,9 @@ func (h *handler) HandleBatchDelete() taskcontext.HandlerFunc {
 			// 如果查不到文件信息，说明可能已经被删了，但仍尝试清理残留的子文件
 			if fileErr != nil || fileInfo == nil {
 				_ = h.clearMountFiles(ctx.GetContext(), targetFileID)
+				if tracker != nil {
+					_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklog.WithCompletedOneCounter())
+				}
 				continue
 			}
 
@@ -74,7 +79,6 @@ func (h *handler) HandleBatchDelete() taskcontext.HandlerFunc {
 				h.logger.Error("删除根虚拟文件失败", zap.Int64("fid", targetFileID), zap.Error(err))
 			} else {
 				h.logger.Info("后台删除虚拟文件完成", zap.Int64("fid", targetFileID))
-
 				// 4. 本地空目录清理 (确保 strm 删完后执行)
 				if shared.MediaConfig != nil && shared.MediaConfig.Enable {
 					if err := h.mediaFileService.ClearEmptyDir(ctx.GetContext(), shared.MediaConfig.StoragePath); err != nil {
@@ -119,7 +123,125 @@ func (h *handler) HandleBatchDelete() taskcontext.HandlerFunc {
 					scanPid = nextPid
 				}
 			}
+
+			if tracker != nil {
+				_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklog.WithCompletedOneCounter())
+			}
 			time.Sleep(20 * time.Millisecond)
+		}
+
+		return nil
+	}
+}
+
+// HandleDelete 单个文件删除处理逻辑
+func (h *handler) HandleDelete() taskcontext.HandlerFunc {
+	return func(ctx *taskcontext.Context) error {
+		req := new(topic.FileDeleteRequest)
+
+		if err := ctx.Unmarshal(req); err != nil {
+			h.logger.Error("解析删除任务失败", zap.Error(err))
+			return nil
+		}
+
+		targetFileID := req.FileId
+		h.logger.Info("消费者开始处理单个文件删除", zap.Int64("file_id", targetFileID))
+
+		// 获取父任务tracker（用于批量任务汇总进度）
+		var parentTracker *filetasklog.Tracker
+		if v := ctx.GetContext().Value(consts.CtxKeyTaskTracker); v != nil {
+			parentTracker = v.(*filetasklog.Tracker)
+		}
+
+		tracker, logErr := h.fileTaskLogService.Create(
+			ctx.GetContext(),
+			req.Topic().String(),
+			fmt.Sprintf("删除文件: %d", targetFileID),
+			filetasklog.WithFile(targetFileID),
+			filetasklog.WithDesc(fmt.Sprintf("删除文件ID: %d", targetFileID)),
+		)
+		if logErr != nil {
+			h.logger.Error("创建任务日志失败", zap.Error(logErr))
+		} else {
+			_ = h.fileTaskLogService.Running(ctx.GetContext(), tracker)
+			_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklog.WithTotalCounter(1))
+		}
+
+		defer func() {
+			if tracker != nil {
+				if err := h.fileTaskLogService.Completed(ctx.GetContext(), tracker, tracker.WithCost()); err != nil {
+					h.logger.Error("更新任务日志失败", zap.Error(err))
+				}
+			}
+			// 更新父任务进度
+			if parentTracker != nil {
+				_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), parentTracker, filetasklog.WithCompletedOneCounter())
+			}
+		}()
+
+		fileInfo, fileErr := h.virtualFileService.Query(ctx.GetContext(), targetFileID)
+
+		// 1. 尝试删除挂载点记录
+		if err := h.mountPointService.BatchDelete(ctx.GetContext(), []int64{targetFileID}); err != nil {
+			h.logger.Debug("后台删除挂载点记录异常(或已删除)", zap.Int64("id", targetFileID), zap.Error(err))
+		}
+
+		// 如果查不到文件信息，说明可能已经被删了，但仍尝试清理残留的子文件
+		if fileErr != nil || fileInfo == nil {
+			_ = h.clearMountFiles(ctx.GetContext(), targetFileID)
+			if tracker != nil {
+				_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklog.WithCompletedOneCounter())
+			}
+			return nil
+		}
+
+		// 记录父ID，用于稍后递归清理
+		parentId := fileInfo.ParentId
+
+		// 2. 清理挂载点下的子文件 (触发 deleteStrmIterator)
+		if err := h.clearMountFiles(ctx.GetContext(), targetFileID); err != nil {
+			h.logger.Error("清理挂载点子文件失败", zap.Int64("fid", targetFileID), zap.Error(err))
+		}
+
+		// 3. 删除当前的根虚拟文件
+		if err := h.virtualFileService.Delete(ctx.GetContext(), targetFileID); err != nil {
+			h.logger.Error("删除根虚拟文件失败", zap.Int64("fid", targetFileID), zap.Error(err))
+		} else {
+			h.logger.Info("后台删除虚拟文件完成", zap.Int64("fid", targetFileID))
+			// 4. 本地空目录清理 (确保 strm 删完后执行)
+			if shared.MediaConfig != nil && shared.MediaConfig.Enable {
+				if err := h.mediaFileService.ClearEmptyDir(ctx.GetContext(), shared.MediaConfig.StoragePath); err != nil {
+					h.logger.Warn("清理本地空目录失败", zap.Error(err))
+				}
+			}
+
+			// 5. [暴力递归] 手动清理数据库中的空祖先目录
+			scanPid := parentId
+			for scanPid > 0 {
+				pInfo, err := h.virtualFileService.Query(ctx.GetContext(), scanPid)
+				if err != nil || pInfo == nil {
+					break
+				}
+				nextPid := pInfo.ParentId
+
+				children, _ := h.virtualFileService.List(ctx.GetContext(), &virtualfile.ListRequest{
+					ParentId:    &scanPid,
+					CurrentPage: 1,
+					PageSize:    1,
+				})
+
+				if len(children) > 0 {
+					break
+				}
+
+				if err := h.virtualFileService.Delete(ctx.GetContext(), scanPid); err != nil {
+					h.logger.Warn("删除数据库空目录失败", zap.Int64("pid", scanPid), zap.Error(err))
+					break
+				}
+
+				h.logger.Info("成功清理数据库空目录", zap.Int64("pid", scanPid), zap.String("name", pInfo.Name))
+				scanPid = nextPid
+			}
 		}
 
 		return nil

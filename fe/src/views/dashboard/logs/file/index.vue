@@ -3,56 +3,58 @@
     <!-- 头部区域 -->
     <div class="header">
       <div class="header-left">
-        <n-input
-          v-model:value="state.searchKeyword"
-          placeholder="请输入任务标题搜索"
-          clearable
-          style="width: 200px; margin-right: 12px"
-          @keyup.enter="handleSearch"
-        />
-        <n-select
-          v-model:value="state.statusFilter"
-          placeholder="任务状态"
-          clearable
-          style="width: 120px; margin-right: 12px"
-          :options="statusOptions"
-        />
-        <n-select
-          v-model:value="state.typeFilter"
-          placeholder="任务类型"
-          clearable
-          style="width: 120px; margin-right: 12px"
-          :options="typeOptions"
-        />
-        <n-date-picker
-          v-model:value="state.dateRange"
-          type="datetimerange"
-          clearable
-          style="width: 300px; margin-right: 12px"
-          format="yyyy-MM-dd HH:mm:ss"
-          value-format="yyyy-MM-ddTHH:mm:ssXXX"
-          placeholder="选择时间范围"
-        />
-        <n-button type="primary" @click="handleSearch" style="margin-right: 8px"> 搜索 </n-button>
-        <n-button @click="handleReset"> 重置 </n-button>
-        <n-button type="error" ghost :loading="state.clearing" @click="handleClearLogs" style="margin-left: 16px">
-          <template #icon>
-            <n-icon>
-              <TrashOutline />
-            </n-icon>
-          </template>
-          清空日志
-        </n-button>
-      </div>
-      <div class="header-right">
-        <n-button :loading="state.loading" @click="handleRefresh">
-          <template #icon>
-            <n-icon>
-              <RefreshOutline />
-            </n-icon>
-          </template>
-          刷新
-        </n-button>
+        <div class="filter-row">
+          <n-input
+            v-model:value="state.searchKeyword"
+            placeholder="请输入任务标题搜索"
+            clearable
+            style="width: 200px; margin-right: 12px"
+            @keyup.enter="handleSearch"
+          />
+          <n-select
+            v-model:value="state.statusFilter"
+            placeholder="任务状态"
+            clearable
+            style="width: 120px; margin-right: 12px"
+            :options="statusOptions"
+          />
+          <n-select
+            v-model:value="state.typeFilter"
+            placeholder="任务类型"
+            clearable
+            style="width: 120px; margin-right: 12px"
+            :options="typeOptions"
+          />
+          <n-date-picker
+            v-model:value="state.dateRange"
+            type="datetimerange"
+            clearable
+            style="width: 300px; margin-right: 12px"
+            format="yyyy-MM-dd HH:mm:ss"
+            value-format="yyyy-MM-ddTHH:mm:ssXXX"
+            placeholder="选择时间范围"
+          />
+        </div>
+        <div class="button-row">
+          <n-button type="primary" @click="handleSearch" style="margin-right: 8px"> 搜索 </n-button>
+          <n-button @click="handleReset" style="margin-right: 8px"> 重置 </n-button>
+          <n-button :loading="state.loading" @click="handleRefresh" style="margin-right: 8px">
+            <template #icon>
+              <n-icon>
+                <RefreshOutline />
+              </n-icon>
+            </template>
+            刷新
+          </n-button>
+          <n-button type="error" ghost :loading="state.clearing" @click="handleClearLogs">
+            <template #icon>
+              <n-icon>
+                <TrashOutline />
+              </n-icon>
+            </template>
+            清空日志
+          </n-button>
+        </div>
       </div>
     </div>
 
@@ -349,7 +351,8 @@ const getTypeTagType = (type: string) => {
 
 // 获取类型文本
 const getTypeText = (type: string) => {
-  return TASK_TYPE_TEXT_MAP[type as keyof typeof TASK_TYPE_TEXT_MAP] || type
+  const map = TASK_TYPE_TEXT_MAP as Record<string, string>
+  return map[type] || type
 }
 
 // 格式化时长
@@ -531,9 +534,24 @@ onMounted(() => {
 
 .header-left {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.filter-row {
+  display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px;
+}
+
+.button-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end !important;
 }
 
 .header-right {

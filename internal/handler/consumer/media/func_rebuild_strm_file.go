@@ -11,10 +11,12 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/taskcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/ptr"
+	filetasklogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/filetasklog"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/virtualfile"
 	"github.com/xxcheng123/cloudpan189-share/internal/shared"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/media"
+	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
 
 	verifySvi "github.com/xxcheng123/cloudpan189-share/internal/services/verify"
@@ -60,6 +62,18 @@ func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
 		}
 
 		logger.Info(fmt.Sprintf("[strm生成] 开始重建 strm，共 %d 个挂载文件夹（根路径: %s）", len(mountpoints), shared.MediaConfig.StoragePath))
+		tracker, logErr := h.fileTaskLogService.Create(
+			ctx.GetContext(),
+			topic.KeyMediaRebuildStrmFile,
+			fmt.Sprintf("重建STRM文件，共 %d 个挂载点", len(mountpoints)),
+			filetasklogSvi.WithDesc(fmt.Sprintf("存储路径: %s", shared.MediaConfig.StoragePath)),
+		)
+		if logErr != nil {
+			logger.Error("创建任务日志失败", zap.Error(logErr))
+		} else {
+			_ = h.fileTaskLogService.Running(ctx.GetContext(), tracker)
+			_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithTotalCounter(len(mountpoints)))
+		}
 
 		progress := &rebuildProgress{
 			totalFolders: int32(len(mountpoints)),
@@ -80,14 +94,77 @@ func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
 			logger.Info(fmt.Sprintf("[strm生成] 处理文件夹: %s (进度 %d/%d，成功率 %.1f%%)", mountpoint.FullPath, idx+1, len(mountpoints), rate))
 
 			h.walkBuildStrm(ctx.GetContext(), mountpoint.FileId, car.NewSubCar(mountpoint.FullPath), 0, progress)
+
+			if tracker != nil {
+				_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithCompletedOneCounter())
+			}
 		}
 
 		finalRate := float64(progress.successFiles) / float64(progress.totalFiles) * 100
 		if progress.totalFiles == 0 {
 			finalRate = 100
 		}
-		logger.Info(fmt.Sprintf("[strm生成] strm重建完成：共处理 %d 个文件夹，成功 %d 个文件，失败 %d 个文件，成功率 %.1f%%",
-			progress.totalFolders, progress.successFiles, progress.failedFiles, finalRate))
+		logger.Info(fmt.Sprintf("[strm生成] strm重建完成：共处理 %d 个文件夹，成功 %d 个文件，失败 %d 个文件，成功率 %.1f%%", progress.totalFolders, progress.successFiles, progress.failedFiles, finalRate))
+
+		if tracker != nil {
+			_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithCompletedOneCounter())
+			_ = h.fileTaskLogService.Completed(ctx.GetContext(), tracker)
+		}
+
+		return nil
+	}
+}
+
+func (h *handler) RebuildStrmFileByMountPoint() taskcontext.HandlerFunc {
+	return func(ctx *taskcontext.Context) error {
+		var (
+			logger = ctx.GetContext().Logger
+		)
+
+		if shared.MediaConfig == nil || !shared.MediaConfig.Enable {
+			logger.Warn("媒体功能未启用，跳过strm重建")
+			return nil
+		}
+
+		req := new(topic.MediaRebuildStrmFileByMountPointRequest)
+		if err := ctx.Unmarshal(req); err != nil {
+			logger.Error("解析STRM重建任务失败", zap.Error(err))
+			return nil
+		}
+
+		logger.Info("开始重建strm文件", zap.Int64("mount_point_file_id", req.MountPointFileId), zap.String("path", req.MountPointPath))
+
+		tracker, logErr := h.fileTaskLogService.Create(
+			ctx.GetContext(),
+			topic.KeyMediaRebuildStrmFileByMountPoint,
+			fmt.Sprintf("STRM重建: %s", req.MountPointPath),
+			filetasklogSvi.WithFile(req.MountPointFileId),
+			filetasklogSvi.WithDesc(fmt.Sprintf("挂载点路径: %s", req.MountPointPath)),
+		)
+		if logErr != nil {
+			logger.Error("创建任务日志失败", zap.Error(logErr))
+		} else {
+			_ = h.fileTaskLogService.Running(ctx.GetContext(), tracker)
+			_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithTotalCounter(1))
+		}
+
+		progress := &rebuildProgress{
+			totalFolders: 1,
+		}
+
+		car := media.NewWriterCar(shared.MediaConfig.StoragePath, shared.MediaConfig.ConflictPolicy, shared.BaseURL)
+		h.walkBuildStrm(ctx.GetContext(), req.MountPointFileId, car.NewSubCar(req.MountPointPath), 0, progress)
+
+		finalRate := float64(progress.successFiles) / float64(progress.totalFiles) * 100
+		if progress.totalFiles == 0 {
+			finalRate = 100
+		}
+		logger.Info(fmt.Sprintf("[strm生成] strm重建完成：成功 %d 个文件，失败 %d 个文件，成功率 %.1f%%", progress.successFiles, progress.failedFiles, finalRate))
+
+		if tracker != nil {
+			_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithCompletedOneCounter())
+			_ = h.fileTaskLogService.Completed(ctx.GetContext(), tracker)
+		}
 
 		return nil
 	}
@@ -112,7 +189,6 @@ func (h *handler) walkBuildStrm(ctx context.Context, fid int64, car media.Writer
 	for _, file := range files {
 		if file.IsDir {
 			h.walkBuildStrm(ctx, file.ID, car.NewSubCar(file.Name), depth+1, progress)
-
 			continue
 		}
 
@@ -167,7 +243,6 @@ func (h *handler) ForceRebuildStrmFile() taskcontext.HandlerFunc {
 		})
 		if err != nil {
 			logger.Error("查询挂载点失败", zap.Error(err))
-
 			return err
 		}
 
@@ -208,8 +283,7 @@ func (h *handler) ForceRebuildStrmFile() taskcontext.HandlerFunc {
 		if progress.totalFiles == 0 {
 			finalRate = 100
 		}
-		logger.Info(fmt.Sprintf("[strm生成] 强制strm重建完成：共处理 %d 个文件夹，成功 %d 个文件，失败 %d 个文件，成功率 %.1f%%",
-			progress.totalFolders, progress.successFiles, progress.failedFiles, finalRate))
+		logger.Info(fmt.Sprintf("[strm生成] 强制strm重建完成：共处理 %d 个文件夹，成功 %d 个文件，失败 %d 个文件，成功率 %.1f%%", progress.totalFolders, progress.successFiles, progress.failedFiles, finalRate))
 
 		return nil
 	}
