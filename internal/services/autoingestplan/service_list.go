@@ -14,6 +14,8 @@ type ListRequest struct {
 	CurrentPage int    `form:"currentPage,omitempty,default=1" binding:"omitempty,min=1" example:"1"`
 	PageSize    int    `form:"pageSize,omitempty,default=10" binding:"omitempty,min=1" example:"10"`
 	NoPaginate  bool   `form:"-"`
+	UserID      int64  `form:"-"` // 用户ID，用于权限过滤
+	IsAdmin     bool   `form:"-"` // 是否管理员
 }
 
 // List 列出自动挂载计划
@@ -59,6 +61,11 @@ func (s *service) getListQuery(ctx context.Context, req *ListRequest) *gorm.DB {
 
 	if req.Name != "" {
 		query = query.Where("name LIKE ?", "%"+req.Name+"%")
+	}
+
+	// 非管理员只能查看自己的计划
+	if !req.IsAdmin && req.UserID > 0 {
+		query = query.Where("user_id = ?", req.UserID)
 	}
 
 	return query

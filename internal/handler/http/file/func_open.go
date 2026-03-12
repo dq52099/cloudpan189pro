@@ -99,22 +99,37 @@ func (h *handler) Open() httpcontext.HandlerFunc {
 
 		var allowTopIds []int64
 
-		if userGroupId := ctx.GetInt64(consts.CtxKeyUserGroupId); userGroupId != 0 {
-			topIds, err := h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
-			if err != nil {
-				ctx.Fail(busCodeQueryTopIdError.WithError(err))
+		userID := ctx.GetInt64(consts.CtxKeyUserId)
+		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
+		userGroupId := ctx.GetInt64(consts.CtxKeyUserGroupId)
 
-				return
-			}
-
-			if len(topIds) == 0 || (!lo.Contains(topIds, file.TopId) && file.OsType != models.OsTypeFolder) {
-				ctx.Unauthorized("无权限访问")
-
-				return
-			}
-
-			allowTopIds = topIds
+		// 获取用户组绑定的文件ID
+		var groupFileIds []int64
+		if userGroupId > 0 {
+			groupFileIds, _ = h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
 		}
+
+		accessibleIds, err := h.mountPointService.GetAccessibleMountPointIDs(ctx.GetContext(), userID, isAdmin, groupFileIds)
+		if err != nil {
+			ctx.Fail(busCodeQueryTopIdError.WithError(err))
+
+			return
+		}
+
+		// 合并用户组绑定的文件ID
+		if len(groupFileIds) > 0 {
+			accessibleIds = append(accessibleIds, groupFileIds...)
+		}
+
+		accessibleIds = lo.Uniq(accessibleIds)
+
+		if len(accessibleIds) == 0 || (!lo.Contains(accessibleIds, file.TopId) && file.OsType != models.OsTypeFolder) {
+			ctx.Unauthorized("无权限访问")
+
+			return
+		}
+
+		allowTopIds = accessibleIds
 
 		var (
 			children      []*models.VirtualFile

@@ -8,7 +8,8 @@ type MountPoint struct {
 	ID                 int64      `gorm:"primaryKey" json:"id"`
 	FileId             int64      `gorm:"column:file_id;not null;uniqueIndex:idx_file_id_name" json:"fileId"`
 	OsType             string     `gorm:"column:os_type;type:varchar(1024);not null" json:"osType"`
-	TokenId            int64      `gorm:"column:token_id;not null;default:0" json:"tokenId"` // 关联的token id
+	TokenId            int64      `gorm:"column:token_id;not null;default:0" json:"tokenId"`                       // 关联的token id
+	CreatorUserID      int64      `gorm:"column:creator_user_id;type:bigint;default:1;index" json:"creatorUserId"` // 创建者用户ID
 	Name               string     `gorm:"column:name;type:varchar(1024);not null;uniqueIndex:idx_file_id_name" json:"name"`
 	FullPath           string     `gorm:"column:full_path;type:text;default:''" json:"fullPath"`
 	EnableAutoRefresh  bool       `gorm:"column:enable_auto_refresh;not null;default:false" json:"enableAutoRefresh"`

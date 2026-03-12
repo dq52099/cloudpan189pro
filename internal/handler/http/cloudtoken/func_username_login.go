@@ -1,6 +1,7 @@
 package cloudtoken
 
 import (
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
@@ -87,6 +88,7 @@ func (h *handler) UsernameLogin() httpcontext.HandlerFunc {
 			Password: password,
 			Name:     name,
 			ID:       req.ID,
+			UserID:   ctx.GetInt64(consts.CtxKeyUserId),
 		})
 		if err != nil {
 			ctx.Fail(codeUsernameLoginFailed.WithError(err))

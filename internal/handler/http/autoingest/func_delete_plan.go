@@ -1,7 +1,9 @@
 package autoingest
 
 import (
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	autoingestplanSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestplan"
 )
 
 type deletePlanRequest struct {
@@ -31,7 +33,17 @@ func (h *handler) DeletePlan() httpcontext.HandlerFunc {
 			return
 		}
 
-		if err := h.planService.Delete(ctx.GetContext(), req.ID); err != nil {
+		// 获取当前用户信息用于权限控制
+		userID := ctx.GetInt64(consts.CtxKeyUserId)
+		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
+
+		deleteReq := &autoingestplanSvi.DeleteRequest{
+			ID:      req.ID,
+			UserID:  userID,
+			IsAdmin: isAdmin,
+		}
+
+		if err := h.planService.Delete(ctx.GetContext(), deleteReq); err != nil {
 			ctx.Fail(codePlanDeleteFailed.WithError(err))
 
 			return

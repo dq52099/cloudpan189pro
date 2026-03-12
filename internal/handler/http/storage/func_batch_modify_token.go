@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/pkg/errors"
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	filetasklogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/filetasklog"
 	"gorm.io/gorm"
@@ -16,7 +17,7 @@ type batchModifyTokenRequest struct {
 
 // BatchModifyToken 批量修改存储挂载点令牌
 // @Summary 批量修改存储挂载点令牌
-// @Description 批量修改指定存储挂载点关联的云盘令牌
+// @Description 用户批量绑定自己的令牌到挂载点（不影响其他用户）
 // @Tags 存储管理
 // @Accept json
 // @Produce json
@@ -37,9 +38,21 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 			return
 		}
 
+		// 获取当前用户信息用于权限控制
+		userID := ctx.GetInt64(consts.CtxKeyUserId)
+		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
+		userGroupId := ctx.GetInt64(consts.CtxKeyUserGroupId)
+
+		// 获取用户组绑定的文件ID
+		var groupFileIds []int64
+		if userGroupId > 0 {
+			groupFileIds, _ = h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
+		}
+
 		// 验证云盘令牌是否存在
 		if req.TokenID != 0 {
-			if _, err := h.cloudTokenService.Query(ctx.GetContext(), req.TokenID); err != nil {
+			token, err := h.cloudTokenService.Query(ctx.GetContext(), req.TokenID)
+			if err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					ctx.Fail(busCodeStorageCloudTokenNotExist.WithError(err))
 				} else {
@@ -47,14 +60,22 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 				}
 				return
 			}
+
+			// 非管理员：只能绑定自己的令牌
+			if !isAdmin && token.UserID != userID {
+				ctx.Fail(busCodeStorageCloudTokenNotExist.WithMessage("只能绑定自己的令牌"))
+
+				return
+			}
 		}
 
-		// 批量修改挂载点的令牌
+		// 批量绑定用户的令牌到挂载点
 		successCount := 0
 		failCount := 0
 		for _, id := range req.IDs {
 			// 验证挂载点是否存在
-			if _, err := h.mountPointService.Query(ctx.GetContext(), id); err != nil {
+			mp, err := h.mountPointService.Query(ctx.GetContext(), id)
+			if err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					failCount++
 					continue
@@ -64,10 +85,33 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 				}
 			}
 
-			// 修改挂载点的令牌
-			if err := h.mountPointService.ModifyToken(ctx.GetContext(), id, req.TokenID); err != nil {
-				failCount++
-				continue
+			// 验证用户是否有权限访问这个挂载点
+			if !isAdmin {
+				hasAccess := false
+				if mp.CreatorUserID == userID {
+					hasAccess = true
+				} else {
+					for _, fid := range groupFileIds {
+						if fid == mp.FileId {
+							hasAccess = true
+							break
+						}
+					}
+				}
+				if !hasAccess {
+					failCount++
+					continue
+				}
+			}
+
+			// 绑定用户的令牌
+			if req.TokenID == 0 {
+				h.userMountPointTokenService.UnbindToken(ctx.GetContext(), userID, id)
+			} else {
+				if err := h.userMountPointTokenService.BindToken(ctx.GetContext(), userID, id, req.TokenID); err != nil {
+					failCount++
+					continue
+				}
 			}
 			successCount++
 		}

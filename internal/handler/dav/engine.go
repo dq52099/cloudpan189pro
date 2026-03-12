@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 
 	group2fileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/group2file"
+	mountpointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 	verifySvi "github.com/xxcheng123/cloudpan189-share/internal/services/verify"
 	virtualfileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/virtualfile"
 )
@@ -24,6 +25,7 @@ type workEngine struct {
 	virtualFileService virtualfileSvi.Service
 	verifyService      verifySvi.Service
 	group2FileService  group2fileSvi.Service
+	mountPointService  mountpointSvi.Service
 }
 
 var bi = httpcontext.NewBusinessGenerator(consts.BusCodeDavStartCode)
@@ -37,32 +39,24 @@ var (
 	busCodeQueryTopIdError    = bi.Next("查询 TopId 失败")
 )
 
-const (
-	downloadURLFormat = "/api/file/download/%d?%s"
-)
+const downloadURLFormat = "/api/file/download/%d?%s"
 
 func (e *workEngine) Open() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
 		fullPath := ctx.Param("path")
 
-		// 切分路径查找文件
 		paths, err := utils.SplitPath(fullPath)
 		if err != nil {
 			ctx.Fail(busCodeFilePathSplitError.WithError(err))
-
 			return
 		}
 
-		var (
-			file *models.VirtualFile
-		)
+		var file *models.VirtualFile
 
-		// 根节点
 		if len(paths) == 0 {
 			file = models.RootFile()
 		} else if !utils.CheckIsPath(fullPath) {
 			ctx.Fail(busCodeFileInvalidPath)
-
 			return
 		} else if file, err = e.virtualFileService.QueryByPath(ctx.GetContext(), fullPath); err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -70,57 +64,61 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 			} else {
 				ctx.Fail(busCodeFileQueryError.WithError(err))
 			}
-
 			return
 		}
 
 		var allowTopIds []int64
 
-		if userGroupId := ctx.GetInt64(consts.CtxKeyUserGroupId); userGroupId != 0 {
-			topIds, err := e.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
-			if err != nil {
-				ctx.Fail(busCodeQueryTopIdError.WithError(err))
+		userID := ctx.GetInt64(consts.CtxKeyUserId)
+		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
+		userGroupId := ctx.GetInt64(consts.CtxKeyUserGroupId)
 
-				return
-			}
-
-			if len(topIds) == 0 || (!lo.Contains(topIds, file.TopId) && file.OsType != models.OsTypeFolder) {
-				ctx.Unauthorized("无权限访问")
-
-				return
-			}
-
-			allowTopIds = topIds
+		// 获取用户组绑定的文件ID
+		var groupFileIds []int64
+		if userGroupId > 0 {
+			groupFileIds, _ = e.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
 		}
 
-		var (
-			children []*models.VirtualFile
-		)
+		accessibleIds, err := e.mountPointService.GetAccessibleMountPointIDs(ctx.GetContext(), userID, isAdmin, groupFileIds)
+		if err != nil {
+			ctx.Fail(busCodeQueryTopIdError.WithError(err))
+			return
+		}
 
-		// 查询子节点
+		// 合并用户组绑定的文件ID
+		if len(groupFileIds) > 0 {
+			accessibleIds = append(accessibleIds, groupFileIds...)
+		}
+
+		accessibleIds = lo.Uniq(accessibleIds)
+
+		if len(accessibleIds) == 0 || (!lo.Contains(accessibleIds, file.TopId) && file.OsType != models.OsTypeFolder) {
+			ctx.Unauthorized("无权限访问")
+			return
+		}
+
+		allowTopIds = accessibleIds
+
+		var children []*models.VirtualFile
+
 		if file.IsDir {
 			childReq := &virtualfileSvi.ListRequest{
 				ParentId: ptr.Of(file.ID),
 			}
 
-			// 目录查询子节点
 			if children, err = e.virtualFileService.List(ctx.GetContext(), childReq); err != nil {
 				ctx.Fail(busCodeFileQueryError.WithError(err))
-
 				return
 			}
 		} else if ctx.Request.Method == http.MethodGet || ctx.Request.Method == http.MethodHead || ctx.Request.Method == http.MethodPost {
 			values, err := e.verifyService.SignV1(ctx.GetContext(), file.ID)
 			if err != nil {
 				ctx.Fail(busCodeFileSignError.WithError(err))
-
 				return
 			}
 
 			downloadURL := fmt.Sprintf(downloadURLFormat, file.ID, values.Encode())
-
 			ctx.Redirect(http.StatusFound, fmt.Sprintf("%s%s", shared.BaseURL, downloadURL))
-
 			return
 		}
 
@@ -130,16 +128,13 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 			})
 		}
 
-		// 设置WebDAV响应头
 		ctx.Header("Content-Type", "application/xml; charset=utf-8")
 		ctx.Header("DAV", "1, 2")
 
-		// 构建XML响应
 		var xmlResponse strings.Builder
 		xmlResponse.WriteString(`<?xml version="1.0" encoding="utf-8"?>`)
 		xmlResponse.WriteString(`<D:multistatus xmlns:D="DAV:">`)
 
-		// 当前路径处理
 		currentPath := e.normalizeWebDAVPath(ctx.Request.URL.Path)
 		if file.IsDir && !strings.HasSuffix(currentPath, "/") {
 			currentPath += "/"
@@ -147,7 +142,6 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 
 		e.addPropResponse(&xmlResponse, file, currentPath)
 
-		// 如果是文件夹且depth不为0，添加子项
 		if file.IsDir && ctx.Request.Header.Get("Depth") != "0" && len(children) > 0 {
 			for _, child := range children {
 				childPath := e.buildChildPath(currentPath, child.Name, child.IsDir)

@@ -99,6 +99,9 @@ func (h *handler) Add() httpcontext.HandlerFunc {
 			return
 		}
 
+		// 获取当前用户ID
+		userID := ctx.GetInt64(consts.CtxKeyUserId)
+
 		// 使用组合服务创建存储（内部完成校验、父级创建、虚拟文件与挂载点创建与补偿）
 		id, err := h.storageFacadeService.CreateStorage(ctx.GetContext(), &storagefacadeSvi.CreateStorageRequest{
 			LocalPath:         req.LocalPath,
@@ -110,6 +113,7 @@ func (h *handler) Add() httpcontext.HandlerFunc {
 			AutoRefreshDays:   req.AutoRefreshDays,
 			RefreshInterval:   req.RefreshInterval,
 			EnableDeepRefresh: req.EnableDeepRefresh,
+			CreatorUserID:     userID,
 		})
 		if err != nil {
 			ctx.Fail(busCodeStorageAddMountPointFailed.WithError(err))

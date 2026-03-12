@@ -1,0 +1,90 @@
+package userMountPointToken
+
+import (
+	"github.com/xxcheng123/cloudpan189-share/internal/bootstrap"
+	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
+	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	"go.uber.org/zap"
+	"gorm.io/gorm"
+)
+
+type Service interface {
+	BindToken(ctx context.Context, userID, mountPointID, tokenID int64) error
+	UnbindToken(ctx context.Context, userID, mountPointID int64) error
+	GetTokenID(ctx context.Context, userID, mountPointID int64) (int64, error)
+	GetUserTokens(ctx context.Context, userID int64, mountPointIDs []int64) (map[int64]int64, error)
+	DeleteByMountPoint(ctx context.Context, mountPointID int64) error
+	DeleteByToken(ctx context.Context, tokenID int64) error
+}
+
+type service struct {
+	svc bootstrap.ServiceContext
+}
+
+func NewService(svc bootstrap.ServiceContext) Service {
+	return &service{
+		svc: svc,
+	}
+}
+
+func (s *service) getDB(ctx context.Context) *gorm.DB {
+	return s.svc.GetDB(ctx).Model(new(models.UserMountPointToken))
+}
+
+func (s *service) BindToken(ctx context.Context, userID, mountPointID, tokenID int64) error {
+	var existing models.UserMountPointToken
+	err := s.getDB(ctx).Where("user_id = ? AND mount_point_id = ?", userID, mountPointID).First(&existing).Error
+	if err == gorm.ErrRecordNotFound {
+		return s.getDB(ctx).Create(&models.UserMountPointToken{
+			UserID:       userID,
+			MountPointID: mountPointID,
+			TokenID:      tokenID,
+		}).Error
+	} else if err != nil {
+		ctx.Error("查询用户挂载点令牌绑定失败", zap.Error(err))
+		return err
+	}
+
+	existing.TokenID = tokenID
+	return s.getDB(ctx).Save(&existing).Error
+}
+
+func (s *service) UnbindToken(ctx context.Context, userID, mountPointID int64) error {
+	return s.getDB(ctx).Where("user_id = ? AND mount_point_id = ?", userID, mountPointID).Delete(nil).Error
+}
+
+func (s *service) GetTokenID(ctx context.Context, userID, mountPointID int64) (int64, error) {
+	var binding models.UserMountPointToken
+	err := s.getDB(ctx).Where("user_id = ? AND mount_point_id = ?", userID, mountPointID).First(&binding).Error
+	if err == gorm.ErrRecordNotFound {
+		return 0, nil
+	}
+	return binding.TokenID, err
+}
+
+func (s *service) GetUserTokens(ctx context.Context, userID int64, mountPointIDs []int64) (map[int64]int64, error) {
+	if len(mountPointIDs) == 0 {
+		return make(map[int64]int64), nil
+	}
+
+	var bindings []models.UserMountPointToken
+	err := s.getDB(ctx).Where("user_id = ? AND mount_point_id IN ?", userID, mountPointIDs).Find(&bindings).Error
+	if err != nil {
+		ctx.Error("查询用户挂载点令牌绑定列表失败", zap.Error(err))
+		return nil, err
+	}
+
+	result := make(map[int64]int64)
+	for _, b := range bindings {
+		result[b.MountPointID] = b.TokenID
+	}
+	return result, nil
+}
+
+func (s *service) DeleteByMountPoint(ctx context.Context, mountPointID int64) error {
+	return s.getDB(ctx).Where("mount_point_id = ?", mountPointID).Delete(nil).Error
+}
+
+func (s *service) DeleteByToken(ctx context.Context, tokenID int64) error {
+	return s.getDB(ctx).Where("token_id = ?", tokenID).Delete(nil).Error
+}

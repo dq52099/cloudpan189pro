@@ -2,6 +2,7 @@ package storage
 
 import (
 	"github.com/samber/lo"
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 
 	cloudtokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
@@ -60,25 +61,38 @@ func (h *handler) List() httpcontext.HandlerFunc {
 			return
 		}
 
-		var (
-			list           []*models.MountPoint
-			count          int64
-			err            error
-			taskLogMapList map[int64][]*models.FileTaskLog
-		)
+		// 获取当前用户信息用于权限控制
+		userID := ctx.GetInt64(consts.CtxKeyUserId)
+		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
+		userGroupId := ctx.GetInt64(consts.CtxKeyUserGroupId)
+
+		// 获取用户组绑定的文件ID（用于获取用户组分享的挂载点）
+		var groupFileIds []int64
+		if userGroupId > 0 {
+			groupFileIds, _ = h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
+		}
+
+		// 管理员显示所有挂载点，普通用户显示自己创建的+用户组分享的
+		var list []*models.MountPoint
+		var count int64
+		var err error
+		taskLogMapList := make(map[int64][]*models.FileTaskLog)
 
 		if req.TaskLogStatus != "" {
-			// 1. 先取出所有挂载点 (不分页)
+			// 带日志筛选：先取出所有符合权限的挂载点
 			allList, err := h.mountPointService.List(ctx.GetContext(), &mountpointSvi.ListRequest{
-				FullPath:   req.Path,
-				NoPaginate: true, // 关键：不分页
+				FullPath:     req.Path,
+				NoPaginate:   true,
+				UserID:       userID,
+				IsAdmin:      isAdmin,
+				GroupFileIds: groupFileIds,
 			})
 			if err != nil {
 				ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
 				return
 			}
 
-			// 2. 获取所有挂载点的日志
+			// 获取所有挂载点的日志
 			fileIdList := make([]int64, 0, len(allList))
 			for _, item := range allList {
 				fileIdList = append(fileIdList, item.FileId)
@@ -86,9 +100,8 @@ func (h *handler) List() httpcontext.HandlerFunc {
 			fileIdList = lo.Uniq(fileIdList)
 
 			if len(fileIdList) > 0 {
-				// 获取日志
 				logs, err := h.fileTaskLogService.List(ctx.GetContext(), &filetasklogSvi.ListRequest{
-					PageSize:    10000, // 足够大以涵盖所有
+					PageSize:    10000,
 					CurrentPage: 1,
 					FileIdList:  fileIdList,
 				})
@@ -97,7 +110,6 @@ func (h *handler) List() httpcontext.HandlerFunc {
 					return
 				}
 
-				// 构建日志Map
 				taskLogMapList = make(map[int64][]*models.FileTaskLog)
 				for _, taskLog := range logs {
 					if taskLog.FileId == 0 {
@@ -107,14 +119,12 @@ func (h *handler) List() httpcontext.HandlerFunc {
 				}
 			}
 
-			// 3. 在内存中过滤
+			// 内存中按日志状态过滤
 			filteredList := make([]*models.MountPoint, 0)
 			for _, item := range allList {
 				logs := taskLogMapList[item.FileId]
 				match := false
-				// 检查最新的日志状态是否匹配
 				if len(logs) > 0 {
-					// logs通常按时间倒序，取第一个
 					if logs[0].Status == req.TaskLogStatus {
 						match = true
 					}
@@ -124,25 +134,27 @@ func (h *handler) List() httpcontext.HandlerFunc {
 				}
 			}
 
-			// 4. 手动分页
-			count = int64(len(filteredList))
+			// 手动分页
 			start := (req.CurrentPage - 1) * req.PageSize
-			if start >= len(filteredList) {
+			end := start + req.PageSize
+			if start > len(filteredList) {
 				list = []*models.MountPoint{}
 			} else {
-				end := start + req.PageSize
 				if end > len(filteredList) {
 					end = len(filteredList)
 				}
 				list = filteredList[start:end]
 			}
+			count = int64(len(filteredList))
 		} else {
-			// --- 原有逻辑：没有日志筛选，走数据库分页 ---
+			// 不带日志筛选：直接数据库分页
 			mountReq := &mountpointSvi.ListRequest{
-				CurrentPage: req.CurrentPage,
-				PageSize:    req.PageSize,
-				FullPath:    req.Path,
-				// LastState:   req.LastState, // 这里实际上也不需要传LastState了
+				CurrentPage:  req.CurrentPage,
+				PageSize:     req.PageSize,
+				FullPath:     req.Path,
+				UserID:       userID,
+				IsAdmin:      isAdmin,
+				GroupFileIds: groupFileIds,
 			}
 
 			list, err = h.mountPointService.List(ctx.GetContext(), mountReq)
@@ -155,6 +167,42 @@ func (h *handler) List() httpcontext.HandlerFunc {
 			if err != nil {
 				ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
 				return
+			}
+		}
+
+		// 获取当前用户对这些挂载点的令牌绑定
+		mountPointIds := make([]int64, 0, len(list))
+		for _, mp := range list {
+			mountPointIds = append(mountPointIds, mp.ID)
+		}
+		userTokenMap := make(map[int64]int64)
+		if len(mountPointIds) > 0 {
+			userTokenMap, _ = h.userMountPointTokenService.GetUserTokens(ctx.GetContext(), userID, mountPointIds)
+		}
+
+		// 替换令牌：用户组分享的挂载点强制为空，自己创建的保留原令牌
+		for _, mp := range list {
+			isGroupShare := false
+			for _, fid := range groupFileIds {
+				if fid == mp.FileId {
+					isGroupShare = true
+					break
+				}
+			}
+
+			if isGroupShare {
+				// 用户组分享的挂载点：只有用户自己绑定了才显示，否则为空
+				if userTokenId, ok := userTokenMap[mp.ID]; ok && userTokenId > 0 {
+					mp.TokenId = userTokenId
+				} else {
+					mp.TokenId = 0
+				}
+			} else {
+				// 自己创建的挂载点：优先用自己的，没有就用原令牌
+				if userTokenId, ok := userTokenMap[mp.ID]; ok && userTokenId > 0 {
+					mp.TokenId = userTokenId
+				}
+				// 否则保留原令牌
 			}
 		}
 

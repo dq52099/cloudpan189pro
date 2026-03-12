@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	mountpointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 )
@@ -44,10 +45,23 @@ func (h *handler) SelectList() httpcontext.HandlerFunc {
 			return
 		}
 
+		userID := ctx.GetInt64(consts.CtxKeyUserId)
+		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
+		userGroupId := ctx.GetInt64(consts.CtxKeyUserGroupId)
+
+		// 获取用户组绑定的文件ID
+		var groupFileIds []int64
+		if userGroupId > 0 {
+			groupFileIds, _ = h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
+		}
+
 		mpReq := &mountpointSvi.ListRequest{
-			NoPaginate: true,
-			FullPath:   req.Path,
-			Name:       req.Name,
+			NoPaginate:   true,
+			FullPath:     req.Path,
+			Name:         req.Name,
+			UserID:       userID,
+			IsAdmin:      isAdmin,
+			GroupFileIds: groupFileIds,
 		}
 
 		list, err := h.mountPointService.List(ctx.GetContext(), mpReq)
@@ -55,6 +69,23 @@ func (h *handler) SelectList() httpcontext.HandlerFunc {
 			ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
 
 			return
+		}
+
+		// 获取当前用户对这些挂载点的令牌绑定
+		mountPointIds := make([]int64, 0, len(list))
+		for _, mp := range list {
+			mountPointIds = append(mountPointIds, mp.ID)
+		}
+		userTokenMap := make(map[int64]int64)
+		if len(mountPointIds) > 0 {
+			userTokenMap, _ = h.userMountPointTokenService.GetUserTokens(ctx.GetContext(), userID, mountPointIds)
+		}
+
+		// 用用户绑定的令牌替换原令牌
+		for _, mp := range list {
+			if userTokenId, ok := userTokenMap[mp.ID]; ok && userTokenId > 0 {
+				mp.TokenId = userTokenId
+			}
 		}
 
 		items := make([]*selectItem, 0, len(list))

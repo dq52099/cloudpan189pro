@@ -30,6 +30,7 @@ type AutoIngestPlan struct {
 	Addition           datatypes.JSONMap     `gorm:"column:addition;type:json" json:"addition"`
 	RefreshStrategy    RefreshStrategy       `gorm:"embedded;embeddedPrefix:refresh_strategy_" json:"refreshStrategy"`
 	TokenId            int64                 `gorm:"column:token_id;type:bigint;not null;default:0;" json:"tokenId"`
+	UserID             int64                 `gorm:"column:user_id;type:bigint;default:1;index" json:"userId"` // 所属用户ID
 	CreatedAt          time.Time             `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
 	UpdatedAt          time.Time             `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
 }

@@ -8,9 +8,11 @@ import (
 	cloudbridgeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
 	cloudtokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
 	filetasklogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/filetasklog"
+	group2fileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/group2file"
 	mediafileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mediafile"
 	mountPointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 	storageFacadeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/storagefacade"
+	userMountPointTokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/userMountPointToken"
 	virtualfileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/virtualfile"
 )
 
@@ -71,14 +73,16 @@ const (
 )
 
 type handler struct {
-	taskEngine           taskengine.TaskEngine
-	virtualFileService   virtualfileSvi.Service
-	cloudBridgeService   cloudbridgeSvi.Service
-	cloudTokenService    cloudtokenSvi.Service
-	mountPointService    mountPointSvi.Service
-	fileTaskLogService   filetasklogSvi.Service
-	storageFacadeService storageFacadeSvi.Service
-	mediaFileService     mediafileSvi.Service
+	taskEngine                 taskengine.TaskEngine
+	virtualFileService         virtualfileSvi.Service
+	cloudBridgeService         cloudbridgeSvi.Service
+	cloudTokenService          cloudtokenSvi.Service
+	mountPointService          mountPointSvi.Service
+	fileTaskLogService         filetasklogSvi.Service
+	storageFacadeService       storageFacadeSvi.Service
+	mediaFileService           mediafileSvi.Service
+	group2FileService          group2fileSvi.Service
+	userMountPointTokenService userMountPointTokenSvi.Service
 }
 
 func NewHandler(
@@ -90,15 +94,19 @@ func NewHandler(
 	fileTaskLogService filetasklogSvi.Service,
 	storageFacadeService storageFacadeSvi.Service,
 	mediaFileService mediafileSvi.Service,
+	group2FileService group2fileSvi.Service,
+	userMountPointTokenService userMountPointTokenSvi.Service,
 ) Handler {
 	return &handler{
-		virtualFileService:   virtualFileService,
-		cloudBridgeService:   cloudBridgeService,
-		cloudTokenService:    cloudTokenService,
-		mountPointService:    mountPointService,
-		taskEngine:           taskEngine,
-		fileTaskLogService:   fileTaskLogService,
-		storageFacadeService: storageFacadeService,
-		mediaFileService:     mediaFileService,
+		taskEngine:                 taskEngine,
+		virtualFileService:         virtualFileService,
+		cloudBridgeService:         cloudBridgeService,
+		cloudTokenService:          cloudTokenService,
+		mountPointService:          mountPointService,
+		fileTaskLogService:         fileTaskLogService,
+		storageFacadeService:       storageFacadeService,
+		mediaFileService:           mediaFileService,
+		group2FileService:          group2FileService,
+		userMountPointTokenService: userMountPointTokenService,
 	}
 }

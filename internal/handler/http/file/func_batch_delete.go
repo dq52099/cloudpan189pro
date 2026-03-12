@@ -5,6 +5,7 @@ import (
 
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	mountpointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
 )
@@ -23,8 +24,17 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 			return
 		}
 
+		// 获取当前用户信息用于权限控制
+		userID := ctx.GetInt64(consts.CtxKeyUserId)
+		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
+
 		// 先删除数据库中的挂载点记录
-		if err := h.mountPointService.BatchDelete(ctx.GetContext(), req.IDs); err != nil {
+		deleteReq := &mountpointSvi.BatchDeleteRequest{
+			FileIds:       req.IDs,
+			CreatorUserID: userID,
+			IsAdmin:       isAdmin,
+		}
+		if err := h.mountPointService.BatchDelete(ctx.GetContext(), deleteReq); err != nil {
 			ctx.GetContext().Error("批量删除挂载点记录失败", zap.Error(err), zap.Int64s("ids", req.IDs))
 			ctx.Fail(busCodeBatchDeleteError.WithError(err))
 			return

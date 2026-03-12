@@ -18,6 +18,7 @@ type UsernameLoginRequest struct {
 	Username string
 	Password string
 	Name     string
+	UserID   int64 // 创建令牌的用户ID
 }
 
 // UsernameLoginResponse 用户名登录响应
@@ -79,6 +80,7 @@ func (s *service) UsernameLogin(ctx context.Context, req *UsernameLoginRequest) 
 		Password:    req.Password,
 		LoginType:   models.LoginTypePassword,
 		Addition:    map[string]interface{}{},
+		UserID:      req.UserID,
 	}
 
 	if err = s.getDB(ctx).Create(m).Error; err != nil {

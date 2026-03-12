@@ -10,8 +10,9 @@ import (
 
 // CheckQrcodeRequest 检查二维码请求
 type CheckQrcodeRequest struct {
-	ID   int64  `json:"id" binding:"omitempty" example:"1"`                                     // 云盘令牌ID，可选
-	UUID string `json:"uuid" binding:"required" example:"550e8400-e29b-41d4-a716-446655440000"` // 二维码UUID
+	ID     int64  `json:"id" binding:"omitempty" example:"1"`                                     // 云盘令牌ID，可选
+	UUID   string `json:"uuid" binding:"required" example:"550e8400-e29b-41d4-a716-446655440000"` // 二维码UUID
+	UserID int64  // 创建令牌的用户ID
 }
 
 // CheckQrcode 检查二维码状态
@@ -45,6 +46,7 @@ func (s *service) CheckQrcode(ctx context.Context, req *CheckQrcodeRequest) (err
 			ExpiresIn:   respData.ExpiresIn,
 			LoginType:   models.LoginTypeScan,
 			Addition:    map[string]interface{}{},
+			UserID:      req.UserID,
 		}
 
 		if err = s.getDB(ctx).Create(cloudToken).Error; err != nil {

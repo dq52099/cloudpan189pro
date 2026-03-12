@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/autoingest"
@@ -102,6 +103,9 @@ func (h *handler) CreateSubscribePlan() httpcontext.HandlerFunc {
 			offset = 1
 		}
 
+		// 获取当前用户ID
+		userID := ctx.GetInt64(consts.CtxKeyUserId)
+
 		id, err := h.planService.Create(ctx.GetContext(), &models.AutoIngestPlan{
 			Name:               req.Name,
 			Enabled:            enable,
@@ -115,6 +119,7 @@ func (h *handler) CreateSubscribePlan() httpcontext.HandlerFunc {
 			Addition:           addition.JSONMap(),
 			RefreshStrategy:    rs,
 			TokenId:            req.CloudToken,
+			UserID:             userID,
 		})
 		if err != nil {
 			ctx.Fail(codeCreatePlanFailed.WithError(err))

@@ -16,6 +16,7 @@ type CloudToken struct {
 	Username    string            `gorm:"column:username;type:varchar(255);not null;default:''" json:"username"`
 	Password    string            `gorm:"column:password;type:varchar(255);not null;default:''" json:"-"`
 	Addition    datatypes.JSONMap `gorm:"column:addition;type:json" json:"addition" swaggertype:"object"` // 附属参数
+	UserID      int64             `gorm:"column:user_id;type:bigint;default:1;index" json:"userId"`       // 所属用户ID
 	CreatedAt   time.Time         `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
 	UpdatedAt   time.Time         `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
 }

@@ -66,7 +66,6 @@ const router = createRouter({
           meta: {
             title: '令牌管理',
             requiresAuth: true,
-            requiresAdmin: true,
           },
         },
         {
@@ -76,7 +75,6 @@ const router = createRouter({
           meta: {
             title: '存储管理',
             requiresAuth: true,
-            requiresAdmin: true,
           },
         },
         {
@@ -86,7 +84,6 @@ const router = createRouter({
           meta: {
             title: '自动入库',
             requiresAuth: true,
-            requiresAdmin: true,
           },
         },
         {

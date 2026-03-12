@@ -43,22 +43,39 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 			return
 		}
 
+		// 获取当前用户信息用于权限控制
+		userID := ctx.GetInt64(consts.CtxKeyUserId)
+		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
+
+		// 查询所有挂载点并过滤有权限删除的
+		validIds := make([]int64, 0)
+		for _, id := range req.IDs {
+			mountPoint, err := h.mountPointService.Query(ctx.GetContext(), id)
+			if err != nil {
+				continue
+			}
+			// 检查权限
+			if isAdmin || mountPoint.CreatorUserID == userID {
+				validIds = append(validIds, mountPoint.FileId)
+			}
+		}
+
 		// 创建任务日志
 		tracker, _ := h.fileTaskLogService.Create(
 			ctx.GetContext(),
 			"批量删除",
-			fmt.Sprintf("批量删除 %d 个挂载点", len(req.IDs)),
+			fmt.Sprintf("批量删除 %d 个挂载点", len(validIds)),
 			filetasklogSvi.WithFile(0),
-			filetasklogSvi.WithDesc(fmt.Sprintf("ID列表: %v", req.IDs)),
+			filetasklogSvi.WithDesc(fmt.Sprintf("ID列表: %v", validIds)),
 		)
 		if tracker != nil {
 			_ = h.fileTaskLogService.Running(ctx.GetContext(), tracker)
-			_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithTotalCounter(len(req.IDs)))
+			_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithTotalCounter(len(validIds)))
 		}
 
 		// 为每个挂载点创建独立任务
 		successCount := 0
-		for _, id := range req.IDs {
+		for _, id := range validIds {
 			mountPoint, err := h.mountPointService.Query(ctx.GetContext(), id)
 			if err != nil {
 				ctx.GetContext().Warn("查询挂载点失败，跳过", zap.Int64("id", id), zap.Error(err))
@@ -85,7 +102,7 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 			successCount++
 		}
 
-		ctx.GetContext().Info("批量删除请求已加入队列", zap.Int("total", len(req.IDs)), zap.Int("success", successCount))
+		ctx.GetContext().Info("批量删除请求已加入队列", zap.Int("total", len(req.IDs)), zap.Int("valid", len(validIds)), zap.Int("success", successCount))
 		ctx.Success(batchDeleteResponse{
 			Total:   len(req.IDs),
 			Success: successCount,

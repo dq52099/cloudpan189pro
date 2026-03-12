@@ -23,10 +23,11 @@ func (s *service) GetAutoRefreshList(ctx context.Context, req *GetAutoRefreshLis
 		query = query.Where("token_id = ?", *req.TokenId)
 	}
 
+	// 过滤已到期的挂载点
 	query = query.Where("auto_refresh_begin_at IS NOT NULL").
-		Where("auto_refresh_begin_at <= ?", now).
-		Where("date(auto_refresh_begin_at, '+' || auto_refresh_days || ' days') >= ?", now.Format("2006-01-02"))
+		Where("auto_refresh_begin_at <= ?", now)
 
+	// 在 Go 层过滤到期时间，避免 SQL 方言问题
 	list := make([]*models.MountPoint, 0)
 
 	if err := query.Find(&list).Error; err != nil {
@@ -34,7 +35,20 @@ func (s *service) GetAutoRefreshList(ctx context.Context, req *GetAutoRefreshLis
 		return nil, err
 	}
 
-	ctx.Info("查询到需要自动刷新的挂载点", zap.Int("count", len(list)))
+	// 过滤掉已过期的挂载点
+	filtered := make([]*models.MountPoint, 0)
+	for _, mp := range list {
+		if mp.AutoRefreshDays > 0 {
+			expireDate := mp.AutoRefreshBeginAt.AddDate(0, 0, mp.AutoRefreshDays)
+			if expireDate.After(now) || expireDate.Equal(now) {
+				filtered = append(filtered, mp)
+			}
+		} else {
+			filtered = append(filtered, mp)
+		}
+	}
 
-	return list, nil
+	ctx.Info("查询到需要自动刷新的挂载点", zap.Int("count", len(filtered)))
+
+	return filtered, nil
 }

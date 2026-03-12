@@ -6,6 +6,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	mountpointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"gorm.io/gorm"
 )
@@ -49,7 +50,17 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 			return
 		}
 
-		if err = h.mountPointService.Delete(ctx.GetContext(), req.ID); err != nil {
+		// 获取当前用户信息用于权限控制
+		userID := ctx.GetInt64(consts.CtxKeyUserId)
+		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
+
+		deleteReq := &mountpointSvi.DeleteRequest{
+			FileId:        req.ID,
+			CreatorUserID: userID,
+			IsAdmin:       isAdmin,
+		}
+
+		if err = h.mountPointService.Delete(ctx.GetContext(), deleteReq); err != nil {
 			ctx.Fail(busCodeStorageMountPointDeleteFail.WithError(err))
 			return
 		}

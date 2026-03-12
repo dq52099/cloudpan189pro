@@ -11,6 +11,7 @@ import (
 
 	cloudbridgeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
 	cloudtokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
+	userMountPointTokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/userMountPointToken"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 
 	"gorm.io/gorm"
@@ -20,34 +21,38 @@ type Service interface {
 	Create(ctx context.Context, req *CreateRequest) (int64, error)
 	Query(ctx context.Context, fileId int64) (*models.MountPoint, error)
 	QueryByPath(ctx context.Context, fullPath string) (*models.MountPoint, error)
+	GetAccessibleMountPointIDs(ctx context.Context, userID int64, isAdmin bool, groupFileIds []int64) ([]int64, error)
 	List(ctx context.Context, req *ListRequest) ([]*models.MountPoint, error)
 	Count(ctx context.Context, req *ListRequest) (int64, error)
-	Delete(ctx context.Context, fileId int64) error
-	BatchDelete(ctx context.Context, ids []int64) error
+	Delete(ctx context.Context, req *DeleteRequest) error
+	BatchDelete(ctx context.Context, req *BatchDeleteRequest) error
 	ClearAll(ctx context.Context) (int64, error)
 	EnableAutoRefresh(ctx context.Context, fileId int64, enable bool) error
 	GetAutoRefreshList(ctx context.Context, req *GetAutoRefreshListRequest) ([]*models.MountPoint, error)
 	UpdateRefreshConfig(ctx context.Context, fileId int64, config RefreshConfig) error
-	ModifyToken(ctx context.Context, fid int64, tokenId int64) error
+	ModifyToken(ctx context.Context, req *ModifyTokenRequest) error
 	BatchParseText(ctx context.Context, req *topic.BatchParseTextRequest) ([]*topic.BatchParseItem, error)
 	UpdateRefreshTime(ctx context.Context, fileId int64) error
 }
 
 type service struct {
-	svc                bootstrap.ServiceContext
-	cloudTokenService  cloudtokenSvi.Service
-	cloudBridgeService cloudbridgeSvi.Service
+	svc                        bootstrap.ServiceContext
+	cloudTokenService          cloudtokenSvi.Service
+	cloudBridgeService         cloudbridgeSvi.Service
+	userMountPointTokenService userMountPointTokenSvi.Service
 }
 
 func NewService(
 	svc bootstrap.ServiceContext,
 	cloudTokenService cloudtokenSvi.Service,
 	cloudBridgeService cloudbridgeSvi.Service,
+	userMountPointTokenService userMountPointTokenSvi.Service,
 ) Service {
 	return &service{
-		svc:                svc,
-		cloudTokenService:  cloudTokenService,
-		cloudBridgeService: cloudBridgeService,
+		svc:                        svc,
+		cloudTokenService:          cloudTokenService,
+		cloudBridgeService:         cloudBridgeService,
+		userMountPointTokenService: userMountPointTokenService,
 	}
 }
 

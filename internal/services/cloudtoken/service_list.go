@@ -13,6 +13,8 @@ type ListRequest struct {
 	NoPaginate  bool    `form:"noPaginate" binding:"omitempty" example:"false"`                        // 是否不分页，默认false
 	Name        string  `form:"name" binding:"omitempty" example:"名称模糊搜索"`                             // 名称模糊搜索
 	IdList      []int64 `form:"-"`
+	UserID      int64   `form:"-"` // 用户ID，用于权限过滤
+	IsAdmin     bool    `form:"-"` // 是否管理员，管理员可查看所有
 }
 
 func (s *service) List(ctx context.Context, req *ListRequest) (list []*models.CloudToken, err error) {
@@ -60,6 +62,11 @@ func (s *service) getListQuery(ctx context.Context, req *ListRequest) *gorm.DB {
 
 	if len(req.IdList) > 0 {
 		query = query.Where("id IN ?", req.IdList)
+	}
+
+	// 非管理员只能查看自己的令牌
+	if !req.IsAdmin && req.UserID > 0 {
+		query = query.Where("user_id = ?", req.UserID)
 	}
 
 	return query

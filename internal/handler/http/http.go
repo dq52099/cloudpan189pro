@@ -44,6 +44,7 @@ import (
 	telegramSvi "github.com/xxcheng123/cloudpan189-share/internal/services/telegram"
 	tmdbSvi "github.com/xxcheng123/cloudpan189-share/internal/services/tmdb"
 	userSvi "github.com/xxcheng123/cloudpan189-share/internal/services/user"
+	userMountPointTokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/userMountPointToken"
 	userGroupSvi "github.com/xxcheng123/cloudpan189-share/internal/services/usergroup"
 	verifySvi "github.com/xxcheng123/cloudpan189-share/internal/services/verify"
 	virtualfileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/virtualfile"
@@ -65,22 +66,23 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 	)
 
 	var (
-		userService           = userSvi.NewService(svc)
-		userGroupService      = userGroupSvi.NewService(svc)
-		group2FileService     = group2fileSvi.NewService(svc)
-		settingService        = settingSvi.NewService(svc)
-		virtualFileService    = virtualfileSvi.NewService(svc)
-		cloudBridgeService    = cloudbridgeSvi.NewService(svc)
-		cloudTokenService     = cloudtokenSvi.NewService(svc)
-		mountPointService     = mountPointSvi.NewService(svc, cloudTokenService, cloudBridgeService)
-		fileTaskLogService    = filetasklogSvi.NewService(svc)
-		storageFacadeService  = storagefacadeSvi.NewService(svc)
-		verifyService         = verifySvi.NewService(svc)
-		autoIngestPlanService = autoingestplanSvi.NewService(svc)
-		autoIngestLogService  = autoingestlogSvi.NewService(svc)
-		loginLogService       = loginlogSvi.NewService(svc)
-		mediaConfigService    = mediaconfigSvi.NewService(svc)
-		mediaFileService      = mediafileSvi.NewService(svc)
+		userService                = userSvi.NewService(svc)
+		userGroupService           = userGroupSvi.NewService(svc)
+		group2FileService          = group2fileSvi.NewService(svc)
+		userMountPointTokenService = userMountPointTokenSvi.NewService(svc)
+		settingService             = settingSvi.NewService(svc)
+		virtualFileService         = virtualfileSvi.NewService(svc)
+		cloudBridgeService         = cloudbridgeSvi.NewService(svc)
+		cloudTokenService          = cloudtokenSvi.NewService(svc)
+		mountPointService          = mountPointSvi.NewService(svc, cloudTokenService, cloudBridgeService, userMountPointTokenService)
+		fileTaskLogService         = filetasklogSvi.NewService(svc)
+		storageFacadeService       = storagefacadeSvi.NewService(svc)
+		verifyService              = verifySvi.NewService(svc)
+		autoIngestPlanService      = autoingestplanSvi.NewService(svc)
+		autoIngestLogService       = autoingestlogSvi.NewService(svc)
+		loginLogService            = loginlogSvi.NewService(svc)
+		mediaConfigService         = mediaconfigSvi.NewService(svc)
+		mediaFileService           = mediafileSvi.NewService(svc)
 	)
 
 	// Telegram 服务：优先使用 extensionServices 中已启动的服务
@@ -106,7 +108,7 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 		userHandler           = user.NewHandler(userService, userGroupService, loginLogService)
 		settingHandler        = setting.NewHandler(userService, settingService, taskEngine)
 		userGroupHandler      = usergroup.NewHandler(userGroupService, group2FileService, userService)
-		storageHandler        = storage.NewHandler(taskEngine, virtualFileService, cloudBridgeService, cloudTokenService, mountPointService, fileTaskLogService, storageFacadeService, mediaFileService)
+		storageHandler        = storage.NewHandler(taskEngine, virtualFileService, cloudBridgeService, cloudTokenService, mountPointService, fileTaskLogService, storageFacadeService, mediaFileService, group2FileService, userMountPointTokenService)
 		storageAdvanceHandler = advance.NewHandler(cloudBridgeService, cloudTokenService)
 		cloudTokenHandler     = cloudtoken.NewHandler(cloudTokenService, mountPointService)
 		fileHandler           = file.NewHandler(virtualFileService, verifyService, cloudTokenService, cloudBridgeService, mountPointService, group2FileService, taskEngine)
@@ -201,6 +203,10 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 			storageAdvanceRouter.GET("/get_subscribe_user_all", wrap(storageAdvanceHandler.GetSubscribeUserAll()))
 			storageAdvanceRouter.GET("/share_info", wrap(storageAdvanceHandler.GetShareInfo()))
 		}
+
+		{
+			openapiRouter.GET("/public/share_info", wrap(storageAdvanceHandler.GetShareInfo()))
+		}
 	}
 
 	{
@@ -218,7 +224,7 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 	}
 
 	{
-		cloudTokenRouter := openapiRouter.Group("/cloud_token", wrap(userMiddleware.Auth(true)))
+		cloudTokenRouter := openapiRouter.Group("/cloud_token", wrap(userMiddleware.Auth()))
 		{
 			cloudTokenRouter.POST("/init_qrcode", wrap(cloudTokenHandler.InitQrcode()))
 			cloudTokenRouter.POST("/check_qrcode", wrap(cloudTokenHandler.CheckQrcode()))
@@ -261,7 +267,7 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 	}
 
 	{
-		autoIngestRouter := openapiRouter.Group("/auto_ingest", wrap(userMiddleware.Auth(true)))
+		autoIngestRouter := openapiRouter.Group("/auto_ingest", wrap(userMiddleware.Auth()))
 		{
 			autoIngestRouter.POST("/plan/create_subscribe", wrap(autoIngestHandler.CreateSubscribePlan()))
 			autoIngestRouter.GET("/plan/list", wrap(autoIngestHandler.PlanList()))

@@ -63,13 +63,18 @@ api.interceptors.response.use(
         case 400:
           return Promise.reject(new Error(data.msg || '请求失败'))
         case 401:
-          window.location.href = '/@login'
-          authStore.logout()
-          console.error('未授权')
+          if (!authStore.isLogin) {
+            window.location.href = '/@login'
+            authStore.logout()
+            console.error('未登录')
+          } else {
+            console.error('权限不足或会话已过期')
+            return Promise.reject(new Error(data.msg || '权限不足或会话已过期'))
+          }
           break
         case 403:
           console.error('权限不足')
-          break
+          return Promise.reject(new Error(data.msg || '权限不足'))
         case 404:
           console.error('请求的资源不存在')
           break

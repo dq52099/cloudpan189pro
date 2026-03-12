@@ -25,6 +25,8 @@ type CreateStorageRequest struct {
 	AutoRefreshDays   int  `json:"autoRefreshDays"`
 	RefreshInterval   int  `json:"refreshInterval"`
 	EnableDeepRefresh bool `json:"enableDeepRefresh"`
+
+	CreatorUserID int64 // 创建者用户ID
 }
 
 var (
@@ -122,6 +124,7 @@ func (s *service) CreateStorage(ctx context.Context, req *CreateStorageRequest) 
 		AutoRefreshDays:   req.AutoRefreshDays,
 		RefreshInterval:   req.RefreshInterval,
 		EnableDeepRefresh: req.EnableDeepRefresh,
+		CreatorUserID:     req.CreatorUserID,
 	}); err != nil {
 		ctx.Error("创建挂载点失败，执行补偿删除虚拟文件", zap.Error(err), zap.Int64("virtualFileId", id), zap.String("path", req.LocalPath))
 

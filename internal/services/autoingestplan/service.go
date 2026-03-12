@@ -16,7 +16,7 @@ type Service interface {
 	Create(ctx context.Context, plan *models.AutoIngestPlan) (int64, error)
 	Update(ctx context.Context, id int64, fields ...utils.Field) error
 	Query(ctx context.Context, id int64) (*models.AutoIngestPlan, error)
-	Delete(ctx context.Context, id int64) error
+	Delete(ctx context.Context, req *DeleteRequest) error
 
 	// 查询
 	List(ctx context.Context, req *ListRequest) ([]*models.AutoIngestPlan, error)

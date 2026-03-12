@@ -1,6 +1,7 @@
 package cloudtoken
 
 import (
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
 	mountPointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
@@ -30,6 +31,10 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 
 			return
 		}
+
+		// 获取当前用户信息用于权限控制
+		req.UserID = ctx.GetInt64(consts.CtxKeyUserId)
+		req.IsAdmin = ctx.GetBool(consts.CtxKeyIsAdmin)
 
 		if count, err := h.mountPointService.Count(ctx.GetContext(), &mountPointSvi.ListRequest{
 			TokenId: &req.ID,

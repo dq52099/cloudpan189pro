@@ -7,6 +7,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/taskcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/filetasklog"
+	mountpointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/virtualfile"
 	"github.com/xxcheng123/cloudpan189-share/internal/shared"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
@@ -52,8 +53,13 @@ func (h *handler) HandleBatchDelete() taskcontext.HandlerFunc {
 			targetFileID := id
 			fileInfo, fileErr := h.virtualFileService.Query(ctx.GetContext(), targetFileID)
 
-			// 1. 尝试删除挂载点记录
-			if err := h.mountPointService.BatchDelete(ctx.GetContext(), []int64{id}); err != nil {
+			// 1. 尝试删除挂载点记录（管理员权限，不进行用户过滤）
+			deleteReq := &mountpointSvi.BatchDeleteRequest{
+				FileIds:       []int64{id},
+				CreatorUserID: 0,
+				IsAdmin:       true,
+			}
+			if err := h.mountPointService.BatchDelete(ctx.GetContext(), deleteReq); err != nil {
 				h.logger.Debug("后台删除挂载点记录异常(或已删除)", zap.Int64("id", id), zap.Error(err))
 			}
 
@@ -181,8 +187,13 @@ func (h *handler) HandleDelete() taskcontext.HandlerFunc {
 
 		fileInfo, fileErr := h.virtualFileService.Query(ctx.GetContext(), targetFileID)
 
-		// 1. 尝试删除挂载点记录
-		if err := h.mountPointService.BatchDelete(ctx.GetContext(), []int64{targetFileID}); err != nil {
+		// 1. 尝试删除挂载点记录（管理员权限）
+		deleteReq := &mountpointSvi.BatchDeleteRequest{
+			FileIds:       []int64{targetFileID},
+			CreatorUserID: 0,
+			IsAdmin:       true,
+		}
+		if err := h.mountPointService.BatchDelete(ctx.GetContext(), deleteReq); err != nil {
 			h.logger.Debug("后台删除挂载点记录异常(或已删除)", zap.Int64("id", targetFileID), zap.Error(err))
 		}
 

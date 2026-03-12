@@ -15,6 +15,7 @@ import (
 	mediafileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mediafile"
 	mountPointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 	storageFacadeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/storagefacade"
+	userMountPointTokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/userMountPointToken"
 	verifySvi "github.com/xxcheng123/cloudpan189-share/internal/services/verify"
 	virtualfileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/virtualfile"
 
@@ -33,16 +34,17 @@ func Start(svc bootstrap.ServiceContext) error {
 	)
 
 	var (
-		virtualFileService    = virtualfileSvi.NewService(svc)
-		cloudBridgeService    = cloudbridgeSvi.NewService(svc)
-		cloudTokenService     = cloudtokenSvi.NewService(svc)
-		mountPointService     = mountPointSvi.NewService(svc, cloudTokenService, cloudBridgeService)
-		fileTaskLogService    = filetasklogSvi.NewService(svc)
-		authIngestLogService  = autoingestlogSvi.NewService(svc)
-		autoIngestPlanService = autoingestplanSvi.NewService(svc)
-		storageFacadeService  = storageFacadeSvi.NewService(svc)
-		mediaFileService      = mediafileSvi.NewService(svc)
-		verifyService         = verifySvi.NewService(svc)
+		virtualFileService     = virtualfileSvi.NewService(svc)
+		cloudBridgeService     = cloudbridgeSvi.NewService(svc)
+		cloudTokenService      = cloudtokenSvi.NewService(svc)
+		userMountPointTokenSvc = userMountPointTokenSvi.NewService(svc)
+		mountPointService      = mountPointSvi.NewService(svc, cloudTokenService, cloudBridgeService, userMountPointTokenSvc)
+		fileTaskLogService     = filetasklogSvi.NewService(svc)
+		authIngestLogService   = autoingestlogSvi.NewService(svc)
+		autoIngestPlanService  = autoingestplanSvi.NewService(svc)
+		storageFacadeService   = storageFacadeSvi.NewService(svc)
+		mediaFileService       = mediafileSvi.NewService(svc)
+		verifyService          = verifySvi.NewService(svc)
 	)
 
 	var (

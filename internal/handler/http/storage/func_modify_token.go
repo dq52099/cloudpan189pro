@@ -2,6 +2,7 @@ package storage
 
 import (
 	"github.com/pkg/errors"
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"gorm.io/gorm"
 )
@@ -13,7 +14,7 @@ type modifyTokenRequest struct {
 
 // ModifyToken 修改存储挂载点令牌
 // @Summary 修改存储挂载点令牌
-// @Description 修改指定存储挂载点关联的云盘令牌
+// @Description 用户绑定自己的令牌到挂载点（不影响其他用户）
 // @Tags 存储管理
 // @Accept json
 // @Produce json
@@ -38,8 +39,13 @@ func (h *handler) ModifyToken() httpcontext.HandlerFunc {
 			return
 		}
 
+		// 获取当前用户信息用于权限控制
+		userID := ctx.GetInt64(consts.CtxKeyUserId)
+		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
+
 		// 验证挂载点是否存在
-		if _, err := h.mountPointService.Query(ctx.GetContext(), req.ID); err != nil {
+		mp, err := h.mountPointService.Query(ctx.GetContext(), req.ID)
+		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				ctx.Fail(busCodeStorageMountPointNotFound.WithError(err))
 			} else {
@@ -49,9 +55,36 @@ func (h *handler) ModifyToken() httpcontext.HandlerFunc {
 			return
 		}
 
-		// 验证云盘令牌是否存在
+		// 验证用户是否有权限访问这个挂载点
+		// 非管理员：只能访问自己创建的或用户组分享的挂载点
+		if !isAdmin {
+			hasAccess := false
+			if mp.CreatorUserID == userID {
+				hasAccess = true
+			} else {
+				// 检查用户组是否有权限
+				userGroupId := ctx.GetInt64(consts.CtxKeyUserGroupId)
+				if userGroupId > 0 {
+					groupFileIds, _ := h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
+					for _, fid := range groupFileIds {
+						if fid == mp.FileId {
+							hasAccess = true
+							break
+						}
+					}
+				}
+			}
+			if !hasAccess {
+				ctx.Fail(busCodeStorageMountPointNotFound)
+
+				return
+			}
+		}
+
+		// 验证云盘令牌是否存在（必须是用户自己的令牌）
 		if req.TokenID != 0 {
-			if _, err := h.cloudTokenService.Query(ctx.GetContext(), req.TokenID); err != nil {
+			token, err := h.cloudTokenService.Query(ctx.GetContext(), req.TokenID)
+			if err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					ctx.Fail(busCodeStorageCloudTokenNotExist.WithError(err))
 				} else {
@@ -60,13 +93,26 @@ func (h *handler) ModifyToken() httpcontext.HandlerFunc {
 
 				return
 			}
+
+			// 非管理员：只能绑定自己的令牌
+			if !isAdmin && token.UserID != userID {
+				ctx.Fail(busCodeStorageCloudTokenNotExist.WithMessage("只能绑定自己的令牌"))
+
+				return
+			}
 		}
 
-		// 修改挂载点的令牌
-		if err := h.mountPointService.ModifyToken(ctx.GetContext(), req.ID, req.TokenID); err != nil {
-			ctx.Fail(busCodeStorageModifyTokenFailed.WithError(err))
+		// 绑定用户的令牌到挂载点
+		if req.TokenID == 0 {
+			// 解除绑定
+			h.userMountPointTokenService.UnbindToken(ctx.GetContext(), userID, req.ID)
+		} else {
+			// 绑定令牌
+			if err := h.userMountPointTokenService.BindToken(ctx.GetContext(), userID, req.ID, req.TokenID); err != nil {
+				ctx.Fail(busCodeStorageModifyTokenFailed.WithError(err))
 
-			return
+				return
+			}
 		}
 
 		ctx.Success()

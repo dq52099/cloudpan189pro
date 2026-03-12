@@ -3,7 +3,9 @@ package autoingest
 import (
 	"sync"
 
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	autoingestplanSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestplan"
 )
 
 // BatchDeleteRequest 批量删除请求
@@ -28,6 +30,10 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 			return
 		}
 
+		// 获取当前用户信息用于权限控制
+		userID := ctx.GetInt64(consts.CtxKeyUserId)
+		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
+
 		var (
 			wg         sync.WaitGroup
 			successCnt int
@@ -40,7 +46,13 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 			go func(planId int64) {
 				defer wg.Done()
 
-				if err := h.planService.Delete(ctx.GetContext(), planId); err != nil {
+				deleteReq := &autoingestplanSvi.DeleteRequest{
+					ID:      planId,
+					UserID:  userID,
+					IsAdmin: isAdmin,
+				}
+
+				if err := h.planService.Delete(ctx.GetContext(), deleteReq); err != nil {
 					mu.Lock()
 					failCnt++
 					mu.Unlock()

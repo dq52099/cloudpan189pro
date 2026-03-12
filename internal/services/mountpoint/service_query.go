@@ -40,3 +40,32 @@ func (s *service) QueryByPath(ctx context.Context, fullPath string) (*models.Mou
 
 	return &mountPoint, nil
 }
+
+// GetAccessibleMountPointIDs 获取用户可访问的挂载点ID列表（用于文件浏览）
+// 管理员返回所有挂载点，普通用户可以访问：1.自己创建的 2.用户组分享的 3.自己绑定了令牌的
+func (s *service) GetAccessibleMountPointIDs(ctx context.Context, userID int64, isAdmin bool, groupFileIds []int64) ([]int64, error) {
+	var ids []int64
+	query := s.getDB(ctx).Model(new(models.MountPoint))
+
+	if !isAdmin && userID > 0 {
+		// 普通用户：自己创建的 OR 用户组分享的 OR 自己绑定了令牌的
+		query = query.Where("creator_user_id = ?", userID)
+
+		// 添加用户组分享的
+		if len(groupFileIds) > 0 {
+			query = query.Where("creator_user_id = ? OR file_id IN ? OR id IN (SELECT mount_point_id FROM user_mount_point_tokens WHERE user_id = ?)",
+				userID, groupFileIds, userID)
+		} else {
+			query = query.Where("creator_user_id = ? OR id IN (SELECT mount_point_id FROM user_mount_point_tokens WHERE user_id = ?)",
+				userID, userID)
+		}
+	}
+	// 管理员：可以访问所有挂载点
+
+	if err := query.Pluck("file_id", &ids).Error; err != nil {
+		ctx.Error("获取可访问挂载点ID失败", zap.Error(err), zap.Int64("user_id", userID), zap.Bool("is_admin", isAdmin))
+		return nil, err
+	}
+
+	return ids, nil
+}

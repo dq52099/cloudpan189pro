@@ -1,6 +1,7 @@
 package cloudtoken
 
 import (
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
 )
@@ -29,6 +30,9 @@ func (h *handler) CheckQrcode() httpcontext.HandlerFunc {
 
 			return
 		}
+
+		// 设置当前用户ID
+		req.UserID = ctx.GetInt64(consts.CtxKeyUserId)
 
 		if err := h.cloudTokenService.CheckQrcode(ctx.GetContext(), req); err != nil {
 			ctx.Fail(codeCheckQrcodeFailed.WithError(err))

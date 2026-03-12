@@ -4,8 +4,12 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/bootstrap"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 
+	cloudbridgeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
+	cloudtokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
 	group2fileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/group2file"
+	mountpointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 	userSvi "github.com/xxcheng123/cloudpan189-share/internal/services/user"
+	userMountPointTokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/userMountPointToken"
 	verifySvi "github.com/xxcheng123/cloudpan189-share/internal/services/verify"
 	virtualfileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/virtualfile"
 )
@@ -27,10 +31,12 @@ func Start(svc bootstrap.ServiceContext) {
 	)
 
 	var (
-		userService        = userSvi.NewService(svc)
-		virtualFileService = virtualfileSvi.NewService(svc)
-		verifyService      = verifySvi.NewService(svc)
-		group2FileService  = group2fileSvi.NewService(svc)
+		userService            = userSvi.NewService(svc)
+		virtualFileService     = virtualfileSvi.NewService(svc)
+		verifyService          = verifySvi.NewService(svc)
+		group2FileService      = group2fileSvi.NewService(svc)
+		userMountPointTokenSvc = userMountPointTokenSvi.NewService(svc)
+		mountPointService      = mountpointSvi.NewService(svc, cloudtokenSvi.NewService(svc), cloudbridgeSvi.NewService(svc), userMountPointTokenSvc)
 	)
 
 	davRouter := engine.Group("/dav",
@@ -42,6 +48,7 @@ func Start(svc bootstrap.ServiceContext) {
 		verifyService:      verifyService,
 		virtualFileService: virtualFileService,
 		group2FileService:  group2FileService,
+		mountPointService:  mountPointService,
 	}
 
 	for _, method := range davMethods {

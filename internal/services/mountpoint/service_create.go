@@ -11,10 +11,11 @@ import (
 )
 
 type CreateRequest struct {
-	FileId   int64  `json:"fileId"`    // 文件ID
-	FullPath string `json:"fullPath" ` // 完整路径
-	OsType   string `json:"osType"`    // 操作系统类型
-	TokenId  int64  `json:"tokenId"`   // 令牌ID
+	FileId        int64  `json:"fileId"`    // 文件ID
+	FullPath      string `json:"fullPath" ` // 完整路径
+	OsType        string `json:"osType"`    // 操作系统类型
+	TokenId       int64  `json:"tokenId"`   // 令牌ID
+	CreatorUserID int64  `json:"-"`         // 创建者用户ID
 
 	EnableAutoRefresh bool `json:"enableAutoRefresh"`
 	AutoRefreshDays   int  `json:"autoRefreshDays"`
@@ -41,11 +42,12 @@ func (s *service) Create(ctx context.Context, req *CreateRequest) (int64, error)
 	}
 
 	mountPoint := &models.MountPoint{
-		FileId:   req.FileId,
-		Name:     name,
-		FullPath: req.FullPath,
-		OsType:   req.OsType,
-		TokenId:  req.TokenId,
+		FileId:        req.FileId,
+		Name:          name,
+		FullPath:      req.FullPath,
+		OsType:        req.OsType,
+		TokenId:       req.TokenId,
+		CreatorUserID: req.CreatorUserID,
 
 		EnableAutoRefresh:  req.EnableAutoRefresh,
 		AutoRefreshDays:    req.AutoRefreshDays,

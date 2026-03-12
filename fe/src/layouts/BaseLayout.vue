@@ -244,6 +244,21 @@ const menuOptions = computed((): MenuOption[] => {
       key: '/@dashboard/profile',
       icon: () => h(NIcon, null, { default: () => h(ProfileIcon) }),
     },
+    {
+      label: '令牌管理',
+      key: '/@dashboard/cloudtokens',
+      icon: () => h(NIcon, null, { default: () => h(TokenIcon) }),
+    },
+    {
+      label: '存储管理',
+      key: '/@dashboard/storages',
+      icon: () => h(NIcon, null, { default: () => h(StorageIcon) }),
+    },
+    {
+      label: '自动入库',
+      key: '/@dashboard/autoingest',
+      icon: () => h(NIcon, null, { default: () => h(AutoIngestIcon) }),
+    },
   ]
 
   const browseItems: MenuOption[] = [
@@ -264,21 +279,6 @@ const menuOptions = computed((): MenuOption[] => {
       label: '用户组管理',
       key: '/@dashboard/usergroups',
       icon: () => h(NIcon, null, { default: () => h(UserGroupsIcon) }),
-    },
-    {
-      label: '令牌管理',
-      key: '/@dashboard/cloudtokens',
-      icon: () => h(NIcon, null, { default: () => h(TokenIcon) }),
-    },
-    {
-      label: '存储管理',
-      key: '/@dashboard/storages',
-      icon: () => h(NIcon, null, { default: () => h(StorageIcon) }),
-    },
-    {
-      label: '自动入库',
-      key: '/@dashboard/autoingest',
-      icon: () => h(NIcon, null, { default: () => h(AutoIngestIcon) }),
     },
     {
       label: '拓展功能',

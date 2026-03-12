@@ -6,6 +6,7 @@ import (
 	cloudbridgeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
 	cloudtokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
 	mountPointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
+	userMountPointTokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/userMountPointToken"
 	virtualFileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/virtualfile"
 )
 
@@ -24,10 +25,11 @@ type service struct {
 func NewService(svc bootstrap.ServiceContext) Service {
 	cloudTokenService := cloudtokenSvi.NewService(svc)
 	cloudBridgeService := cloudbridgeSvi.NewService(svc)
+	userMountPointTokenService := userMountPointTokenSvi.NewService(svc)
 
 	return &service{
 		svc:                svc,
-		mountPointService:  mountPointSvi.NewService(svc, cloudTokenService, cloudBridgeService),
+		mountPointService:  mountPointSvi.NewService(svc, cloudTokenService, cloudBridgeService, userMountPointTokenService),
 		virtualFileService: virtualFileSvi.NewService(svc),
 	}
 }

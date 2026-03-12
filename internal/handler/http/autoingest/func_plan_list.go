@@ -1,6 +1,7 @@
 package autoingest
 
 import (
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	autoingestplanSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestplan"
@@ -42,6 +43,10 @@ func (h *handler) PlanList() httpcontext.HandlerFunc {
 
 			return
 		}
+
+		// 获取当前用户信息用于权限控制
+		req.UserID = ctx.GetInt64(consts.CtxKeyUserId)
+		req.IsAdmin = ctx.GetBool(consts.CtxKeyIsAdmin)
 
 		list, err := h.planService.List(ctx.GetContext(), req)
 		if err != nil {
