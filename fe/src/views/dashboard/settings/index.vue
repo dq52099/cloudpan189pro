@@ -252,6 +252,51 @@
           />
         </div>
       </div>
+
+      <div class="setting-item">
+        <div class="item-left">
+          <div class="item-title">普通用户 WebDAV 媒体格式限制</div>
+          <div class="item-desc">
+            开启后，普通用户通过 WebDAV 只能看到允许后缀列表中的文件；管理员不受影响，目录仍正常显示
+          </div>
+        </div>
+        <div class="item-right">
+          <n-switch
+            v-model:value="additionForm.webdavUserStrmOnly"
+            :loading="savingWebdavUserStrmOnly"
+            @update:value="handleToggleWebdavUserStrmOnly"
+          />
+        </div>
+      </div>
+
+      <div class="setting-item">
+        <div class="item-left">
+          <div class="item-title">WebDAV 允许后缀列表</div>
+          <div class="item-desc">
+            仅对普通用户 WebDAV 限制生效。使用英文逗号分隔，支持不带点输入，例如 mp4, mkv, avi
+          </div>
+        </div>
+        <div class="item-right item-right-column">
+          <n-input
+            v-model:value="webdavAllowedSuffixesText"
+            type="textarea"
+            :autosize="{ minRows: 3, maxRows: 6 }"
+            placeholder=".mp4, .mkv, .avi"
+            style="width: 420px"
+          />
+          <div class="right-inline suffix-actions">
+            <n-button size="small" @click="resetWebdavAllowedSuffixes">恢复默认</n-button>
+            <n-button
+              size="small"
+              type="primary"
+              :loading="savingWebdavAllowedSuffixes"
+              @click="handleSaveWebdavAllowedSuffixes"
+            >
+              保存
+            </n-button>
+          </div>
+        </div>
+      </div>
     </section>
   </div>
 </template>
@@ -274,6 +319,63 @@ const message = useMessage()
 
 const systemStore = useSystemStore()
 const systemInfo = systemStore.get()
+
+const defaultWebdavAllowedSuffixes = [
+  '.mp4',
+  '.mkv',
+  '.avi',
+  '.mov',
+  '.wmv',
+  '.flv',
+  '.webm',
+  '.m4v',
+  '.mpg',
+  '.mpeg',
+  '.m2v',
+  '.m4p',
+  '.m4b',
+  '.ts',
+  '.mts',
+  '.m2ts',
+  '.m2t',
+  '.mxf',
+  '.dv',
+  '.dvr-ms',
+  '.asf',
+  '.3gp',
+  '.3g2',
+  '.f4v',
+  '.f4p',
+  '.f4a',
+  '.f4b',
+  '.vob',
+  '.ogv',
+  '.ogg',
+  '.divx',
+  '.xvid',
+  '.rm',
+  '.rmvb',
+  '.dat',
+  '.nsv',
+  '.qt',
+  '.amv',
+  '.mpv',
+  '.m1v',
+  '.svi',
+  '.viv',
+  '.fli',
+  '.flc',
+]
+
+const normalizeSuffixes = (input: string): string[] => {
+  const items = input
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean)
+    .map((item) => (item.startsWith('.') ? item : `.${item}`))
+
+  return Array.from(new Set(items))
+}
 
 // 表单状态
 const form = reactive({
@@ -325,7 +427,10 @@ const additionForm = reactive<Models.SettingAddition>({
   taskThreadCount: 1,
   workerCount: 4,
   enableStorageAutoRefresh: true,
+  webdavUserStrmOnly: false,
+  webdavAllowedSuffixes: [...defaultWebdavAllowedSuffixes],
 })
+const webdavAllowedSuffixesText = ref(defaultWebdavAllowedSuffixes.join(', '))
 
 // 初始化完成标记，防止初始渲染触发自动保存
 const additionLoaded = ref(false)
@@ -338,6 +443,8 @@ const savingChunkSize = ref(false)
 const savingTaskThreads = ref(false)
 const savingWorkerCount = ref(false)
 const savingStorageAutoRefresh = ref(false)
+const savingWebdavUserStrmOnly = ref(false)
+const savingWebdavAllowedSuffixes = ref(false)
 
 // 通用保存函数：仅提交传入字段
 const saveAdditionField = (payload: Record<string, unknown>, setLoading: (v: boolean) => void) => {
@@ -368,6 +475,27 @@ const handleWorkerCountChange = () => {
 // 存储自动刷新保存
 const handleToggleStorageAutoRefresh = (val: boolean) => {
   saveAdditionField({ enableStorageAutoRefresh: val }, (v) => (savingStorageAutoRefresh.value = v))
+}
+
+const handleToggleWebdavUserStrmOnly = (val: boolean) => {
+  saveAdditionField({ webdavUserStrmOnly: val }, (v) => (savingWebdavUserStrmOnly.value = v))
+}
+
+const handleSaveWebdavAllowedSuffixes = () => {
+  const normalized = normalizeSuffixes(webdavAllowedSuffixesText.value)
+  additionForm.webdavAllowedSuffixes = normalized.length
+    ? normalized
+    : [...defaultWebdavAllowedSuffixes]
+  webdavAllowedSuffixesText.value = additionForm.webdavAllowedSuffixes.join(', ')
+  saveAdditionField(
+    { webdavAllowedSuffixes: additionForm.webdavAllowedSuffixes },
+    (v) => (savingWebdavAllowedSuffixes.value = v)
+  )
+}
+
+const resetWebdavAllowedSuffixes = () => {
+  additionForm.webdavAllowedSuffixes = [...defaultWebdavAllowedSuffixes]
+  webdavAllowedSuffixesText.value = additionForm.webdavAllowedSuffixes.join(', ')
 }
 
 // 开机关联保存
@@ -552,6 +680,11 @@ onMounted(() => {
         additionForm.taskThreadCount = res.data.taskThreadCount ?? 1
         additionForm.workerCount = res.data.workerCount ?? 4
         additionForm.enableStorageAutoRefresh = res.data.enableStorageAutoRefresh ?? true
+        additionForm.webdavUserStrmOnly = res.data.webdavUserStrmOnly ?? false
+        additionForm.webdavAllowedSuffixes = res.data.webdavAllowedSuffixes?.length
+          ? [...res.data.webdavAllowedSuffixes]
+          : [...defaultWebdavAllowedSuffixes]
+        webdavAllowedSuffixesText.value = additionForm.webdavAllowedSuffixes.join(', ')
       } else {
         message.error(res.msg || '获取附加设置失败')
       }
@@ -627,10 +760,20 @@ onMounted(() => {
   justify-content: flex-end;
 }
 
+.item-right-column {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
 .right-inline {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.suffix-actions {
+  justify-content: flex-end;
 }
 
 /* Switch/Slider 细节优化 */
@@ -673,6 +816,14 @@ onMounted(() => {
   }
 
   .item-right {
+    justify-content: flex-start;
+  }
+
+  .item-right-column {
+    align-items: stretch;
+  }
+
+  .suffix-actions {
     justify-content: flex-start;
   }
 }

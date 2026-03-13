@@ -10,13 +10,15 @@ import (
 
 // 使用指针以便区分“未提供”和“提供零值”的场景
 type modifyAdditionRequest struct {
-	LocalProxy                *bool  `json:"localProxy" example:"false"`                                                // 是否启用本地代理（可选）
-	MultipleStream            *bool  `json:"multipleStream" example:"true"`                                             // 是否启用多线程分流（可选）
-	MultipleStreamThreadCount *int   `json:"multipleStreamThreadCount" binding:"omitempty,min=1,max=64" example:"4"`    // 多线程数量（可选）
-	MultipleStreamChunkSize   *int64 `json:"multipleStreamChunkSize" binding:"omitempty,min=1048576" example:"4194304"` // 分片大小，单位字节（可选，>=1MiB）
-	TaskThreadCount           *int   `json:"taskThreadCount" binding:"omitempty,min=1,max=32" example:"1"`              // 任务线程数量（可选）
-	WorkerCount               *int   `json:"workerCount" binding:"omitempty,min=1,max=32" example:"5"`                  // 工作流数量（可选）
-	EnableStorageAutoRefresh  *bool  `json:"enableStorageAutoRefresh" example:"true"`                                   // 是否启用存储自动刷新（可选）
+	LocalProxy                *bool     `json:"localProxy" example:"false"`                                                // 是否启用本地代理（可选）
+	MultipleStream            *bool     `json:"multipleStream" example:"true"`                                             // 是否启用多线程分流（可选）
+	MultipleStreamThreadCount *int      `json:"multipleStreamThreadCount" binding:"omitempty,min=1,max=64" example:"4"`    // 多线程数量（可选）
+	MultipleStreamChunkSize   *int64    `json:"multipleStreamChunkSize" binding:"omitempty,min=1048576" example:"4194304"` // 分片大小，单位字节（可选，>=1MiB）
+	TaskThreadCount           *int      `json:"taskThreadCount" binding:"omitempty,min=1,max=32" example:"1"`              // 任务线程数量（可选）
+	WorkerCount               *int      `json:"workerCount" binding:"omitempty,min=1,max=32" example:"5"`                  // 工作流数量（可选）
+	EnableStorageAutoRefresh  *bool     `json:"enableStorageAutoRefresh" example:"true"`                                   // 是否启用存储自动刷新（可选）
+	WebDAVUserStrmOnly        *bool     `json:"webdavUserStrmOnly" example:"false"`                                        // 是否限制普通用户 WebDAV 仅显示 STRM 支持格式（可选）
+	WebDAVAllowedSuffixes     *[]string `json:"webdavAllowedSuffixes" example:"['.mp4','.mkv']"`                           // 普通用户 WebDAV 允许的后缀列表（可选）
 }
 
 // ModifyAddition 修改系统附加设置（可选字段更新）
@@ -87,6 +89,16 @@ func (h *handler) ModifyAddition() httpcontext.HandlerFunc {
 			merged.EnableStorageAutoRefresh = *req.EnableStorageAutoRefresh
 		}
 
+		if req.WebDAVUserStrmOnly != nil {
+			merged.WebDAVUserStrmOnly = *req.WebDAVUserStrmOnly
+		}
+
+		if req.WebDAVAllowedSuffixes != nil {
+			merged.WebDAVAllowedSuffixes = models.NormalizeSuffixes(*req.WebDAVAllowedSuffixes)
+		}
+
+		merged.ApplyDefaultsForWrite()
+
 		// 更新数据库
 		if err := h.settingService.Update(ctx.GetContext(),
 			utils.WithField("addition", merged),
@@ -105,6 +117,8 @@ func (h *handler) ModifyAddition() httpcontext.HandlerFunc {
 			TaskThreadCount:           merged.TaskThreadCount,
 			WorkerCount:               merged.WorkerCount,
 			EnableStorageAutoRefresh:  merged.EnableStorageAutoRefresh,
+			WebDAVUserStrmOnly:        merged.WebDAVUserStrmOnly,
+			WebDAVAllowedSuffixes:     append([]string(nil), merged.WebDAVAllowedSuffixes...),
 		}
 
 		ctx.Success()

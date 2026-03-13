@@ -3,6 +3,7 @@ package mountpoint
 import (
 	"errors"
 
+	"github.com/samber/lo"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"go.uber.org/zap"
@@ -48,16 +49,19 @@ func (s *service) GetAccessibleMountPointIDs(ctx context.Context, userID int64, 
 	query := s.getDB(ctx).Model(new(models.MountPoint))
 
 	if !isAdmin && userID > 0 {
-		// 普通用户：自己创建的 OR 用户组分享的 OR 自己绑定了令牌的
 		query = query.Where("creator_user_id = ?", userID)
 
-		// 添加用户组分享的
 		if len(groupFileIds) > 0 {
-			query = query.Where("creator_user_id = ? OR file_id IN ? OR id IN (SELECT mount_point_id FROM user_mount_point_tokens WHERE user_id = ?)",
-				userID, groupFileIds, userID)
-		} else {
-			query = query.Where("creator_user_id = ? OR id IN (SELECT mount_point_id FROM user_mount_point_tokens WHERE user_id = ?)",
-				userID, userID)
+			query = query.Or("file_id IN ?", groupFileIds)
+		}
+
+		boundMountPointIDs, err := s.userMountPointTokenService.GetUserMountPointIDs(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(boundMountPointIDs) > 0 {
+			query = query.Or("id IN ?", boundMountPointIDs)
 		}
 	}
 	// 管理员：可以访问所有挂载点
@@ -67,5 +71,5 @@ func (s *service) GetAccessibleMountPointIDs(ctx context.Context, userID int64, 
 		return nil, err
 	}
 
-	return ids, nil
+	return lo.Uniq(ids), nil
 }

@@ -124,6 +124,8 @@ declare namespace Models {
     taskThreadCount: number
     workerCount: number
     enableStorageAutoRefresh: boolean
+    webdavUserStrmOnly: boolean
+    webdavAllowedSuffixes: string[]
   }
 
   // 任务引擎统计信息（对应后端 TaskStats）

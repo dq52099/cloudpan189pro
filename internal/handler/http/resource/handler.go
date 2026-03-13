@@ -107,11 +107,11 @@ func (h *handler) Summary() httpcontext.HandlerFunc {
 		h.db.Model(&models.UserGroup{}).Count(&resp.UserGroups)
 
 		h.db.Model(&models.MountPoint{}).Count(&resp.MountPoints.Total)
-		h.db.Model(&models.MountPoint{}).Where("enable = ?", true).Count(&resp.MountPoints.Enabled)
+		resp.MountPoints.Enabled = resp.MountPoints.Total
 		h.db.Model(&models.MountPoint{}).Where("enable_auto_refresh = ?", true).Count(&resp.MountPoints.AutoRefresh)
 
 		h.db.Model(&models.CloudToken{}).Count(&resp.CloudTokens.Total)
-		h.db.Model(&models.CloudToken{}).Where("enable = ?", true).Count(&resp.CloudTokens.Active)
+		h.db.Model(&models.CloudToken{}).Where("status = ?", 1).Count(&resp.CloudTokens.Active)
 
 		h.db.Model(&models.VirtualFile{}).Where("is_dir = ?", true).Count(&resp.VirtualFiles.Folders)
 		h.db.Model(&models.VirtualFile{}).Where("is_dir = ?", false).Count(&resp.VirtualFiles.Files)

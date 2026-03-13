@@ -626,7 +626,7 @@ func (s *service) ParseAndMountShareLink(shareURL, mountPath string, autoMount b
 	shareCode := matches[1]
 
 	storageAPIURL := "http://127.0.0.1:12395"
-	apiURL := fmt.Sprintf("%s/api/storage/advance/share_info?shareCode=%s", storageAPIURL, shareCode)
+	apiURL := fmt.Sprintf("%s/api/public/share_info?shareCode=%s", storageAPIURL, shareCode)
 	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
 		return &MountResult{Success: false, Message: fmt.Sprintf("解析失败: %v", err)}, nil

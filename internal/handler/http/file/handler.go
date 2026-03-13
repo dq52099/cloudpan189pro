@@ -10,6 +10,7 @@ import (
 	cloudTokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
 	group2fileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/group2file"
 	mountPointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
+	userMountPointTokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/userMountPointToken"
 	verifySvi "github.com/xxcheng123/cloudpan189-share/internal/services/verify"
 	virtualfileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/virtualfile"
 )
@@ -48,13 +49,14 @@ var (
 )
 
 type handler struct {
-	virtualFileService virtualfileSvi.Service
-	verifyService      verifySvi.Service
-	cloudTokenService  cloudTokenSvi.Service
-	cloudBridgeService cloudBridgeSvi.Service
-	mountPointService  mountPointSvi.Service
-	group2FileService  group2fileSvi.Service
-	taskEngine         taskengine.TaskEngine
+	virtualFileService         virtualfileSvi.Service
+	verifyService              verifySvi.Service
+	cloudTokenService          cloudTokenSvi.Service
+	cloudBridgeService         cloudBridgeSvi.Service
+	mountPointService          mountPointSvi.Service
+	group2FileService          group2fileSvi.Service
+	userMountPointTokenService userMountPointTokenSvi.Service
+	taskEngine                 taskengine.TaskEngine
 }
 
 func NewHandler(
@@ -64,15 +66,17 @@ func NewHandler(
 	cloudBridgeService cloudBridgeSvi.Service,
 	mountPointService mountPointSvi.Service,
 	group2FileService group2fileSvi.Service,
+	userMountPointTokenService userMountPointTokenSvi.Service,
 	taskEngine taskengine.TaskEngine,
 ) Handler {
 	return &handler{
-		virtualFileService: virtualFileService,
-		verifyService:      verifyService,
-		cloudTokenService:  cloudTokenService,
-		cloudBridgeService: cloudBridgeService,
-		mountPointService:  mountPointService,
-		group2FileService:  group2FileService,
-		taskEngine:         taskEngine,
+		virtualFileService:         virtualFileService,
+		verifyService:              verifyService,
+		cloudTokenService:          cloudTokenService,
+		cloudBridgeService:         cloudBridgeService,
+		mountPointService:          mountPointService,
+		group2FileService:          group2FileService,
+		userMountPointTokenService: userMountPointTokenService,
+		taskEngine:                 taskEngine,
 	}
 }

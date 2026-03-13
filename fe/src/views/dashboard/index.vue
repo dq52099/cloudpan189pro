@@ -56,9 +56,10 @@
       </n-grid-item>
 
       <!-- 资源统计展示区 -->
-      <n-grid-item :span="24">
-        <n-card title="资源统计" class="resource-card" v-loading="loadingSummary">
-          <n-grid :cols="5" :x-gap="24" :y-gap="24">
+      <n-grid-item v-if="userInfo.isAdmin" :span="24">
+        <n-card title="资源统计" class="resource-card">
+          <div v-if="loadingSummary" class="summary-loading">资源统计加载中...</div>
+          <n-grid v-else :cols="5" :x-gap="24" :y-gap="24">
             <n-grid-item>
               <div class="stat-item">
                 <div class="stat-icon" style="background: #2080f0">
@@ -251,7 +252,9 @@ const getUserStatusText = (status: number) => {
 }
 
 onMounted(() => {
-  loadSummary()
+  if (userInfo.isAdmin) {
+    loadSummary()
+  }
 })
 </script>
 
@@ -302,6 +305,11 @@ onMounted(() => {
   border: 1px solid var(--n-border-color);
   border-radius: 12px;
   box-shadow: 0 2px 8px rgb(0 0 0 / 6%);
+}
+
+.summary-loading {
+  padding: 12px 4px;
+  color: var(--n-text-color-3);
 }
 
 .stat-item {

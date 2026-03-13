@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"time"
+
 	"github.com/samber/lo"
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
@@ -26,6 +28,7 @@ type storageDTO struct {
 	TaskLogs              []*models.FileTaskLog `json:"taskLogs"`
 	TokenName             string                `json:"tokenName"`
 	IsInAutoRefreshPeriod bool                  `json:"isInAutoRefreshPeriod"` // 是否在自动刷新时间范围内
+	NextRefreshTime       *time.Time            `json:"nextRefreshTime"`       // 下次刷新时间
 	FileCount             int64                 `json:"fileCount"`
 	*models.MountPoint
 }
@@ -180,29 +183,25 @@ func (h *handler) List() httpcontext.HandlerFunc {
 			userTokenMap, _ = h.userMountPointTokenService.GetUserTokens(ctx.GetContext(), userID, mountPointIds)
 		}
 
-		// 替换令牌：用户组分享的挂载点强制为空，自己创建的保留原令牌
-		for _, mp := range list {
-			isGroupShare := false
-			for _, fid := range groupFileIds {
-				if fid == mp.FileId {
-					isGroupShare = true
-					break
-				}
-			}
+		anyUserTokenMap := make(map[int64]int64)
+		if isAdmin && len(mountPointIds) > 0 {
+			anyUserTokenMap, _ = h.userMountPointTokenService.GetAnyUserTokens(ctx.GetContext(), mountPointIds)
+		}
 
-			if isGroupShare {
-				// 用户组分享的挂载点：只有用户自己绑定了才显示，否则为空
+		// 普通用户只显示自己的绑定令牌；管理员优先显示自己的，再显示其他用户已绑定的，否则为空
+		for _, mp := range list {
+			if isAdmin {
+				if userTokenId, ok := userTokenMap[mp.ID]; ok && userTokenId > 0 {
+					mp.TokenId = userTokenId
+				} else if anyTokenId, ok := anyUserTokenMap[mp.ID]; ok && anyTokenId > 0 {
+					mp.TokenId = anyTokenId
+				}
+			} else {
 				if userTokenId, ok := userTokenMap[mp.ID]; ok && userTokenId > 0 {
 					mp.TokenId = userTokenId
 				} else {
 					mp.TokenId = 0
 				}
-			} else {
-				// 自己创建的挂载点：优先用自己的，没有就用原令牌
-				if userTokenId, ok := userTokenMap[mp.ID]; ok && userTokenId > 0 {
-					mp.TokenId = userTokenId
-				}
-				// 否则保留原令牌
 			}
 		}
 
@@ -234,7 +233,7 @@ func (h *handler) List() httpcontext.HandlerFunc {
 		}
 
 		// 补查日志：如果 taskLogMapList 为空（说明走了else分支），则需要查当前页的日志
-		if taskLogMapList == nil && len(list) > 0 {
+		if len(taskLogMapList) == 0 && len(list) > 0 {
 			fileIdList := make([]int64, 0, len(list))
 			for _, item := range list {
 				fileIdList = append(fileIdList, item.FileId)

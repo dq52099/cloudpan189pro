@@ -106,9 +106,9 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 
 			// 绑定用户的令牌
 			if req.TokenID == 0 {
-				h.userMountPointTokenService.UnbindToken(ctx.GetContext(), userID, id)
+				h.userMountPointTokenService.UnbindToken(ctx.GetContext(), userID, mp.ID)
 			} else {
-				if err := h.userMountPointTokenService.BindToken(ctx.GetContext(), userID, id, req.TokenID); err != nil {
+				if err := h.userMountPointTokenService.BindToken(ctx.GetContext(), userID, mp.ID, req.TokenID); err != nil {
 					failCount++
 					continue
 				}

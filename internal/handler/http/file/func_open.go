@@ -2,6 +2,8 @@ package file
 
 import (
 	"path"
+	"slices"
+	"strings"
 
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
@@ -11,6 +13,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	virtualfileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/virtualfile"
+	"github.com/xxcheng123/cloudpan189-share/internal/shared"
 	"gorm.io/gorm"
 )
 
@@ -103,6 +106,12 @@ func (h *handler) Open() httpcontext.HandlerFunc {
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
 		userGroupId := ctx.GetInt64(consts.CtxKeyUserGroupId)
 
+		if shouldLimitFileBySuffix(file, isAdmin) {
+			ctx.Fail(busCodeFileNotFound)
+
+			return
+		}
+
 		// 获取用户组绑定的文件ID
 		var groupFileIds []int64
 		if userGroupId > 0 {
@@ -159,6 +168,10 @@ func (h *handler) Open() httpcontext.HandlerFunc {
 
 		if len(allowTopIds) > 0 {
 			children = lo.Filter(children, func(child *models.VirtualFile, index int) bool {
+				if shouldLimitFileBySuffix(child, isAdmin) {
+					return false
+				}
+
 				return child.OsType == models.OsTypeFolder || lo.Contains(allowTopIds, child.TopId)
 			})
 		}
@@ -194,4 +207,22 @@ func (h *handler) Open() httpcontext.HandlerFunc {
 			Breadcrumbs:   breadcrumbs,
 		})
 	}
+}
+
+func shouldLimitFileBySuffix(file *models.VirtualFile, isAdmin bool) bool {
+	if isAdmin || file == nil || file.IsDir || !shared.SettingAddition.WebDAVUserStrmOnly {
+		return false
+	}
+
+	extName := strings.ToLower(path.Ext(file.Name))
+	if extName == "" {
+		return true
+	}
+
+	allowed := models.NormalizeSuffixes(shared.SettingAddition.WebDAVAllowedSuffixes)
+	if len(allowed) == 0 {
+		allowed = append([]string(nil), models.DefaultWebDAVAllowedSuffixes...)
+	}
+
+	return !slices.Contains(allowed, extName)
 }

@@ -105,10 +105,10 @@ func (h *handler) ModifyToken() httpcontext.HandlerFunc {
 		// 绑定用户的令牌到挂载点
 		if req.TokenID == 0 {
 			// 解除绑定
-			h.userMountPointTokenService.UnbindToken(ctx.GetContext(), userID, req.ID)
+			h.userMountPointTokenService.UnbindToken(ctx.GetContext(), userID, mp.ID)
 		} else {
 			// 绑定令牌
-			if err := h.userMountPointTokenService.BindToken(ctx.GetContext(), userID, req.ID, req.TokenID); err != nil {
+			if err := h.userMountPointTokenService.BindToken(ctx.GetContext(), userID, mp.ID, req.TokenID); err != nil {
 				ctx.Fail(busCodeStorageModifyTokenFailed.WithError(err))
 
 				return

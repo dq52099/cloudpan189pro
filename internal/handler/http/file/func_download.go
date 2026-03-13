@@ -104,8 +104,41 @@ func (h *handler) Download() httpcontext.HandlerFunc {
 			return
 		}
 
+		userID := ctx.GetInt64(consts.CtxKeyUserId)
+		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
+		tokenID := mountFile.TokenId
+		if userID > 0 {
+			boundTokenID, bindErr := h.userMountPointTokenService.GetTokenID(ctx.GetContext(), userID, mountFile.ID)
+			if bindErr != nil {
+				ctx.Fail(busCodeTokenQueryError.WithError(bindErr))
+
+				return
+			}
+
+			if boundTokenID > 0 {
+				tokenID = boundTokenID
+			} else if isAdmin {
+				anyTokenMap, anyErr := h.userMountPointTokenService.GetAnyUserTokens(ctx.GetContext(), []int64{mountFile.ID})
+				if anyErr != nil {
+					ctx.Fail(busCodeTokenQueryError.WithError(anyErr))
+
+					return
+				}
+
+				if anyTokenID, ok := anyTokenMap[mountFile.ID]; ok && anyTokenID > 0 {
+					tokenID = anyTokenID
+				}
+			}
+		}
+
+		if tokenID == 0 {
+			ctx.Fail(busCodeTokenNotBind)
+
+			return
+		}
+
 		// 获取令牌
-		token, err := h.cloudTokenService.Query(ctx.GetContext(), mountFile.TokenId)
+		token, err := h.cloudTokenService.Query(ctx.GetContext(), tokenID)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				ctx.Fail(busCodeTokenNotBind.WithError(err))

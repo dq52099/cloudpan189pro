@@ -111,7 +111,7 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 		storageHandler        = storage.NewHandler(taskEngine, virtualFileService, cloudBridgeService, cloudTokenService, mountPointService, fileTaskLogService, storageFacadeService, mediaFileService, group2FileService, userMountPointTokenService)
 		storageAdvanceHandler = advance.NewHandler(cloudBridgeService, cloudTokenService)
 		cloudTokenHandler     = cloudtoken.NewHandler(cloudTokenService, mountPointService)
-		fileHandler           = file.NewHandler(virtualFileService, verifyService, cloudTokenService, cloudBridgeService, mountPointService, group2FileService, taskEngine)
+		fileHandler           = file.NewHandler(virtualFileService, verifyService, cloudTokenService, cloudBridgeService, mountPointService, group2FileService, userMountPointTokenService, taskEngine)
 
 		taskStateHandler    = taskstate.NewHandler(taskEngine, fileTaskLogService)
 		autoIngestHandler   = autoingest.NewHandler(taskEngine, autoIngestPlanService, autoIngestLogService, cloudBridgeService)
@@ -371,6 +371,9 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 
 				stat, _ := file.Stat()
 
+				c.Header("Cache-Control", "no-store, no-cache, must-revalidate")
+				c.Header("Pragma", "no-cache")
+				c.Header("Expires", "0")
 				c.Header("Content-Type", "text/html")
 				c.DataFromReader(200, stat.Size(), "text/html", file, nil)
 			})

@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -34,15 +35,50 @@ func (s *Setting) AfterFind(tx *gorm.DB) (err error) {
 
 // SettingAddition 系统附加配置
 type SettingAddition struct {
-	Keep                      string `json:"-"`
-	LocalProxy                bool   `json:"localProxy"`
-	LocalProxyURL             string `json:"localProxyURL"` // HTTP 代理地址，如 http://192.168.31.51:7890
-	MultipleStream            bool   `json:"multipleStream"`
-	MultipleStreamThreadCount int    `json:"multipleStreamThreadCount"`
-	MultipleStreamChunkSize   int64  `json:"multipleStreamChunkSize"`
-	TaskThreadCount           int    `json:"taskThreadCount"`
-	WorkerCount               int    `json:"workerCount"`
-	EnableStorageAutoRefresh  bool   `json:"enableStorageAutoRefresh"`
+	Keep                      string   `json:"-"`
+	LocalProxy                bool     `json:"localProxy"`
+	LocalProxyURL             string   `json:"localProxyURL"` // HTTP 代理地址，如 http://192.168.31.51:7890
+	MultipleStream            bool     `json:"multipleStream"`
+	MultipleStreamThreadCount int      `json:"multipleStreamThreadCount"`
+	MultipleStreamChunkSize   int64    `json:"multipleStreamChunkSize"`
+	TaskThreadCount           int      `json:"taskThreadCount"`
+	WorkerCount               int      `json:"workerCount"`
+	EnableStorageAutoRefresh  bool     `json:"enableStorageAutoRefresh"`
+	WebDAVUserStrmOnly        bool     `json:"webdavUserStrmOnly"`
+	WebDAVAllowedSuffixes     []string `json:"webdavAllowedSuffixes"`
+}
+
+var DefaultWebDAVAllowedSuffixes = []string{
+	".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".mpg", ".mpeg",
+	".m2v", ".m4p", ".m4b", ".ts", ".mts", ".m2ts", ".m2t", ".mxf", ".dv", ".dvr-ms",
+	".asf", ".3gp", ".3g2", ".f4v", ".f4p", ".f4a", ".f4b", ".vob", ".ogv", ".ogg",
+	".divx", ".xvid", ".rm", ".rmvb", ".dat", ".nsv", ".qt", ".amv", ".mpv", ".m1v",
+	".svi", ".viv", ".fli", ".flc",
+}
+
+func NormalizeSuffixes(items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+
+	result := make([]string, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		suffix := strings.ToLower(strings.TrimSpace(item))
+		if suffix == "" {
+			continue
+		}
+		if !strings.HasPrefix(suffix, ".") {
+			suffix = "." + suffix
+		}
+		if _, ok := seen[suffix]; ok {
+			continue
+		}
+		seen[suffix] = struct{}{}
+		result = append(result, suffix)
+	}
+
+	return result
 }
 
 // applyDefaults 统一填充默认值，确保零值时也能获得期望配置
@@ -63,16 +99,37 @@ func (sa *SettingAddition) applyDefaults() {
 		sa.WorkerCount = 5
 	}
 
+	sa.WebDAVAllowedSuffixes = NormalizeSuffixes(sa.WebDAVAllowedSuffixes)
+	if len(sa.WebDAVAllowedSuffixes) == 0 {
+		sa.WebDAVAllowedSuffixes = append([]string(nil), DefaultWebDAVAllowedSuffixes...)
+	}
+
 	// 不再强制设置 EnableStorageAutoRefresh 默认为 true，保持用户设置的值
+}
+
+func (sa *SettingAddition) ApplyDefaultsForWrite() {
+	sa.applyDefaults()
 }
 
 // Value 实现 driver.Valuer 接口 - 将结构体转换为数据库值
 func (sa SettingAddition) Value() (driver.Value, error) {
-	if sa == (SettingAddition{}) {
+	normalized := sa
+	normalized.WebDAVAllowedSuffixes = NormalizeSuffixes(normalized.WebDAVAllowedSuffixes)
+	if normalized.Keep == "" &&
+		!normalized.LocalProxy &&
+		normalized.LocalProxyURL == "" &&
+		!normalized.MultipleStream &&
+		normalized.MultipleStreamThreadCount == 0 &&
+		normalized.MultipleStreamChunkSize == 0 &&
+		normalized.TaskThreadCount == 0 &&
+		normalized.WorkerCount == 0 &&
+		!normalized.EnableStorageAutoRefresh &&
+		!normalized.WebDAVUserStrmOnly &&
+		len(normalized.WebDAVAllowedSuffixes) == 0 {
 		return nil, nil
 	}
 
-	return json.Marshal(sa)
+	return json.Marshal(normalized)
 }
 
 // Scan 实现 sql.Scanner 接口 - 从数据库值转换为结构体

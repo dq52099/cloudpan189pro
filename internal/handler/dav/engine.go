@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path"
+	"slices"
 	"strings"
 
 	"github.com/samber/lo"
@@ -73,6 +75,12 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
 		userGroupId := ctx.GetInt64(consts.CtxKeyUserGroupId)
 
+		if e.shouldLimitFileByStrm(file, isAdmin) {
+			ctx.Fail(busCodeFileNotFound)
+
+			return
+		}
+
 		// 获取用户组绑定的文件ID
 		var groupFileIds []int64
 		if userGroupId > 0 {
@@ -110,6 +118,10 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 				ctx.Fail(busCodeFileQueryError.WithError(err))
 				return
 			}
+
+			children = lo.Filter(children, func(child *models.VirtualFile, _ int) bool {
+				return !e.shouldLimitFileByStrm(child, isAdmin)
+			})
 		} else if ctx.Request.Method == http.MethodGet || ctx.Request.Method == http.MethodHead || ctx.Request.Method == http.MethodPost {
 			values, err := e.verifyService.SignV1(ctx.GetContext(), file.ID)
 			if err != nil {
@@ -153,4 +165,22 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 
 		ctx.Data(http.StatusMultiStatus, "application/xml; charset=utf-8", []byte(xmlResponse.String()))
 	}
+}
+
+func (e *workEngine) shouldLimitFileByStrm(file *models.VirtualFile, isAdmin bool) bool {
+	if isAdmin || file == nil || file.IsDir || !shared.SettingAddition.WebDAVUserStrmOnly {
+		return false
+	}
+
+	extName := strings.ToLower(path.Ext(file.Name))
+	if extName == "" {
+		return true
+	}
+
+	allowed := models.NormalizeSuffixes(shared.SettingAddition.WebDAVAllowedSuffixes)
+	if len(allowed) == 0 {
+		allowed = append([]string(nil), models.DefaultWebDAVAllowedSuffixes...)
+	}
+
+	return !slices.Contains(allowed, extName)
 }

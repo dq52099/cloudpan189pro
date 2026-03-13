@@ -30,6 +30,8 @@
         :collapsed-icon-size="22"
         :options="menuOptions"
         :value="activeKey"
+        :expanded-keys="expandedKeys"
+        @update:expanded-keys="handleExpandedKeysUpdate"
         @update:value="handleMenuSelect"
       />
     </n-layout-sider>
@@ -50,7 +52,13 @@
           </n-text>
         </div>
 
-        <n-menu :options="menuOptions" :value="activeKey" @update:value="handleMobileMenuSelect" />
+        <n-menu
+          :options="menuOptions"
+          :value="activeKey"
+          :expanded-keys="expandedKeys"
+          @update:expanded-keys="handleExpandedKeysUpdate"
+          @update:value="handleMobileMenuSelect"
+        />
       </n-drawer-content>
     </n-drawer>
 
@@ -114,7 +122,10 @@
             <!-- 用户信息 -->
             <n-dropdown :options="userMenuOptions" @select="handleUserMenuSelect">
               <div class="user-info">
-                <n-text v-if="!isMobile" class="username">{{ userInfo.username }}</n-text>
+                <n-text class="username">{{ userInfo.username }}</n-text>
+                <n-text v-if="!isMobile && userStore.isAdmin" depth="3" class="user-role"
+                  >管理员</n-text
+                >
                 <n-icon v-if="!isMobile" size="16" class="dropdown-icon">
                   <ChevronDownIcon />
                 </n-icon>
@@ -141,7 +152,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, h } from 'vue'
+import { ref, computed, onMounted, onUnmounted, h, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   NLayout,
@@ -177,6 +188,7 @@ import {
   SunnyOutline as SunnyIcon,
   MoonOutline as MoonIcon,
   AppsOutline as ExtensionsIcon,
+  FolderOutline as FolderIcon,
 } from '@vicons/ionicons5'
 import { useAuthStore, useSystemStore, useThemeStore } from '@/stores'
 import CloudPanLogo from '@/components/CloudPanLogo.vue'
@@ -195,9 +207,129 @@ const themeStore = useThemeStore()
 const systemInfo = systemStore.get()
 const userInfo = userStore.get()
 
+type AppMenuItem = {
+  key: string
+  label: string
+  icon?: () => ReturnType<typeof h>
+  route?: string
+  adminOnly?: boolean
+  children?: AppMenuItem[]
+}
+
+const menuTree: AppMenuItem[] = [
+  {
+    key: 'dashboard',
+    label: '仪表盘',
+    route: '/@dashboard',
+    icon: () => h(NIcon, null, { default: () => h(HomeIcon) }),
+  },
+  {
+    key: 'file',
+    label: '文件管理',
+    icon: () => h(NIcon, null, { default: () => h(FolderIcon) }),
+    children: [
+      {
+        key: 'file-browse',
+        label: '文件浏览',
+        route: '/',
+        icon: () => h(NIcon, null, { default: () => h(FileBrowserIcon) }),
+      },
+      {
+        key: 'storage-manage',
+        label: '存储管理',
+        route: '/@dashboard/storages',
+        icon: () => h(NIcon, null, { default: () => h(StorageIcon) }),
+      },
+      {
+        key: 'auto-import',
+        label: '自动入库',
+        route: '/@dashboard/autoingest',
+        icon: () => h(NIcon, null, { default: () => h(AutoIngestIcon) }),
+      },
+    ],
+  },
+  {
+    key: 'user',
+    label: '用户与权限',
+    icon: () => h(NIcon, null, { default: () => h(UsersIcon) }),
+    children: [
+      {
+        key: 'user-manage',
+        label: '用户管理',
+        route: '/@dashboard/users',
+        adminOnly: true,
+        icon: () => h(NIcon, null, { default: () => h(UsersIcon) }),
+      },
+      {
+        key: 'group-manage',
+        label: '用户组管理',
+        route: '/@dashboard/usergroups',
+        adminOnly: true,
+        icon: () => h(NIcon, null, { default: () => h(UserGroupsIcon) }),
+      },
+      {
+        key: 'token',
+        label: '令牌管理',
+        route: '/@dashboard/cloudtokens',
+        icon: () => h(NIcon, null, { default: () => h(TokenIcon) }),
+      },
+      {
+        key: 'personal-info',
+        label: '个人资料',
+        route: '/@dashboard/profile',
+        icon: () => h(NIcon, null, { default: () => h(ProfileIcon) }),
+      },
+    ],
+  },
+  {
+    key: 'extend',
+    label: '扩展集成',
+    adminOnly: true,
+    icon: () => h(NIcon, null, { default: () => h(ExtensionsIcon) }),
+    children: [
+      {
+        key: 'extend-feature',
+        label: '拓展功能',
+        route: '/@dashboard/extensions',
+      },
+      {
+        key: 'telegram-bot',
+        label: 'Telegram Bot',
+        route: '/@dashboard/telegram',
+      },
+      {
+        key: 'subscription',
+        label: '订阅管理',
+        route: '/@dashboard/subscriptions',
+      },
+    ],
+  },
+  {
+    key: 'system',
+    label: '系统管理',
+    adminOnly: true,
+    icon: () => h(NIcon, null, { default: () => h(SettingsIcon) }),
+    children: [
+      {
+        key: 'aggregate-log',
+        label: '聚合日志',
+        route: '/@dashboard/logs',
+        icon: () => h(NIcon, null, { default: () => h(TaskLogIcon) }),
+      },
+      {
+        key: 'system-setting',
+        label: '系统设置',
+        route: '/@dashboard/settings',
+        icon: () => h(NIcon, null, { default: () => h(SettingsIcon) }),
+      },
+    ],
+  },
+]
+
 // 响应式检测
 const isMobile = ref(false)
 const mobileMenuVisible = ref(false)
+const expandedKeys = ref<string[]>([])
 
 // 侧边栏折叠状态
 const collapsed = ref(false)
@@ -205,8 +337,74 @@ const collapsed = ref(false)
 // 修改密码弹窗
 const showChangePasswordModal = ref(false)
 
-// 当前激活的菜单项
-const activeKey = computed(() => route.path)
+const filterMenuTree = (items: AppMenuItem[]): AppMenuItem[] => {
+  return items
+    .filter((item) => !item.adminOnly || userStore.isAdmin)
+    .map((item) => ({
+      ...item,
+      children: item.children ? filterMenuTree(item.children) : undefined,
+    }))
+    .filter((item) => !item.children || item.children.length > 0 || !!item.route)
+}
+
+const visibleMenuTree = computed(() => filterMenuTree(menuTree))
+
+const routeKeyMap: Record<string, string> = {
+  '/@dashboard': 'dashboard',
+  '/': 'file-browse',
+  '/@dashboard/storages': 'storage-manage',
+  '/@dashboard/autoingest': 'auto-import',
+  '/@dashboard/users': 'user-manage',
+  '/@dashboard/usergroups': 'group-manage',
+  '/@dashboard/cloudtokens': 'token',
+  '/@dashboard/extensions': 'extend-feature',
+  '/@dashboard/telegram': 'telegram-bot',
+  '/@dashboard/subscriptions': 'subscription',
+  '/@dashboard/logs': 'aggregate-log',
+  '/@dashboard/settings': 'system-setting',
+  '/@dashboard/profile': 'personal-info',
+}
+
+const activeKey = computed(() => {
+  if (route.path === '/@dashboard/storages' && route.query.tab === 'overview') {
+    return 'storage'
+  }
+
+  if (route.path !== '/' && !route.path.startsWith('/@dashboard')) {
+    return 'file-browse'
+  }
+
+  return routeKeyMap[route.path] || route.path
+})
+
+const routeExpandedKeys = computed(() => {
+  const parents: Record<string, string> = {
+    'file-browse': 'file',
+    'storage-manage': 'file',
+    'auto-import': 'file',
+    'user-manage': 'user',
+    'group-manage': 'user',
+    token: 'user',
+    'personal-info': 'user',
+    'extend-feature': 'extend',
+    'telegram-bot': 'extend',
+    subscription: 'extend',
+    'aggregate-log': 'system',
+    'system-setting': 'system',
+  }
+
+  const parentKey = parents[activeKey.value]
+
+  return parentKey ? [parentKey] : []
+})
+
+watch(
+  routeExpandedKeys,
+  (keys) => {
+    expandedKeys.value = Array.from(new Set([...expandedKeys.value, ...keys]))
+  },
+  { immediate: true }
+)
 
 // 检测屏幕尺寸
 const checkScreenSize = () => {
@@ -217,138 +415,63 @@ const checkScreenSize = () => {
   }
 }
 
-// 面包屑导航
+const findMenuChain = (
+  items: AppMenuItem[],
+  key: string,
+  parents: AppMenuItem[] = []
+): AppMenuItem[] => {
+  for (const item of items) {
+    const chain = [...parents, item]
+
+    if (item.key === key) {
+      return chain
+    }
+
+    if (item.children?.length) {
+      const childChain = findMenuChain(item.children, key, chain)
+      if (childChain.length) {
+        return childChain
+      }
+    }
+  }
+
+  return []
+}
+
 const breadcrumbs = computed(() => {
-  const matched = route.matched.filter((item) => item.meta?.title)
-  return matched.map((item) => ({
-    title: item.meta?.title as string,
-    path: item.path,
+  const chain = findMenuChain(visibleMenuTree.value, activeKey.value)
+
+  if (!chain.length) {
+    const matched = route.matched.filter((item) => item.meta?.title)
+    return matched.map((item) => ({
+      title: item.meta?.title as string,
+      path: item.path,
+    }))
+  }
+
+  return chain.map((item) => ({
+    title: item.label,
+    path: item.route || item.key,
   }))
 })
 
-/**
- * 菜单选项
- * 折叠状态下返回扁平菜单（不显示分组标题，避免样式错乱）
- * 展开状态下返回分组菜单（主要功能 / 文件浏览 / 管理功能）
- */
 const menuOptions = computed((): MenuOption[] => {
-  // 基础项（非分组）
-  const mainItems: MenuOption[] = [
-    {
-      label: '仪表盘',
-      key: '/@dashboard',
-      icon: () => h(NIcon, null, { default: () => h(HomeIcon) }),
-    },
-    {
-      label: '个人资料',
-      key: '/@dashboard/profile',
-      icon: () => h(NIcon, null, { default: () => h(ProfileIcon) }),
-    },
-    {
-      label: '令牌管理',
-      key: '/@dashboard/cloudtokens',
-      icon: () => h(NIcon, null, { default: () => h(TokenIcon) }),
-    },
-    {
-      label: '存储管理',
-      key: '/@dashboard/storages',
-      icon: () => h(NIcon, null, { default: () => h(StorageIcon) }),
-    },
-    {
-      label: '自动入库',
-      key: '/@dashboard/autoingest',
-      icon: () => h(NIcon, null, { default: () => h(AutoIngestIcon) }),
-    },
-  ]
+  const toOption = (item: AppMenuItem): MenuOption => ({
+    label: item.label,
+    key: item.key,
+    icon: item.icon,
+    children: item.children?.map(toOption),
+  })
 
-  const browseItems: MenuOption[] = [
-    {
-      label: '文件浏览',
-      key: '/@dashboard/file-browser',
-      icon: () => h(NIcon, null, { default: () => h(FileBrowserIcon) }),
-    },
-  ]
-
-  const adminItems: MenuOption[] = [
-    {
-      label: '用户管理',
-      key: '/@dashboard/users',
-      icon: () => h(NIcon, null, { default: () => h(UsersIcon) }),
-    },
-    {
-      label: '用户组管理',
-      key: '/@dashboard/usergroups',
-      icon: () => h(NIcon, null, { default: () => h(UserGroupsIcon) }),
-    },
-    {
-      label: '拓展功能',
-      key: '/@dashboard/extensions',
-      icon: () => h(NIcon, null, { default: () => h(ExtensionsIcon) }),
-    },
-    {
-      label: 'Telegram Bot',
-      key: '/@dashboard/telegram',
-      icon: () => h(NIcon, null, { default: () => h(ExtensionsIcon) }),
-    },
-    {
-      label: '订阅管理',
-      key: '/@dashboard/subscriptions',
-      icon: () => h(NIcon, null, { default: () => h(ExtensionsIcon) }),
-    },
-    {
-      label: '聚合日志',
-      key: '/@dashboard/logs',
-      icon: () => h(NIcon, null, { default: () => h(TaskLogIcon) }),
-    },
-    {
-      label: '系统设置',
-      key: '/@dashboard/settings',
-      icon: () => h(NIcon, null, { default: () => h(SettingsIcon) }),
-    },
-  ]
-
-  // 折叠时：扁平菜单（仅图标项，无分组标题）
-  if (collapsed.value) {
-    const flat: MenuOption[] = [...mainItems, ...browseItems]
-    if (userStore.isAdmin) {
-      flat.push(...adminItems)
-    }
-    return flat
-  }
-
-  // 展开时：分组菜单
-  const mainGroup: MenuOption = {
-    type: 'group',
-    label: '主要功能',
-    key: 'group-main',
-    children: mainItems,
-  }
-
-  const browseGroup: MenuOption = {
-    type: 'group',
-    label: '文件浏览',
-    key: 'group-browse',
-    children: browseItems,
-  }
-
-  const groups: MenuOption[] = [mainGroup, browseGroup]
-  if (userStore.isAdmin) {
-    groups.push({
-      type: 'group',
-      label: '管理功能',
-      key: 'group-admin',
-      children: adminItems,
-    })
-  }
-  return groups
+  return visibleMenuTree.value.map(toOption)
 })
+
+const handleExpandedKeysUpdate = (keys: string[]) => {
+  expandedKeys.value = keys
+}
 
 // 用户菜单选项
 const userMenuOptions: DropdownOption[] = [
-  {
-    label: '个人设置',
-    key: 'profile',
-  },
   {
     label: '修改密码',
     key: 'change-password',
@@ -365,12 +488,16 @@ const userMenuOptions: DropdownOption[] = [
 
 // 处理菜单选择
 const handleMenuSelect = (key: string) => {
-  router.push(key)
+  const chain = findMenuChain(visibleMenuTree.value, key)
+  const current = chain[chain.length - 1]
+  if (current?.route) {
+    router.push(current.route)
+  }
 }
 
 // 处理移动端菜单选择
 const handleMobileMenuSelect = (key: string) => {
-  router.push(key)
+  handleMenuSelect(key)
   mobileMenuVisible.value = false // 选择后关闭菜单
 }
 
@@ -585,6 +712,11 @@ onUnmounted(() => {
   color: var(--n-text-color);
 }
 
+.user-role {
+  font-size: 14px;
+  color: var(--n-text-color-3);
+}
+
 .dropdown-icon {
   color: var(--n-text-color-3);
   transition: transform 0.3s;
@@ -640,7 +772,8 @@ onUnmounted(() => {
     margin: 0;
   }
 
-  .username {
+  .username,
+  .user-role {
     display: none;
   }
 
