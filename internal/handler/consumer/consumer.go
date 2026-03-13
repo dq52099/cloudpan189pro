@@ -12,6 +12,7 @@ import (
 	cloudbridgeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
 	cloudtokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
 	filetasklogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/filetasklog"
+	group2fileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/group2file"
 	mediafileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mediafile"
 	mountPointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 	storageFacadeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/storagefacade"
@@ -37,6 +38,7 @@ func Start(svc bootstrap.ServiceContext) error {
 		virtualFileService     = virtualfileSvi.NewService(svc)
 		cloudBridgeService     = cloudbridgeSvi.NewService(svc)
 		cloudTokenService      = cloudtokenSvi.NewService(svc)
+		group2FileService      = group2fileSvi.NewService(svc)
 		userMountPointTokenSvc = userMountPointTokenSvi.NewService(svc)
 		mountPointService      = mountPointSvi.NewService(svc, cloudTokenService, cloudBridgeService, userMountPointTokenSvc)
 		fileTaskLogService     = filetasklogSvi.NewService(svc)
@@ -48,63 +50,54 @@ func Start(svc bootstrap.ServiceContext) error {
 	)
 
 	var (
-		fileHandler       = file.NewHandler(logger, virtualFileService, cloudBridgeService, cloudTokenService, mountPointService, fileTaskLogService, mediaFileService, verifyService)
+		fileHandler       = file.NewHandler(logger, virtualFileService, cloudBridgeService, cloudTokenService, mountPointService, fileTaskLogService, mediaFileService, verifyService, group2FileService, userMountPointTokenSvc)
 		autoIngestHandler = autoingest.NewHandler(taskEngine, cloudBridgeService, autoIngestPlanService, authIngestLogService, storageFacadeService, virtualFileService)
 		mediaHandler      = media.NewHandler(mediaFileService, mountPointService, virtualFileService, verifyService, fileTaskLogService)
 	)
 
-	{
-		if err := taskEngine.RegisterProcessor(new(topic.FileScanFileRequest).Topic(), wrap(fileHandler.ScanFile())); err != nil {
-			logger.Error("注册文件扫描处理器失败")
-
-			return err
-		}
-
-		if err := taskEngine.RegisterProcessor(new(topic.FileBatchDeleteRequest).Topic(), wrap(fileHandler.HandleBatchDelete())); err != nil {
-			logger.Error("注册文件批量删除处理器失败")
-
-			return err
-		}
-
-		if err := taskEngine.RegisterProcessor(new(topic.FileDeleteRequest).Topic(), wrap(fileHandler.HandleDelete())); err != nil {
-			logger.Error("注册文件删除处理器失败")
-
-			return err
-		}
-
-		if err := taskEngine.RegisterProcessor(new(topic.FileClearFileRequest).Topic(), wrap(fileHandler.ClearFile())); err != nil {
-			logger.Error("注册文件清理处理器失败")
-
-			return err
-		}
+	if err := taskEngine.RegisterProcessor(new(topic.FileScanFileRequest).Topic(), wrap(fileHandler.ScanFile())); err != nil {
+		logger.Error("注册文件扫描处理器失败")
+		return err
 	}
 
-	{
-		if err := taskEngine.RegisterProcessor(new(topic.AutoIngestRefreshSubscribeRequest).Topic(), wrap(autoIngestHandler.RefreshSubscribe())); err != nil {
-			logger.Error("注册订阅号自动入库刷新处理器失败")
-
-			return err
-		}
+	if err := taskEngine.RegisterProcessor(new(topic.FileBatchDeleteRequest).Topic(), wrap(fileHandler.HandleBatchDelete())); err != nil {
+		logger.Error("注册文件批量删除处理器失败")
+		return err
 	}
 
-	{
-		if err := taskEngine.RegisterProcessor(new(topic.MediaClearRequest).Topic(), wrap(mediaHandler.Clear())); err != nil {
-			logger.Error("注册媒体文件清理处理器失败")
+	if err := taskEngine.RegisterProcessor(new(topic.FileDeleteRequest).Topic(), wrap(fileHandler.HandleDelete())); err != nil {
+		logger.Error("注册文件删除处理器失败")
+		return err
+	}
 
-			return err
-		}
+	if err := taskEngine.RegisterProcessor(new(topic.FileBatchModifyTokenRequest).Topic(), wrap(fileHandler.HandleBatchModifyToken())); err != nil {
+		logger.Error("注册批量修改令牌处理器失败")
+		return err
+	}
 
-		if err := taskEngine.RegisterProcessor(new(topic.MediaRebuildStrmFileRequest).Topic(), wrap(mediaHandler.RebuildStrmFile())); err != nil {
-			logger.Error("注册媒体文件STRM重建处理器失败")
+	if err := taskEngine.RegisterProcessor(new(topic.FileClearFileRequest).Topic(), wrap(fileHandler.ClearFile())); err != nil {
+		logger.Error("注册文件清理处理器失败")
+		return err
+	}
 
-			return err
-		}
+	if err := taskEngine.RegisterProcessor(new(topic.AutoIngestRefreshSubscribeRequest).Topic(), wrap(autoIngestHandler.RefreshSubscribe())); err != nil {
+		logger.Error("注册订阅号自动入库刷新处理器失败")
+		return err
+	}
 
-		if err := taskEngine.RegisterProcessor(new(topic.MediaRebuildStrmFileByMountPointRequest).Topic(), wrap(mediaHandler.RebuildStrmFileByMountPoint())); err != nil {
-			logger.Error("注册媒体文件STRM重建处理器(按挂载点)失败")
+	if err := taskEngine.RegisterProcessor(new(topic.MediaClearRequest).Topic(), wrap(mediaHandler.Clear())); err != nil {
+		logger.Error("注册媒体文件清理处理器失败")
+		return err
+	}
 
-			return err
-		}
+	if err := taskEngine.RegisterProcessor(new(topic.MediaRebuildStrmFileRequest).Topic(), wrap(mediaHandler.RebuildStrmFile())); err != nil {
+		logger.Error("注册媒体文件 STRM 重建处理器失败")
+		return err
+	}
+
+	if err := taskEngine.RegisterProcessor(new(topic.MediaRebuildStrmFileByMountPointRequest).Topic(), wrap(mediaHandler.RebuildStrmFileByMountPoint())); err != nil {
+		logger.Error("注册按挂载点重建 STRM 处理器失败")
+		return err
 	}
 
 	logger.Info("consumer handler start")

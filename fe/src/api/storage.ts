@@ -86,6 +86,9 @@ export interface StorageListQuery {
 }
 
 export interface StorageSelectListQuery {
+  currentPage?: number
+  pageSize?: number
+  noPaginate?: boolean
   path?: string // 路径过滤（模糊）
   name?: string // 名称过滤（模糊）
 }
@@ -164,7 +167,7 @@ export interface BatchModifyTokenRequest {
 
 // 批量修改存储挂载令牌
 export const batchModifyToken = (data: BatchModifyTokenRequest): Promise<ApiResponse> => {
-  return api.post('/storage/batch_modify_token', data).then((res) => res.data)
+  return api.post('/storage/batch_modify_token', data, { timeout: 180000 }).then((res) => res.data)
 }
 
 // 批量解析响应项接口
@@ -199,7 +202,7 @@ export const getStorageList = (
 // 获取存储挂载点简化选择列表（不分页）
 export const getStorageSelectList = (
   params?: StorageSelectListQuery
-): Promise<ApiResponse<StorageSelectItem[]>> => {
+): Promise<ApiResponse<Models.PaginationResponse<StorageSelectItem>>> => {
   return api.get('/storage/select_list', { params }).then((res) => res.data)
 }
 

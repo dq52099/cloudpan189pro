@@ -75,6 +75,18 @@ func (r FileDeleteRequest) Topic() taskengine.Topic {
 	return taskengine.Topic(KeyFileDelete)
 }
 
+type FileBatchModifyTokenRequest struct {
+	IDs         []int64 `json:"ids"`
+	TokenID     int64   `json:"tokenId"`
+	UserID      int64   `json:"userId"`
+	IsAdmin     bool    `json:"isAdmin"`
+	UserGroupID int64   `json:"userGroupId"`
+}
+
+func (r FileBatchModifyTokenRequest) Topic() taskengine.Topic {
+	return taskengine.Topic(KeyFileBatchModifyToken)
+}
+
 // 批量解析文本请求 (仅用于 API，不用于 Task)
 type BatchParseTextRequest struct {
 	Content    string `json:"content" binding:"required"`    // 文本内容

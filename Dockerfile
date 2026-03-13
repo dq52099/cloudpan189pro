@@ -61,13 +61,16 @@ ARG OUTPUT_DIR=/app
 ARG BINARY_NAME=share
 
 # 构建应用 - 使用与 Makefile 相同的参数
-RUN echo "Building for $TARGETOS/$TARGETARCH on $BUILDPLATFORM" && \
+RUN BUILD_DATE="${VAR_BUILD_DATE}" && \
+    if [ -z "$BUILD_DATE" ]; then BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"; fi && \
+    echo "Building for $TARGETOS/$TARGETARCH on $BUILDPLATFORM" && \
+    echo "Build date: $BUILD_DATE" && \
     go mod tidy && \
     GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 \
     go build \
     -ldflags="-s -w \
               -X ${MODULE_NAME}/configs.Commit=${VAR_COMMIT} \
-              -X ${MODULE_NAME}/configs.BuildDate=${VAR_BUILD_DATE} \
+              -X ${MODULE_NAME}/configs.BuildDate=${BUILD_DATE} \
               -X ${MODULE_NAME}/configs.GitSummary=${VAR_GIT_SUMMARY} \
               -X ${MODULE_NAME}/configs.GitBranch=${VAR_GIT_BRANCH}" \
     -o ${OUTPUT_DIR}/${BINARY_NAME} ./cmd/main.go

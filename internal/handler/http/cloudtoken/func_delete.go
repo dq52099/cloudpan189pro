@@ -42,7 +42,7 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 			ctx.Fail(codeQueryFailed.WithError(err))
 
 			return
-		} else if count > 0 {
+		} else if count > 0 && !req.IsAdmin {
 			ctx.Fail(codeMountPointUsed)
 
 			return

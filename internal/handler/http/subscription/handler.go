@@ -679,7 +679,7 @@ func (h *Handler) SearchPan() httpcontext.HandlerFunc {
 		}
 
 		if result.Code != 0 {
-			c.Fail(invalidParams(fmt.Errorf(result.Message)))
+			c.Fail(invalidParams(fmt.Errorf("%s", result.Message)))
 			return
 		}
 
@@ -889,7 +889,7 @@ func (h *Handler) SearchPanWithAI() httpcontext.HandlerFunc {
 		}
 
 		if searchResult.Code != 0 {
-			c.Fail(invalidParams(fmt.Errorf(searchResult.Message)))
+			c.Fail(invalidParams(fmt.Errorf("%s", searchResult.Message)))
 			return
 		}
 

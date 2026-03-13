@@ -111,7 +111,7 @@ func TestServiceCRUD(t *testing.T) {
 		t.Errorf("Expected name 'Test Plan', got '%s'", retrieved.Name)
 	}
 
-	err = svc.Delete(ctx, id)
+	err = svc.Delete(ctx, &DeleteRequest{ID: id})
 	if err != nil {
 		t.Fatalf("Delete failed: %v", err)
 	}

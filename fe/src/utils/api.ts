@@ -27,19 +27,18 @@ export const api = axios.create({
 api.interceptors.request.use(
   (config) => {
     const authStore = useAuthStore()
-    // 从存储获取 token
     const token = authStore.getToken()
+
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
       if (authStore.requireRefreshToken && !config.url?.includes('/user/refresh_token')) {
         authStore.doRefreshToken()
       }
     }
+
     return config
   },
-  (error) => {
-    return Promise.reject(error)
-  }
+  (error) => Promise.reject(error)
 )
 
 // 响应拦截器
@@ -47,7 +46,6 @@ api.interceptors.response.use(
   (response) => {
     const { data } = response
 
-    // 检查 HTTP 状态码
     if (response.status < 200 || response.status >= 300) {
       console.error('请求失败:', data.msg || '请求失败')
       return Promise.reject(new Error(data.msg || '请求失败'))
@@ -56,9 +54,15 @@ api.interceptors.response.use(
     return response
   },
   async (error) => {
+    if (error.code === 'ECONNABORTED') {
+      console.error('请求超时，请稍后重试')
+      return Promise.reject(new Error('请求超时，请稍后重试'))
+    }
+
     if (error.response) {
       const { status, data } = error.response
       const authStore = useAuthStore()
+
       switch (status) {
         case 400:
           return Promise.reject(new Error(data.msg || '请求失败'))
@@ -86,6 +90,7 @@ api.interceptors.response.use(
       }
     } else if (error.request) {
       console.error('网络错误，请检查网络连接')
+      return Promise.reject(new Error('网络错误，请检查网络连接'))
     } else {
       console.error('请求配置错误')
     }

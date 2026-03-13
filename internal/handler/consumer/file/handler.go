@@ -15,8 +15,10 @@ import (
 	cloudbridgeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
 	cloudtokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
 	filetasklogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/filetasklog"
+	group2fileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/group2file"
 	mediafileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mediafile"
 	mountPointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
+	userMountPointTokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/userMountPointToken"
 	verifySvi "github.com/xxcheng123/cloudpan189-share/internal/services/verify"
 	virtualfileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/virtualfile"
 
@@ -28,17 +30,20 @@ type Handler interface {
 	ClearFile() taskcontext.HandlerFunc
 	HandleBatchDelete() taskcontext.HandlerFunc
 	HandleDelete() taskcontext.HandlerFunc
+	HandleBatchModifyToken() taskcontext.HandlerFunc
 }
 
 type handler struct {
-	logger             *zap.Logger
-	virtualFileService virtualfileSvi.Service
-	cloudBridgeService cloudbridgeSvi.Service
-	cloudTokenService  cloudtokenSvi.Service
-	mountPointService  mountPointSvi.Service
-	fileTaskLogService filetasklogSvi.Service
-	mediaFileService   mediafileSvi.Service
-	verifyService      verifySvi.Service
+	logger                     *zap.Logger
+	virtualFileService         virtualfileSvi.Service
+	cloudBridgeService         cloudbridgeSvi.Service
+	cloudTokenService          cloudtokenSvi.Service
+	mountPointService          mountPointSvi.Service
+	fileTaskLogService         filetasklogSvi.Service
+	mediaFileService           mediafileSvi.Service
+	verifyService              verifySvi.Service
+	group2FileService          group2fileSvi.Service
+	userMountPointTokenService userMountPointTokenSvi.Service
 }
 
 func NewHandler(
@@ -50,16 +55,20 @@ func NewHandler(
 	fileTaskLogService filetasklogSvi.Service,
 	mediaFileService mediafileSvi.Service,
 	verifyService verifySvi.Service,
+	group2FileService group2fileSvi.Service,
+	userMountPointTokenService userMountPointTokenSvi.Service,
 ) Handler {
 	return &handler{
-		logger:             logger,
-		virtualFileService: virtualFileService,
-		cloudBridgeService: cloudBridgeService,
-		cloudTokenService:  cloudTokenService,
-		mountPointService:  mountPointService,
-		fileTaskLogService: fileTaskLogService,
-		mediaFileService:   mediaFileService,
-		verifyService:      verifyService,
+		logger:                     logger,
+		virtualFileService:         virtualFileService,
+		cloudBridgeService:         cloudBridgeService,
+		cloudTokenService:          cloudTokenService,
+		mountPointService:          mountPointService,
+		fileTaskLogService:         fileTaskLogService,
+		mediaFileService:           mediaFileService,
+		verifyService:              verifyService,
+		group2FileService:          group2FileService,
+		userMountPointTokenService: userMountPointTokenService,
 	}
 }
 
