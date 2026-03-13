@@ -74,23 +74,32 @@ func (h *handler) FileLogList() httpcontext.HandlerFunc {
 		}
 
 		now := time.Now()
+		normalizedLogs := make([]*models.FileTaskLog, 0, len(taskLogList))
 
 		for _, log := range taskLogList {
-			if log.Duration == 0 {
-				endTime := log.EndAt
+			item := *log
+
+			if item.Duration == 0 {
+				endTime := item.EndAt
 				if endTime == nil {
 					endTime = &now
 				}
-				durationMs := endTime.UnixMilli() - log.BeginAt.UnixMilli()
+				durationMs := endTime.UnixMilli() - item.BeginAt.UnixMilli()
 				if durationMs > 0 {
-					log.Duration = durationMs
+					item.Duration = durationMs
 				}
 			}
+
+			if item.Status == models.StatusCompleted && item.Total > 0 && item.Completed < item.Total {
+				item.Completed = item.Total
+			}
+
+			normalizedLogs = append(normalizedLogs, &item)
 		}
 
 		ctx.Success(&fileLogListResponse{
 			Total:       total,
-			Data:        taskLogList,
+			Data:        normalizedLogs,
 			PageSize:    req.PageSize,
 			CurrentPage: req.CurrentPage,
 		})

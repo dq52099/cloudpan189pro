@@ -183,25 +183,13 @@ func (h *handler) List() httpcontext.HandlerFunc {
 			userTokenMap, _ = h.userMountPointTokenService.GetUserTokens(ctx.GetContext(), userID, mountPointIds)
 		}
 
-		anyUserTokenMap := make(map[int64]int64)
-		if isAdmin && len(mountPointIds) > 0 {
-			anyUserTokenMap, _ = h.userMountPointTokenService.GetAnyUserTokens(ctx.GetContext(), mountPointIds)
-		}
-
-		// 普通用户只显示自己的绑定令牌；管理员优先显示自己的，再显示其他用户已绑定的，否则为空
+		// 列表中的令牌用于当前用户执行绑定/解绑操作，因此只显示当前用户自己的绑定。
+		// 管理员如果回落显示其他用户的绑定，会造成“解绑后仍显示有令牌”的错觉。
 		for _, mp := range list {
-			if isAdmin {
-				if userTokenId, ok := userTokenMap[mp.ID]; ok && userTokenId > 0 {
-					mp.TokenId = userTokenId
-				} else if anyTokenId, ok := anyUserTokenMap[mp.ID]; ok && anyTokenId > 0 {
-					mp.TokenId = anyTokenId
-				}
+			if userTokenId, ok := userTokenMap[mp.ID]; ok && userTokenId > 0 {
+				mp.TokenId = userTokenId
 			} else {
-				if userTokenId, ok := userTokenMap[mp.ID]; ok && userTokenId > 0 {
-					mp.TokenId = userTokenId
-				} else {
-					mp.TokenId = 0
-				}
+				mp.TokenId = 0
 			}
 		}
 

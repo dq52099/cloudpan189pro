@@ -7,15 +7,24 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 func (s *service) ToggleStatus(ctx context.Context, key LogKey, status string, opts ...utils.Field) (err error) {
 	mp := map[string]interface{}{
 		"status": status,
 	}
+	hasCompletedField := false
 
 	for _, opt := range opts {
 		mp[opt.Key] = opt.Value
+		if opt.Key == "completed" {
+			hasCompletedField = true
+		}
+	}
+
+	if status == models.StatusCompleted && !hasCompletedField {
+		mp["completed"] = gorm.Expr("total")
 	}
 
 	if err = s.getDB(ctx).

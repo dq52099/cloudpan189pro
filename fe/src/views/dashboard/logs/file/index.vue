@@ -154,7 +154,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, onMounted, h } from 'vue'
+import { reactive, onMounted, onUnmounted, h } from 'vue'
 import {
   NDataTable,
   NInput,
@@ -212,6 +212,9 @@ const state = reactive({
 const message = useMessage()
 const dialog = useDialog()
 
+const AUTO_REFRESH_INTERVAL = 3000
+let refreshTimer: ReturnType<typeof setInterval> | null = null
+
 // 状态选项（使用常量定义）
 const statusOptions = TASK_STATUS_OPTIONS
 
@@ -240,8 +243,52 @@ const paginationReactive = reactive<PaginationProps>({
 })
 
 // 获取任务日志列表
-const fetchTaskLogList = () => {
-  state.loading = true
+const syncCurrentTask = () => {
+  if (!state.currentTask) {
+    return
+  }
+
+  const latestTask = state.tableData.find((item) => item.id === state.currentTask?.id)
+  if (latestTask) {
+    state.currentTask = latestTask
+  }
+}
+
+const hasActiveTasks = () => {
+  return state.tableData.some((item) => item.status === 'running' || item.status === 'pending')
+}
+
+const stopAutoRefresh = () => {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+}
+
+const filterAllowsActiveTasks = () => {
+  return !state.statusFilter || state.statusFilter === 'running' || state.statusFilter === 'pending'
+}
+
+const ensureAutoRefresh = () => {
+  if (!filterAllowsActiveTasks() || !hasActiveTasks()) {
+    stopAutoRefresh()
+
+    return
+  }
+
+  if (refreshTimer) {
+    return
+  }
+
+  refreshTimer = setInterval(() => {
+    void fetchTaskLogList(true)
+  }, AUTO_REFRESH_INTERVAL)
+}
+
+const fetchTaskLogList = (silent = false) => {
+  if (!silent) {
+    state.loading = true
+  }
 
   const params: Record<string, unknown> = {
     currentPage: paginationReactive.page,
@@ -268,14 +315,21 @@ const fetchTaskLogList = () => {
       if (response.data) {
         state.tableData = response.data.data || []
         paginationReactive.itemCount = response.data.total || 0
+        syncCurrentTask()
+        ensureAutoRefresh()
       }
     })
     .catch((error) => {
       console.error('获取任务日志失败:', error)
-      message.error(error?.message || '获取任务日志失败')
+      stopAutoRefresh()
+      if (!silent) {
+        message.error(error?.message || '获取任务日志失败')
+      }
     })
     .finally(() => {
-      state.loading = false
+      if (!silent) {
+        state.loading = false
+      }
     })
 }
 
@@ -510,6 +564,10 @@ const columns: DataTableColumns<Models.FileTaskLog> = [
 // 初始化：仅在被挂载时请求，配合 Tabs v-if 从而避免多余请求
 onMounted(() => {
   fetchTaskLogList()
+})
+
+onUnmounted(() => {
+  stopAutoRefresh()
 })
 </script>
 

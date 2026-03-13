@@ -6,6 +6,7 @@ import (
 
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/taskcontext"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/filetasklog"
 	mountpointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/virtualfile"
@@ -142,7 +143,7 @@ func (h *handler) HandleBatchDelete() taskcontext.HandlerFunc {
 
 // HandleDelete 单个文件删除处理逻辑
 func (h *handler) HandleDelete() taskcontext.HandlerFunc {
-	return func(ctx *taskcontext.Context) error {
+	return func(ctx *taskcontext.Context) (handleErr error) {
 		req := new(topic.FileDeleteRequest)
 
 		if err := ctx.Unmarshal(req); err != nil {
@@ -175,7 +176,14 @@ func (h *handler) HandleDelete() taskcontext.HandlerFunc {
 
 		defer func() {
 			if tracker != nil {
-				if err := h.fileTaskLogService.Completed(ctx.GetContext(), tracker, tracker.WithCost()); err != nil {
+				var err error
+				if handleErr != nil {
+					err = h.fileTaskLogService.Failed(ctx.GetContext(), tracker, tracker.WithCost(), utils.WithField("result", handleErr.Error()))
+				} else {
+					err = h.fileTaskLogService.Completed(ctx.GetContext(), tracker, tracker.WithCost(), utils.WithField("completed", 1))
+				}
+
+				if err != nil {
 					h.logger.Error("更新任务日志失败", zap.Error(err))
 				}
 			}
@@ -212,12 +220,20 @@ func (h *handler) HandleDelete() taskcontext.HandlerFunc {
 		// 2. 清理挂载点下的子文件 (触发 deleteStrmIterator)
 		if err := h.clearMountFiles(ctx.GetContext(), targetFileID); err != nil {
 			h.logger.Error("清理挂载点子文件失败", zap.Int64("fid", targetFileID), zap.Error(err))
+
+			return err
 		}
 
 		// 3. 删除当前的根虚拟文件
 		if err := h.virtualFileService.Delete(ctx.GetContext(), targetFileID); err != nil {
 			h.logger.Error("删除根虚拟文件失败", zap.Int64("fid", targetFileID), zap.Error(err))
+
+			return err
 		} else {
+			if tracker != nil {
+				_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklog.WithCompletedOneCounter())
+			}
+
 			h.logger.Info("后台删除虚拟文件完成", zap.Int64("fid", targetFileID))
 			// 4. 本地空目录清理 (确保 strm 删完后执行)
 			if shared.MediaConfig != nil && shared.MediaConfig.Enable {

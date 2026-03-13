@@ -20,6 +20,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/types/converter"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 func (h *handler) ScanFile() taskcontext.HandlerFunc {
@@ -78,7 +79,12 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 		defer func() {
 			if scanErr != nil {
 				_ = h.fileTaskLogService.Failed(ctx.GetContext(), tracker, tracker.WithCost(), utils.WithField("result", scanErr.Error()))
-			} else if err := h.fileTaskLogService.Completed(ctx.GetContext(), tracker, tracker.WithCost()); err != nil {
+			} else if err := h.fileTaskLogService.Completed(
+				ctx.GetContext(),
+				tracker,
+				tracker.WithCost(),
+				utils.WithField("completed", gorm.Expr("total")),
+			); err != nil {
 				logger.Error("更新文件任务日志失败", zap.Int64("file_id", req.FileId), zap.Error(err))
 			}
 		}()
