@@ -118,9 +118,11 @@ func NewService(botToken, chatID, proxyURL, proxyType, apiURL string, logger *za
 	if proxyURL == "" {
 		proxyURL = os.Getenv("TG_PROXY")
 	}
-	if proxyURL != "" && s.proxyType == "" {
+	if proxyURL != "" {
 		proxyType = os.Getenv("TG_PROXY_TYPE")
-		if proxyType == "" {
+		if s.proxyType != "" {
+			proxyType = s.proxyType
+		} else if proxyType == "" {
 			if strings.HasPrefix(proxyURL, "socks5://") {
 				proxyType = "socks5"
 			} else {

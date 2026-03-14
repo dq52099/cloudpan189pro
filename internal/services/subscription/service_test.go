@@ -255,12 +255,12 @@ func TestSearchResultStruct(t *testing.T) {
 	sr := SearchResult{
 		Title:    "测试",
 		ShareURL: "https://test.com",
-		FileID:   "123",
+		FileID:   123,
 		Size:     "1GB",
 	}
 
-	if sr.FileID != "123" {
-		t.Errorf("Expected file ID 123, got %s", sr.FileID)
+	if sr.FileID != 123 {
+		t.Errorf("Expected file ID 123, got %d", sr.FileID)
 	}
 }
 
@@ -316,8 +316,8 @@ func TestSearchPan(t *testing.T) {
 		// 不失败，因为网络问题可能出错
 	}
 
-	// results 可能为空，但不应该是 nil
-	if results == nil {
+	// 仅在请求成功时校验返回结构，避免外部接口不可用导致误报
+	if err == nil && results == nil {
 		t.Error("Expected results to be non-nil")
 	}
 }
