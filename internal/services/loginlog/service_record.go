@@ -46,7 +46,8 @@ func (s *service) RecordLogin(ctx context.Context, in *RecordLoginInput) (int64,
 
 	status := in.Status
 	if status == "" {
-		status = loginlog.StatusFailed
+		// 调用方未显式指定状态视为成功（调用该函数通常代表业务流程已成功触发记录）
+		status = loginlog.StatusSuccess
 	}
 
 	log := &models.LoginLog{
@@ -79,7 +80,7 @@ func (s *service) RecordRefreshToken(ctx context.Context, in *RecordRefreshInput
 
 	status := in.Status
 	if status == "" {
-		status = loginlog.StatusFailed
+		status = loginlog.StatusSuccess
 	}
 
 	log := &models.LoginLog{

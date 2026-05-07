@@ -1,6 +1,8 @@
 package loginlog
 
 import (
+	"time"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/bootstrap"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
@@ -23,6 +25,12 @@ type Service interface {
 
 	// Count 统计数量
 	Count(ctx context.Context, req *ListRequest) (int64, error)
+
+	// ClearAll 清空全部日志
+	ClearAll(ctx context.Context) (int64, error)
+
+	// ClearBefore 清理指定时间之前的日志
+	ClearBefore(ctx context.Context, before time.Time) (int64, error)
 }
 
 type service struct {

@@ -10,12 +10,15 @@ import (
 type Handler interface {
 	// List 登录日志列表
 	List() httpcontext.HandlerFunc
+	// Clear 清空登录日志
+	Clear() httpcontext.HandlerFunc
 }
 
 var bi = httpcontext.NewBusinessGenerator(consts.BusCodeLoginLogStartCode)
 
 var (
-	codeListFailed = bi.Next("获取登录日志列表失败")
+	codeListFailed  = bi.Next("获取登录日志列表失败")
+	codeClearFailed = bi.Next("清空登录日志失败")
 )
 
 type handler struct {

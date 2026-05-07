@@ -30,6 +30,10 @@ type ListRequest struct {
 }
 
 func (s *service) List(ctx context.Context, req *ListRequest) ([]*models.FileTaskLog, error) {
+	if req == nil {
+		req = &ListRequest{}
+	}
+
 	query := s.getListQuery(ctx, req)
 
 	if len(req.AscList) > 0 {
@@ -41,7 +45,7 @@ func (s *service) List(ctx context.Context, req *ListRequest) ([]*models.FileTas
 	}
 
 	for _, k := range req.DescList {
-		query = query.Order(clause.OrderByColumn{Column: clause.Column{Name: k}})
+		query = query.Order(clause.OrderByColumn{Column: clause.Column{Name: k}, Desc: true})
 	}
 
 	if !req.NoPaginate {
@@ -56,6 +60,10 @@ func (s *service) List(ctx context.Context, req *ListRequest) ([]*models.FileTas
 }
 
 func (s *service) Count(ctx context.Context, req *ListRequest) (count int64, err error) {
+	if req == nil {
+		req = &ListRequest{}
+	}
+
 	err = s.getListQuery(ctx, req).Count(&count).Error
 
 	return count, err
