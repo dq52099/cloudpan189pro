@@ -5,11 +5,14 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/taskcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/ptr"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
+	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	filetasklogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/filetasklog"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/virtualfile"
@@ -21,16 +24,21 @@ import (
 	verifySvi "github.com/xxcheng123/cloudpan189-share/internal/services/verify"
 )
 
+// maxRecursionDepth walkBuildStrm 的最大递归深度，防止循环目录导致栈溢出
 const maxRecursionDepth = 100
 
+// rebuildConcurrency 全量重建时的挂载点级并发度。
+const rebuildConcurrency = 4
+
 // rebuildProgress STRM 重建进度统计。
-// 字段必须用 atomic.AddInt32/LoadInt32 访问，避免 data race。
+// 全部字段必须用 atomic.* 访问，避免 data race。
 type rebuildProgress struct {
 	totalFolders     int32
 	processedFolders int32
 	totalFiles       int32
 	successFiles     int32
 	failedFiles      int32
+	skippedFiles     int32
 }
 
 // safeRate 计算百分比，分母为 0 时返回 100%（避免 NaN/+Inf）。
@@ -42,6 +50,8 @@ func safeRate(success, total int32) float64 {
 	return float64(success) / float64(total) * 100
 }
 
+// RebuildStrmFile 全量重建 STRM：遍历所有挂载点。
+// 支持并发执行，每个挂载点是一个独立 unit，最多 rebuildConcurrency 个同时跑。
 func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
 	return func(ctx *taskcontext.Context) error {
 		logger := ctx.GetContext().Logger
@@ -58,7 +68,6 @@ func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
 		})
 		if err != nil {
 			logger.Error("查询挂载点失败", zap.Error(err))
-
 			return err
 		}
 
@@ -66,8 +75,6 @@ func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
 			logger.Warn("没有挂载点，跳过strm重建")
 			return nil
 		}
-
-		logger.Info(fmt.Sprintf("[strm生成] 开始重建 strm，共 %d 个挂载文件夹（根路径: %s）", len(mountpoints), shared.MediaConfig.StoragePath))
 
 		tracker, logErr := h.fileTaskLogService.Create(
 			ctx.GetContext(),
@@ -78,12 +85,8 @@ func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
 		if logErr != nil {
 			logger.Error("创建任务日志失败", zap.Error(logErr))
 		} else if tracker != nil {
-			if err := h.fileTaskLogService.Running(ctx.GetContext(), tracker); err != nil {
-				logger.Warn("标记任务运行中失败", zap.Error(err))
-			}
-			if err := h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithTotalCounter(len(mountpoints))); err != nil {
-				logger.Warn("刷新任务总数失败", zap.Error(err))
-			}
+			_ = h.fileTaskLogService.Running(ctx.GetContext(), tracker)
+			_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithTotalCounter(len(mountpoints)))
 		}
 
 		progress := &rebuildProgress{
@@ -92,36 +95,47 @@ func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
 
 		car := media.NewWriterCar(shared.MediaConfig.StoragePath, shared.MediaConfig.ConflictPolicy, shared.BaseURL)
 
-		for idx, mp := range mountpoints {
-			atomic.StoreInt32(&progress.processedFolders, int32(idx+1))
+		// 按挂载点并发执行
+		var (
+			wg  sync.WaitGroup
+			sem = make(chan struct{}, rebuildConcurrency)
+		)
 
-			successFiles := atomic.LoadInt32(&progress.successFiles)
-			totalFiles := atomic.LoadInt32(&progress.totalFiles)
-			logger.Info(fmt.Sprintf(
-				"[strm生成] 处理文件夹: %s (进度 %d/%d，成功率 %.1f%%)",
-				mp.FullPath, idx+1, len(mountpoints), safeRate(successFiles, totalFiles),
-			))
+		for _, mp := range mountpoints {
+			sem <- struct{}{}
+			wg.Add(1)
 
-			h.walkBuildStrm(ctx.GetContext(), mp.FileId, car.NewSubCar(mp.FullPath), 0, progress)
+			go func(mp *models.MountPoint) {
+				defer wg.Done()
+				defer func() { <-sem }()
 
-			// 每处理完一个挂载点，Completed 计数 +1
-			if tracker != nil {
-				if err := h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithCompletedOneCounter()); err != nil {
-					logger.Warn("刷新完成计数失败", zap.Error(err))
+				atomic.AddInt32(&progress.processedFolders, 1)
+				logger.Info(fmt.Sprintf(
+					"[strm生成] 开始处理挂载点: %s (%d/%d)",
+					mp.FullPath,
+					atomic.LoadInt32(&progress.processedFolders),
+					len(mountpoints),
+				))
+
+				h.walkBuildStrm(ctx.GetContext(), mp.FileId, car.NewSubCar(mp.FullPath), 0, progress)
+
+				if tracker != nil {
+					_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithCompletedOneCounter())
 				}
-			}
+			}(mp)
 		}
 
-		finalSuccess := atomic.LoadInt32(&progress.successFiles)
-		finalFailed := atomic.LoadInt32(&progress.failedFiles)
-		finalTotal := atomic.LoadInt32(&progress.totalFiles)
-		logger.Info(fmt.Sprintf(
-			"[strm生成] strm重建完成：共处理 %d 个文件夹，成功 %d 个文件，失败 %d 个文件，成功率 %.1f%%",
-			progress.totalFolders, finalSuccess, finalFailed, safeRate(finalSuccess, finalTotal),
-		))
+		wg.Wait()
+
+		summary := summariseProgress(progress)
+		logger.Info("[strm生成] strm重建完成: " + summary)
 
 		if tracker != nil {
-			if err := h.fileTaskLogService.Completed(ctx.GetContext(), tracker); err != nil {
+			if err := h.fileTaskLogService.Completed(
+				ctx.GetContext(), tracker,
+				tracker.WithCost(),
+				utils.WithField("result", summary),
+			); err != nil {
 				logger.Warn("标记任务完成失败", zap.Error(err))
 			}
 		}
@@ -130,6 +144,7 @@ func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
 	}
 }
 
+// RebuildStrmFileByMountPoint 针对单个挂载点重建 STRM。
 func (h *handler) RebuildStrmFileByMountPoint() taskcontext.HandlerFunc {
 	return func(ctx *taskcontext.Context) error {
 		logger := ctx.GetContext().Logger
@@ -160,34 +175,25 @@ func (h *handler) RebuildStrmFileByMountPoint() taskcontext.HandlerFunc {
 		if logErr != nil {
 			logger.Error("创建任务日志失败", zap.Error(logErr))
 		} else if tracker != nil {
-			if err := h.fileTaskLogService.Running(ctx.GetContext(), tracker); err != nil {
-				logger.Warn("标记任务运行中失败", zap.Error(err))
-			}
-			if err := h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithTotalCounter(1)); err != nil {
-				logger.Warn("刷新任务总数失败", zap.Error(err))
-			}
+			_ = h.fileTaskLogService.Running(ctx.GetContext(), tracker)
+			_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithTotalCounter(1))
 		}
 
-		progress := &rebuildProgress{
-			totalFolders: 1,
-		}
+		progress := &rebuildProgress{totalFolders: 1}
 
 		car := media.NewWriterCar(shared.MediaConfig.StoragePath, shared.MediaConfig.ConflictPolicy, shared.BaseURL)
 		h.walkBuildStrm(ctx.GetContext(), req.MountPointFileId, car.NewSubCar(req.MountPointPath), 0, progress)
 
-		finalSuccess := atomic.LoadInt32(&progress.successFiles)
-		finalFailed := atomic.LoadInt32(&progress.failedFiles)
-		finalTotal := atomic.LoadInt32(&progress.totalFiles)
-		logger.Info(fmt.Sprintf(
-			"[strm生成] strm重建完成：成功 %d 个文件，失败 %d 个文件，成功率 %.1f%%",
-			finalSuccess, finalFailed, safeRate(finalSuccess, finalTotal),
-		))
+		summary := summariseProgress(progress)
+		logger.Info("[strm生成] strm重建完成: " + summary)
 
 		if tracker != nil {
-			if err := h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithCompletedOneCounter()); err != nil {
-				logger.Warn("刷新完成计数失败", zap.Error(err))
-			}
-			if err := h.fileTaskLogService.Completed(ctx.GetContext(), tracker); err != nil {
+			_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithCompletedOneCounter())
+			if err := h.fileTaskLogService.Completed(
+				ctx.GetContext(), tracker,
+				tracker.WithCost(),
+				utils.WithField("result", summary),
+			); err != nil {
 				logger.Warn("标记任务完成失败", zap.Error(err))
 			}
 		}
@@ -196,10 +202,12 @@ func (h *handler) RebuildStrmFileByMountPoint() taskcontext.HandlerFunc {
 	}
 }
 
+// walkBuildStrm 深度优先遍历目录，为每个命中 includedSuffixes 的文件生成 STRM。
+//
+// 返回值设计：失败不中断整个遍历（只记日志和 progress 计数），配合进度显示。
 func (h *handler) walkBuildStrm(ctx context.Context, fid int64, car media.WriterCar, depth int, progress *rebuildProgress) {
 	if depth >= maxRecursionDepth {
 		ctx.Warn("达到最大递归深度，停止处理", zap.Int("depth", depth), zap.Int64("parent_id", fid))
-
 		return
 	}
 
@@ -208,7 +216,6 @@ func (h *handler) walkBuildStrm(ctx context.Context, fid int64, car media.Writer
 	})
 	if err != nil {
 		ctx.Error("查询子文件失败", zap.Error(err), zap.Int64("parent_id", fid))
-
 		return
 	}
 
@@ -220,10 +227,10 @@ func (h *handler) walkBuildStrm(ctx context.Context, fid int64, car media.Writer
 
 		atomic.AddInt32(&progress.totalFiles, 1)
 
+		// 后缀过滤
 		extName := path.Ext(file.Name)
 		if len(shared.MediaConfig.IncludedSuffixes) > 0 && !slices.Contains(shared.MediaConfig.IncludedSuffixes, extName) {
-			ctx.Debug("重建strm - 跳过文件（非媒体格式）", zap.String("file_name", file.Name))
-
+			atomic.AddInt32(&progress.skippedFiles, 1)
 			continue
 		}
 
@@ -236,6 +243,7 @@ func (h *handler) walkBuildStrm(ctx context.Context, fid int64, car media.Writer
 			continue
 		}
 
+		// Replace 策略：在外层统一删除旧记录，避免和 WriteStrm 内部重复删除
 		if shared.MediaConfig.ConflictPolicy == media.FileConflictPolicyReplace {
 			if err := h.mediaFileService.DeleteStrm(ctx, file.ID, shared.MediaConfig.StoragePath); err != nil {
 				ctx.Warn("重建strm - 删除旧 strm 文件失败", zap.Int64("file_id", file.ID), zap.Error(err))
@@ -243,12 +251,32 @@ func (h *handler) walkBuildStrm(ctx context.Context, fid int64, car media.Writer
 		}
 
 		carWithFilename := car.NewSubCar(filename)
-		if id, err := h.mediaFileService.WriteStrm(ctx, carWithFilename, file.ID, shared.JoinDownloadURL(file.ID, values)); err != nil {
+		id, err := h.mediaFileService.WriteStrm(ctx, carWithFilename, file.ID, shared.JoinDownloadURL(file.ID, values))
+		if err != nil {
 			ctx.Error("重建strm - 创建 strm 文件失败", zap.String("file", file.Name), zap.Int64("file_id", file.ID), zap.Error(err))
 			atomic.AddInt32(&progress.failedFiles, 1)
+			continue
+		}
+
+		// Skip 策略下已存在的文件会返回 (0, nil)，记为 skipped 而非 success
+		if id == 0 {
+			atomic.AddInt32(&progress.skippedFiles, 1)
 		} else {
-			ctx.Debug("重建strm - 创建 strm 文件成功", zap.String("file", file.Name), zap.Int64("file_id", file.ID), zap.Int64("media_file_id", id))
 			atomic.AddInt32(&progress.successFiles, 1)
 		}
 	}
+}
+
+// summariseProgress 组装进度摘要字符串，供任务日志 result 字段展示。
+func summariseProgress(p *rebuildProgress) string {
+	total := atomic.LoadInt32(&p.totalFiles)
+	success := atomic.LoadInt32(&p.successFiles)
+	failed := atomic.LoadInt32(&p.failedFiles)
+	skipped := atomic.LoadInt32(&p.skippedFiles)
+	folders := atomic.LoadInt32(&p.totalFolders)
+
+	return fmt.Sprintf(
+		"挂载点 %d 个 / 媒体文件 %d 个（成功 %d, 跳过 %d, 失败 %d, 成功率 %.1f%%）",
+		folders, total, success, skipped, failed, safeRate(success, total),
+	)
 }

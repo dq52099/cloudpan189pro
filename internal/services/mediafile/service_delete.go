@@ -1,12 +1,15 @@
 package mediafile
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/pkg/errors"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	"github.com/xxcheng123/cloudpan189-share/internal/shared"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -37,7 +40,16 @@ func (s *service) DeleteStrm(ctx context.Context, fid int64, rootPath string) er
 
 // Clear 清除根路径下所有文件夹并清空对应 DB 记录。
 // 单个文件删除失败时记录 warning 并继续；所有文件处理完后统一清理 DB。
+//
+// 安全检查：
+//   - rootPath 必须与 shared.MediaConfig.StoragePath 一致，防止调用方传入错误的危险路径；
+//   - rootPath 不能是根目录 `/` 或 Windows 盘符根 `C:\`。
 func (s *service) Clear(ctx context.Context, rootPath string) error {
+	if err := validateMediaStorageRoot(rootPath); err != nil {
+		ctx.Error("拒绝清理非法媒体根路径", zap.String("path", rootPath), zap.Error(err))
+		return err
+	}
+
 	entries, err := os.ReadDir(rootPath)
 	if err != nil {
 		ctx.Error("读取目录失败", zap.String("path", rootPath), zap.Error(err))
@@ -67,6 +79,34 @@ func (s *service) Clear(ctx context.Context, rootPath string) error {
 	}
 
 	ctx.Info("清空媒体文件数据成功", zap.String("rootPath", rootPath), zap.Int("disk_failed", failedCount))
+
+	return nil
+}
+
+// validateMediaStorageRoot 对 Clear 传入的 root 做最小安全校验。
+func validateMediaStorageRoot(rootPath string) error {
+	clean := strings.TrimSpace(rootPath)
+	if clean == "" {
+		return errors.New("媒体根路径不能为空")
+	}
+
+	absPath, err := filepath.Abs(clean)
+	if err != nil {
+		return fmt.Errorf("解析路径失败: %w", err)
+	}
+
+	// 防止 `/` 或 盘符根
+	if absPath == "/" || absPath == `\` || (len(absPath) == 3 && absPath[1] == ':') {
+		return errors.New("拒绝清理系统根目录或盘符根")
+	}
+
+	// 必须与当前配置的 StoragePath 一致（校准从 http handler 传来的值）
+	if cfg := shared.MediaConfig; cfg != nil && cfg.StoragePath != "" {
+		absCfg, err := filepath.Abs(cfg.StoragePath)
+		if err == nil && absCfg != absPath {
+			return fmt.Errorf("传入路径与媒体配置不一致: got=%s, want=%s", absPath, absCfg)
+		}
+	}
 
 	return nil
 }

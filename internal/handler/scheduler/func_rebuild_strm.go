@@ -139,8 +139,10 @@ func (s *RebuildStrmScheduler) tick() {
 	s.nextRunAt = schedule.Next(now)
 	s.lastRun = now
 
-	// 更新全局配置，供前端展示
-	shared.MediaConfig.LastRebuildTime = now
+	// 更新全局配置 + 持久化到 DB，供前端展示"上次重建时间"
+	if shared.MediaConfig != nil {
+		shared.MediaConfig.LastRebuildTime = now
+	}
 }
 
 func (s *RebuildStrmScheduler) doRebuild() {
@@ -151,6 +153,9 @@ func (s *RebuildStrmScheduler) doRebuild() {
 		zap.Time("next_run_at", s.nextRunAt),
 	)
 
+	// 统一走全量重建任务，消费侧自带并发。
+	// 曾经按挂载点派发会把 STRM 全量重建拆成 N 条，
+	// 对 task_logs 产生大量噪声且难以聚合成单次运行摘要。
 	taskReq := &topic.MediaRebuildStrmFileRequest{}
 
 	body, err := json.Marshal(taskReq)

@@ -6,6 +6,7 @@ import (
 
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	filetasklogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/filetasklog"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
@@ -104,13 +105,20 @@ func (h *handler) BatchRefresh() httpcontext.HandlerFunc {
 			successCount++
 		}
 
-		// 刷新任务只是派发成功，真正完成由各 scan 子任务各自汇报。
-		// 这里标记为 Running 等同于"已派发"，由 scheduler 的 stale 检查兜底。
+		// 批量刷新本身只负责派发任务；真正的扫描进度由各 scan 子任务独立记录日志。
+		// 这里把派发任务的 tracker 立刻标记完成，避免其长时间 Running 被 stale checker 置为 Failed。
 		if tracker != nil {
 			_ = h.fileTaskLogService.FlushCount(
 				ctx.GetContext(), tracker,
 				filetasklogSvi.WithCompletedCounter(successCount),
 			)
+			if err := h.fileTaskLogService.Completed(
+				ctx.GetContext(), tracker,
+				tracker.WithCost(),
+				utils.WithField("result", fmt.Sprintf("派发成功 %d 个，失败 %d 个，具体扫描进度请查看对应子任务", successCount, len(req.IDs)-successCount)),
+			); err != nil {
+				ctx.GetContext().Warn("批量刷新任务标记完成失败", zap.Error(err))
+			}
 		}
 
 		ctx.GetContext().Info("批量刷新请求已加入队列", zap.Int("total", len(req.IDs)), zap.Int("success", successCount))

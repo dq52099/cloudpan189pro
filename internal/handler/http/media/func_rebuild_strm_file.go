@@ -10,6 +10,11 @@ import (
 	"go.uber.org/zap"
 )
 
+type rebuildStrmRequest struct {
+	// MountPointIDs 可选，仅重建指定挂载点；为空时重建全部。
+	MountPointIDs []int64 `json:"mountPointIds,omitempty" example:"[1001,1002]"`
+}
+
 type rebuildStrmResponse struct {
 	Total   int `json:"total"`
 	Success int `json:"success"`
@@ -18,34 +23,55 @@ type rebuildStrmResponse struct {
 
 // RebuildStrmFile 重建strm文件
 // @Summary 重建strm文件
-// @Description 为每个挂载点创建独立的STRM重建任务，由工作流并发处理
+// @Description 重建 STRM 文件。不传 mountPointIds 时走全量重建（消费侧内部并发）；
+// @Description 传入 mountPointIds 时按单挂载点派发多条任务，便于针对性重试。
 // @Tags 媒体操作
 // @Accept json
 // @Produce json
 // @Param Authorization header string true "Bearer token"
-// @Success 200 {object} httpcontext.Response "重建任务已提交"
-// @Failure 400 {object} httpcontext.Response "媒体功能未启用，code=xxxx"
-// @Failure 400 {object} httpcontext.Response "提交重建任务失败，code=xxxx"
+// @Param request body rebuildStrmRequest false "重建参数"
+// @Success 200 {object} httpcontext.Response{data=rebuildStrmResponse} "重建任务已提交"
+// @Failure 400 {object} httpcontext.Response "媒体功能未启用"
+// @Failure 400 {object} httpcontext.Response "提交重建任务失败"
 // @Failure 401 {object} httpcontext.Response "未授权访问"
 // @Failure 403 {object} httpcontext.Response "权限不足"
 // @Router /api/media/rebuild_strm_file [post]
 func (h *handler) RebuildStrmFile() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
+		req := new(rebuildStrmRequest)
+		_ = ctx.ShouldBindJSON(req)
+
 		// 检查媒体功能是否启用
 		cfg, err := h.mediaConfigService.Query(ctx.GetContext())
 		if err != nil {
 			ctx.Fail(codeMediaNotEnabled.WithError(err))
-
 			return
 		}
 
 		if !cfg.Enable {
 			ctx.Fail(codeMediaNotEnabled)
-
 			return
 		}
 
-		// 获取所有挂载点
+		// 未指定挂载点：下发全量重建任务（消费侧自带挂载点级并发）
+		if len(req.MountPointIDs) == 0 {
+			fullReq := &topic.MediaRebuildStrmFileRequest{}
+			body, _ := json.Marshal(fullReq)
+			if err := h.taskEngine.PushMessage(
+				ctx.GetContext().
+					WithValue(consts.CtxKeyInvokeHandlerName, "STRM 重建"),
+				fullReq.Topic(), body,
+			); err != nil {
+				ctx.GetContext().Error("推送 STRM 全量重建任务失败", zap.Error(err))
+				ctx.Fail(codeRebuildFailed.WithError(err))
+				return
+			}
+
+			ctx.Success(rebuildStrmResponse{Total: 1, Success: 1, Failed: 0})
+			return
+		}
+
+		// 指定了挂载点：逐个派发单挂载点重建任务
 		mountpoints, err := h.mountpointService.List(ctx.GetContext(), &mountpointSvi.ListRequest{
 			NoPaginate: true,
 		})
@@ -54,34 +80,42 @@ func (h *handler) RebuildStrmFile() httpcontext.HandlerFunc {
 			return
 		}
 
-		if len(mountpoints) == 0 {
-			ctx.Success("没有挂载点，无需重建")
-			return
+		idSet := make(map[int64]struct{}, len(req.MountPointIDs))
+		for _, id := range req.MountPointIDs {
+			idSet[id] = struct{}{}
 		}
 
-		// 为每个挂载点创建独立任务
 		successCount := 0
+		totalRequested := 0
 		for _, mp := range mountpoints {
+			if _, ok := idSet[mp.FileId]; !ok {
+				continue
+			}
+			totalRequested++
+
 			taskReq := &topic.MediaRebuildStrmFileByMountPointRequest{
 				MountPointFileId: mp.FileId,
 				MountPointPath:   mp.FullPath,
 			}
 			body, _ := json.Marshal(taskReq)
-			if err = h.taskEngine.PushMessage(
+			if err := h.taskEngine.PushMessage(
 				ctx.GetContext().
 					WithValue(consts.CtxKeyFullPath, mp.FullPath).
 					WithValue(consts.CtxKeyInvokeHandlerName, "STRM重建"),
-				taskReq.Topic(), body); err != nil {
-				ctx.GetContext().Error("推送STRM重建任务失败", zap.Int64("file_id", mp.FileId))
+				taskReq.Topic(), body,
+			); err != nil {
+				ctx.GetContext().Warn("推送 STRM 单点重建任务失败",
+					zap.Int64("file_id", mp.FileId),
+					zap.Error(err))
 				continue
 			}
 			successCount++
 		}
 
 		ctx.Success(rebuildStrmResponse{
-			Total:   len(mountpoints),
+			Total:   totalRequested,
 			Success: successCount,
-			Failed:  len(mountpoints) - successCount,
+			Failed:  totalRequested - successCount,
 		})
 	}
 }

@@ -53,6 +53,18 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 			return errors.New("文件不是文件夹，不支持扫描")
 		}
 
+		// 对同一挂载点（顶层文件）加内存锁，避免手动刷新 + 定时刷新并发导致
+		// 重复 diff 同一棵树，触发 UNIQUE 冲突被重命名成 Name(rev)。
+		// 非顶层文件不锁，保持 Deep 模式下的子目录并发。
+		if topFile.IsTop && topFile.ID > 0 {
+			release, acquired := acquireScanLock(topFile.ID)
+			if !acquired {
+				logger.Warn("挂载点正在被扫描，跳过本次扫描", zap.Int64("file_id", topFile.ID), zap.String("path", topFile.Name))
+				return nil
+			}
+			defer release()
+		}
+
 		tracker, logErr := h.fileTaskLogService.Create(
 			ctx.GetContext(),
 			req.Topic().String(),
@@ -79,13 +91,27 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 		defer func() {
 			if scanErr != nil {
 				_ = h.fileTaskLogService.Failed(ctx.GetContext(), tracker, tracker.WithCost(), utils.WithField("result", scanErr.Error()))
-			} else if err := h.fileTaskLogService.Completed(
-				ctx.GetContext(),
-				tracker,
-				tracker.WithCost(),
-				utils.WithField("completed", gorm.Expr("total")),
-			); err != nil {
-				logger.Error("更新文件任务日志失败", zap.Int64("file_id", req.FileId), zap.Error(err))
+				// 写入挂载点失败状态（顶层文件才写入）
+				if req.FileId != 0 && topFile.IsTop {
+					if err := h.mountPointService.UpdateLastState(ctx.GetContext(), topFile.ID, "失败: "+scanErr.Error()); err != nil {
+						logger.Warn("写入挂载点失败状态失败", zap.Error(err))
+					}
+				}
+			} else {
+				if err := h.fileTaskLogService.Completed(
+					ctx.GetContext(),
+					tracker,
+					tracker.WithCost(),
+					utils.WithField("completed", gorm.Expr("total")),
+				); err != nil {
+					logger.Error("更新文件任务日志失败", zap.Int64("file_id", req.FileId), zap.Error(err))
+				}
+				// 写入挂载点成功状态
+				if req.FileId != 0 && topFile.IsTop {
+					if err := h.mountPointService.UpdateLastState(ctx.GetContext(), topFile.ID, "成功"); err != nil {
+						logger.Warn("写入挂载点成功状态失败", zap.Error(err))
+					}
+				}
 			}
 		}()
 
@@ -283,10 +309,15 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 
 			var (
 				filesToUpdateMap = map[int64][]utils.Field{}
-				pid              = inputFile.ID
-				filesToCreate    = make([]*models.VirtualFile, 0)
-				filesToDelete    = make([]*models.VirtualFile, 0)
-				filesToDeep      = make([]*models.VirtualFile, 0)
+				// strmUpdates 记录所有需要同步 STRM 的文件（仅非目录）
+				strmUpdates   = make([]*updateStrmContext, 0)
+				pid           = inputFile.ID
+				filesToCreate = make([]*models.VirtualFile, 0)
+				filesToDelete = make([]*models.VirtualFile, 0)
+				// filesToRecurse 为需要继续向下遍历的"已存在"目录集合（去重）。
+				// 普通刷新：仅当 Rev 变化时需要递归扫描该目录；
+				// 深度刷新：无论 Rev 是否变化，都要递归扫描。
+				filesToRecurse = make([]*models.VirtualFile, 0)
 			)
 
 			// 遍历扫描到的文件，找出新增和更新的文件
@@ -308,8 +339,22 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 							utils.WithField("modify_date", newFile.ModifyDate),
 							utils.WithField("hash", strings.ToLower(newFile.Hash)),
 						)
+
+						// 非目录文件的变更需要同步 STRM
+						if !oldFile.IsDir {
+							strmUpdates = append(strmUpdates, &updateStrmContext{
+								oldFile: oldFile,
+								newFile: newFile,
+							})
+						}
+
+						// 发生变更的目录无论是否深度扫描都应继续向下递归
+						if oldFile.IsDir {
+							filesToRecurse = append(filesToRecurse, oldFile)
+						}
 					} else if oldFile.IsDir && req.Deep {
-						filesToDeep = append(filesToDeep, oldFile)
+						// 深度扫描：Rev 未变的目录也要继续遍历
+						filesToRecurse = append(filesToRecurse, oldFile)
 					}
 				} else {
 					ctx.Debug("发现新文件",
@@ -404,6 +449,9 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 					ctx.Error("批量更新文件失败", zap.Error(err))
 
 					errs = append(errs, err)
+				} else {
+					// 更新成功后同步 STRM，失败只打 warning 不影响扫描主流程
+					h.syncStrmAfterUpdate(ctx, strmUpdates)
 				}
 			}
 
@@ -413,24 +461,26 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 				return nil, errors.New("文件处理失败")
 			}
 
-			// 只有成功创建的目录文件才需要继续遍历（ID > 0）
+			// 组装下一轮遍历：
+			// - 新创建的目录（Rev 初始不同，需要拉子级初始化）
+			// - Rev 变化或深度模式下 Rev 未变的已存在目录（见上面 filesToRecurse 收集逻辑）
 			createdDirFiles := lo.Filter(filesToCreate, func(item *models.VirtualFile, _ int) bool {
 				return item.IsDir && item.ID > 0
 			})
 
-			// 深度扫描时，已存在的目录文件也需要继续遍历
-			var existingDirFiles []*models.VirtualFile
-			if req.Deep {
-				existingDirFiles = lo.Filter(childrenFiles, func(item *models.VirtualFile, _ int) bool {
-					return item.IsDir && item.ID > 0
-				})
-			}
+			nextWalkFiles = append(nextWalkFiles, createdDirFiles...)
+			nextWalkFiles = append(nextWalkFiles, filesToRecurse...)
 
-			nextWalkFiles = append(createdDirFiles, existingDirFiles...)
-			nextWalkFiles = append(nextWalkFiles, filesToDeep...)
+			// 按 ID 去重，避免同一目录被加入两次造成双遍历
+			nextWalkFiles = lo.UniqBy(nextWalkFiles, func(item *models.VirtualFile) int64 {
+				return item.ID
+			})
 
 			if len(nextWalkFiles) > 0 {
-				ctx.Debug("继续执行下次遍历", zap.Int("next_walk_files_len", len(nextWalkFiles)))
+				ctx.Debug("继续执行下次遍历",
+					zap.Bool("deep", req.Deep),
+					zap.Int("next_walk_files_len", len(nextWalkFiles)),
+				)
 			}
 
 			return nextWalkFiles, nil
