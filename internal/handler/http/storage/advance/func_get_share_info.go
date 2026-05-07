@@ -78,6 +78,11 @@ func (h *handler) GetShareInfo() httpcontext.HandlerFunc {
 			return
 		}
 
+		if shareInfo == nil {
+			ctx.Fail(codeStorageAdvanceGetShareInfoError.WithMessage("未查询到分享信息"))
+			return
+		}
+
 		ctx.Success(shareInfo)
 	}
 }

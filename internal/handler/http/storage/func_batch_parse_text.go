@@ -38,7 +38,7 @@ func (h *handler) BatchParseFromText() httpcontext.HandlerFunc {
 		// 调用 Service 层进行解析 (核心逻辑在 Service 中)
 		result, err := h.mountPointService.BatchParseText(ctx.GetContext(), req)
 		if err != nil {
-			ctx.Error(err)
+			ctx.Fail(busCodeStorageQueryPathFailed.WithError(err))
 			return
 		}
 

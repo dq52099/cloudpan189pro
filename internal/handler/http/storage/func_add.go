@@ -114,6 +114,7 @@ func (h *handler) Add() httpcontext.HandlerFunc {
 			RefreshInterval:   req.RefreshInterval,
 			EnableDeepRefresh: req.EnableDeepRefresh,
 			CreatorUserID:     userID,
+			AllowExisting:     false,
 		})
 		if err != nil {
 			ctx.Fail(busCodeStorageAddMountPointFailed.WithError(err))

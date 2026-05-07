@@ -27,7 +27,14 @@ type CreateStorageRequest struct {
 	EnableDeepRefresh bool `json:"enableDeepRefresh"`
 
 	CreatorUserID int64 // 创建者用户ID
+
+	// AllowExisting 为 true 时，若目标路径已有挂载点/虚拟文件，直接返回其 ID；
+	// 否则返回 ErrPathAlreadyExists 让调用方感知。批量场景建议开启。
+	AllowExisting bool
 }
+
+// ErrPathAlreadyExists 路径已存在且未开启 AllowExisting 时返回。
+var ErrPathAlreadyExists = errors.New("路径已被挂载，无法重复创建")
 
 var (
 	errRequestNil         = errors.New("请求对象为空")
@@ -55,6 +62,10 @@ func (s *service) CreateStorage(ctx context.Context, req *CreateStorageRequest) 
 
 		return 0, err
 	} else if mp != nil {
+		if !req.AllowExisting {
+			ctx.Warn("挂载点路径已存在", zap.String("path", req.LocalPath), zap.Int64("exists_id", mp.ID))
+			return 0, ErrPathAlreadyExists
+		}
 		// 路径已存在，返回已存在的挂载点ID而不是报错
 		ctx.Info("挂载点路径已存在，返回已存在的记录", zap.String("path", req.LocalPath), zap.Int64("exists_id", mp.ID))
 		return mp.FileId, nil
@@ -65,6 +76,10 @@ func (s *service) CreateStorage(ctx context.Context, req *CreateStorageRequest) 
 			ctx.Error("查询虚拟文件路径失败", zap.Error(err), zap.String("path", req.LocalPath))
 
 			return 0, err
+		}
+		if !req.AllowExisting {
+			ctx.Warn("虚拟文件路径已存在", zap.String("path", req.LocalPath), zap.Int64("exists_id", vf.ID))
+			return 0, ErrPathAlreadyExists
 		}
 		// 虚拟文件已存在，返回其ID
 		ctx.Info("虚拟文件路径已存在，返回已存在的记录", zap.String("path", req.LocalPath), zap.Int64("exists_id", vf.ID))

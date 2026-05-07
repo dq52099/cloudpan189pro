@@ -15,7 +15,7 @@ import (
 )
 
 type batchAddRequest struct {
-	Items []addRequest `json:"items" binding:"required,min=1,dive"`
+	Items []addRequest `json:"items" binding:"required,min=1,max=500,dive"`
 }
 
 type batchAddResponse struct {
@@ -33,7 +33,7 @@ type addResponseItem struct {
 
 // BatchAdd 批量添加存储挂载
 // @Summary 批量添加存储挂载
-// @Description 批量添加存储挂载点，通过后台任务异步执行文件扫描
+// @Description 批量添加存储挂载点（上限 500 个），每个条目都会走和单条 /add 相同的校验
 // @Tags 存储管理
 // @Accept json
 // @Produce json
@@ -53,42 +53,32 @@ func (h *handler) BatchAdd() httpcontext.HandlerFunc {
 			return
 		}
 
-		if req.Items == nil || len(req.Items) == 0 {
+		if len(req.Items) == 0 {
 			ctx.Fail(busCodeStorageQueryPathFailed.WithError(fmt.Errorf("items不能为空")))
 			return
 		}
 
-		ctx.GetContext().Info("batch_add请求收到，快速返回", zap.Int("items", len(req.Items)))
+		ctx.GetContext().Info("batch_add请求收到", zap.Int("items", len(req.Items)))
+
+		// 获取当前用户ID
+		userID := ctx.GetInt64(consts.CtxKeyUserId)
 
 		results := make([]addResponseItem, 0, len(req.Items))
 		successIds := make([]int64, 0, len(req.Items))
 
-		for _, item := range req.Items {
-			result := addResponseItem{
-				LocalPath: item.LocalPath,
+		for i := range req.Items {
+			item := req.Items[i]
+			result := addResponseItem{LocalPath: item.LocalPath}
+
+			// 走和 Add 相同的校验链，而非简单拼 addition
+			addition, fileId, err := h.buildBatchAddAddition(ctx.GetContext(), &item)
+			if err != nil {
+				result.Error = err.Error()
+				results = append(results, result)
+				continue
 			}
 
-			addition := datatypes.JSONMap{}
-			fileId := item.FileId
-
-			switch item.OsType {
-			case protocolSubscribe:
-				addition[consts.FileAdditionKeyUpUserId] = item.SubscribeUser
-			case protocolSubscribeShare:
-				addition[consts.FileAdditionKeyUpUserId] = item.SubscribeUser
-				addition[consts.FileAdditionKeyShareId] = item.ShareCode
-				addition[consts.FileAdditionKeyIsFolder] = true
-			case protocolShare:
-				addition[consts.FileAdditionKeyShareId] = item.ShareCode
-				addition[consts.FileAdditionKeyAccessCode] = item.ShareAccessCode
-				addition[consts.FileAdditionKeyIsFolder] = true
-			case protocolPerson:
-				addition = datatypes.JSONMap{}
-			case protocolFamily:
-				addition[consts.FileAdditionKeyFamilyId] = item.FamilyId
-			}
-
-			id, err := h.storageFacadeService.CreateStorage(ctx.GetContext(), &storagefacadeSvi.CreateStorageRequest{
+			id, createErr := h.storageFacadeService.CreateStorage(ctx.GetContext(), &storagefacadeSvi.CreateStorageRequest{
 				LocalPath:         item.LocalPath,
 				OsType:            item.OsType,
 				CloudToken:        item.CloudToken,
@@ -98,9 +88,11 @@ func (h *handler) BatchAdd() httpcontext.HandlerFunc {
 				AutoRefreshDays:   item.AutoRefreshDays,
 				RefreshInterval:   item.RefreshInterval,
 				EnableDeepRefresh: item.EnableDeepRefresh,
+				CreatorUserID:     userID,
+				AllowExisting:     true, // 批量场景下允许幂等
 			})
-			if err != nil {
-				result.Error = err.Error()
+			if createErr != nil {
+				result.Error = createErr.Error()
 				results = append(results, result)
 				continue
 			}
@@ -121,6 +113,7 @@ func (h *handler) BatchAdd() httpcontext.HandlerFunc {
 			}
 		}
 
+		// 后台推送扫描任务
 		for _, id := range successIds {
 			mountPoint, err := h.mountPointService.Query(ctx.GetContext(), id)
 			if err != nil {
@@ -130,16 +123,23 @@ func (h *handler) BatchAdd() httpcontext.HandlerFunc {
 				FileId: id,
 				Deep:   true,
 			}
-			body, _ := json.Marshal(taskReq)
+			body, err := json.Marshal(taskReq)
+			if err != nil {
+				ctx.GetContext().Warn("序列化扫描任务失败", zap.Int64("id", id), zap.Error(err))
+				continue
+			}
 			bgCtx := context.NewContext(stdContext.Background())
 			fullPath := mountPoint.FullPath
 			if fullPath == "" {
 				fullPath = mountPoint.Name
 			}
-			_ = h.taskEngine.PushMessage(
+			if err := h.taskEngine.PushMessage(
 				bgCtx.WithValue(consts.CtxKeyFullPath, fullPath).
 					WithValue(consts.CtxKeyInvokeHandlerName, "批量挂载扫描"),
-				taskReq.Topic(), body)
+				taskReq.Topic(), body,
+			); err != nil {
+				ctx.GetContext().Warn("推送批量挂载扫描任务失败", zap.Int64("id", id), zap.Error(err))
+			}
 		}
 		ctx.GetContext().Info("批量挂载已推送扫描任务", zap.Int("count", len(successIds)))
 
@@ -148,5 +148,44 @@ func (h *handler) BatchAdd() httpcontext.HandlerFunc {
 			FailCount:    failCount,
 			Results:      results,
 		})
+	}
+}
+
+// buildBatchAddAddition 按 osType 走与 /add 接口相同的校验链。
+func (h *handler) buildBatchAddAddition(ctx context.Context, item *addRequest) (datatypes.JSONMap, string, error) {
+	fileId := item.FileId
+
+	switch item.OsType {
+	case protocolSubscribe:
+		addition, busErr := h.executeOsTypeSubscribe(ctx, item)
+		if busErr != nil {
+			return nil, "", fmt.Errorf("%s", busErr.GetMessage())
+		}
+		return addition, fileId, nil
+	case protocolSubscribeShare:
+		addition, resolvedFileId, busErr := h.executeOsTypeSubscribeShare(ctx, item)
+		if busErr != nil {
+			return nil, "", fmt.Errorf("%s", busErr.GetMessage())
+		}
+		return addition, resolvedFileId, nil
+	case protocolShare:
+		addition, resolvedFileId, busErr := h.executeOsTypeShare(ctx, item)
+		if busErr != nil {
+			return nil, "", fmt.Errorf("%s", busErr.GetMessage())
+		}
+		return addition, resolvedFileId, nil
+	case protocolPerson:
+		if busErr := h.executeOsTypePersonal(ctx, item); busErr != nil {
+			return nil, "", fmt.Errorf("%s", busErr.GetMessage())
+		}
+		return datatypes.JSONMap{}, fileId, nil
+	case protocolFamily:
+		addition, busErr := h.executeOsTypeFamily(ctx, item)
+		if busErr != nil {
+			return nil, "", fmt.Errorf("%s", busErr.GetMessage())
+		}
+		return addition, fileId, nil
+	default:
+		return nil, "", fmt.Errorf("不支持的挂载类型: %s", item.OsType)
 	}
 }
