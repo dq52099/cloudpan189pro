@@ -57,13 +57,17 @@ func (s *service) WriteStrm(ctx context.Context, car media.WriterCar, fid int64,
 		Path:      car.GetPath(),
 		Size:      size,
 		MediaType: media.TypeStrm,
-		// 考虑删除字段
+		// 保留 hash 字段以备后续校验用途
 		Hash: "-",
 	}
 
-	// 保存文件元数据
+	// 保存文件元数据；失败时回滚磁盘文件，避免孤儿
 	if err := s.getDB(ctx).Create(file).Error; err != nil {
-		ctx.Error("保存文件元数据失败", zap.Error(err))
+		ctx.Error("保存文件元数据失败，回滚磁盘文件", zap.Error(err), zap.String("path", fullPath))
+
+		if removeErr := os.Remove(fullPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			ctx.Warn("回滚 STRM 文件失败", zap.String("path", fullPath), zap.Error(removeErr))
+		}
 
 		return 0, err
 	}

@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	stdContext "context"
 	errors2 "errors"
 
 	"github.com/pkg/errors"
@@ -16,8 +17,6 @@ import (
 	mountpointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 	subscriptionSvi "github.com/xxcheng123/cloudpan189-share/internal/services/subscription"
 	userMountPointTokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/userMountPointToken"
-
-	stdContext "context"
 )
 
 type Scheduler interface {
@@ -29,10 +28,9 @@ var (
 	ErrSchedulerRunning = errors.New("scheduler is running")
 )
 
-func Start(svc bootstrap.ServiceContext) (func(), error) {
-	const (
-		handlerName = "scheduler"
-	)
+// Start 启动所有定时任务。ext 若非 nil，会复用其中已初始化的订阅服务。
+func Start(svc bootstrap.ServiceContext, ext *bootstrap.ExtensionServices) (func(), error) {
+	const handlerName = "scheduler"
 
 	var (
 		logger = svc.GetLogger(handlerName)
@@ -79,8 +77,13 @@ func Start(svc bootstrap.ServiceContext) (func(), error) {
 		errs = append(errs, err)
 	}
 
-	// 订阅定时任务（每日热门资源+AI质量分析）
-	subscriptionService := subscriptionSvi.NewService(svc.GetDBWithoutContext(), logger.Named("subscription"), nil)
+	// 订阅定时任务：优先使用 extension services 中已初始化的订阅服务（包含 TMDB/Douban/OpenAI 依赖）
+	var subscriptionService subscriptionSvi.Service
+	if ext != nil && ext.Subscription != nil {
+		subscriptionService = ext.Subscription
+	} else {
+		subscriptionService = subscriptionSvi.NewService(svc.GetDBWithoutContext(), logger.Named("subscription"), nil)
+	}
 	subscriptionScheduler := NewSubscriptionScheduler(subscriptionService)
 	if err := subscriptionScheduler.Start(ctx); err != nil {
 		errs = append(errs, err)
@@ -92,6 +95,7 @@ func Start(svc bootstrap.ServiceContext) (func(), error) {
 		autoIngestRefreshScheduler,
 		refreshCloudTokenScheduler,
 		rebuildStrmScheduler,
+		subscriptionScheduler,
 	}
 
 	return closeBar(schedulers), errors2.Join(errs...)

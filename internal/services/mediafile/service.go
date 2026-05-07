@@ -5,6 +5,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/media"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 	"os"
 )
@@ -40,8 +41,17 @@ func (s *service) getDB(ctx context.Context) *gorm.DB {
 }
 
 func (s *service) DeleteStrmByFullPath(ctx context.Context, fullPath string) error {
+	// 清理磁盘文件
 	if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
 		return err
 	}
+
+	// 同步清理 DB 记录，避免数据-磁盘不一致
+	// path 字段存的是相对路径，这里提取 root 之下的相对路径较复杂，
+	// 保守按 fullPath 作为 suffix 匹配删除。
+	if err := s.getDB(ctx).Where("? LIKE '%' || path", fullPath).Delete(new(models.MediaFile)).Error; err != nil {
+		ctx.Warn("清理 STRM DB 记录失败（磁盘已删除）", zap.String("path", fullPath), zap.Error(err))
+	}
+
 	return nil
 }

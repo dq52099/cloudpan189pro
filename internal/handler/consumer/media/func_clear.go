@@ -1,6 +1,7 @@
 package media
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/taskcontext"
@@ -11,13 +12,20 @@ import (
 func (h *handler) Clear() taskcontext.HandlerFunc {
 	return func(ctx *taskcontext.Context) error {
 		logger := ctx.GetContext().Logger
+
+		if shared.MediaConfig == nil {
+			logger.Warn("媒体功能未配置，跳过清理")
+
+			return nil
+		}
+
 		storagePath := shared.MediaConfig.StoragePath
 
 		// 基本验证
 		if strings.TrimSpace(storagePath) == "" {
 			logger.Error("媒体存储路径为空，无法执行清理操作")
 
-			return h.mediaFileService.Clear(ctx.GetContext(), storagePath)
+			return fmt.Errorf("媒体存储路径为空")
 		}
 
 		logger.Info("开始清理媒体文件", zap.String("storage_path", storagePath))
