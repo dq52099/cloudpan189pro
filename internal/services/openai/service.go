@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -122,7 +123,7 @@ func (s *service) GenerateUpgradeKeyword(title, category string) (string, error)
 		return "", err
 	}
 
-	apiURL := fmt.Sprintf("%s/v1/chat/completions", s.config.BaseURL)
+	apiURL := buildOpenAIURL(s.config.BaseURL, "/chat/completions")
 	reqHTTP, err := http.NewRequestWithContext(context.Background(), "POST", apiURL, bytes.NewReader(jsonBody))
 	if err != nil {
 		return "", err
@@ -138,7 +139,8 @@ func (s *service) GenerateUpgradeKeyword(title, category string) (string, error)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("OpenAI API returned status: %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("OpenAI API returned status: %d, body: %s", resp.StatusCode, string(body))
 	}
 
 	var result ChatResponse
@@ -156,4 +158,20 @@ func (s *service) GenerateUpgradeKeyword(title, category string) (string, error)
 	s.logger.Info("Generated upgrade keyword", zap.String("title", title), zap.String("keyword", keyword))
 
 	return keyword, nil
+}
+
+// buildOpenAIURL 构造 OpenAI 兼容接口 URL。
+// 若 base 已包含 /v1 前缀，则直接拼接 path，否则插入 /v1，
+// 以兼容 https://api.openai.com 与 https://proxy.example.com/v1 两种形式。
+func buildOpenAIURL(base, path string) string {
+	base = strings.TrimRight(base, "/")
+	if base == "" {
+		base = "https://api.openai.com"
+	}
+
+	if strings.HasSuffix(base, "/v1") {
+		return base + path
+	}
+
+	return base + "/v1" + path
 }

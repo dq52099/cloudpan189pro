@@ -155,17 +155,17 @@ func TestMatchResult(t *testing.T) {
 		Enable:    true,
 	}
 
-	result, err := svc.MatchAndMount(sub, "测试电影", "2024", "movie")
-	if err != nil {
-		t.Fatalf("MatchAndMount failed: %v", err)
+	result, err := svc.MatchAndMount(sub, SearchResult{}, "测试电影", "2024", "movie")
+	if err == nil {
+		t.Fatal("Expected MatchAndMount to fail without ShareURL, got success")
 	}
 
-	if !result.Success {
-		t.Fatal("Expected match result to be successful")
+	if result == nil {
+		t.Fatal("Expected match result to be non-nil")
 	}
 
-	if result.STrmPath != "/test/测试电影.strm" {
-		t.Fatalf("Expected STRM path '/test/测试电影.strm', got '%s'", result.STrmPath)
+	if result.Success {
+		t.Fatal("Expected match result to be unsuccessful for empty SearchResult")
 	}
 }
 
@@ -191,11 +191,8 @@ func TestGetMatchHistory(t *testing.T) {
 		t.Fatalf("Failed to create subscription: %v", err)
 	}
 
-	// 创建匹配历史
-	_, err = svc.MatchAndMount(sub, "测试电影", "2024", "movie")
-	if err != nil {
-		t.Fatalf("MatchAndMount failed: %v", err)
-	}
+	// 创建匹配历史（即使失败也会写入失败记录）
+	_, _ = svc.MatchAndMount(sub, SearchResult{}, "测试电影", "2024", "movie")
 
 	// 获取匹配历史
 	history, err := svc.GetMatchHistory(sub.ID)

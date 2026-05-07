@@ -1,8 +1,8 @@
 package subscription
 
 import (
-	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	"github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/douban"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/storagefacade"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/tmdb"
@@ -22,34 +23,44 @@ import (
 	"gorm.io/gorm"
 )
 
+var shareCodeRegex = regexp.MustCompile(`/t/([a-zA-Z0-9]+)`)
+
 type Handler struct {
 	db                   *gorm.DB
 	tmdb                 tmdb.Service
 	douban               douban.Service
 	logger               *zap.Logger
 	storageFacadeService storagefacade.Service
+	cloudBridgeService   cloudbridge.Service
+	httpClient           *http.Client
 	openaiSvc            interface {
 		GenerateUpgradeKeyword(title, category string) (string, error)
 	}
 	tmdbAPIKey string
 }
 
-func NewHandler(db *gorm.DB, tmdbSvc tmdb.Service, doubanSvc douban.Service, storageSvc storagefacade.Service, logger *zap.Logger, openaiSvc interface {
+func NewHandler(db *gorm.DB, tmdbSvc tmdb.Service, doubanSvc douban.Service, storageSvc storagefacade.Service, cloudBridgeSvc cloudbridge.Service, logger *zap.Logger, openaiSvc interface {
 	GenerateUpgradeKeyword(title, category string) (string, error)
 }) *Handler {
-	db.AutoMigrate(&Setting{})
+	if err := db.AutoMigrate(&Setting{}); err != nil {
+		logger.Error("自动迁移订阅 Setting 失败", zap.Error(err))
+	}
 
 	logger.Info("Creating subscription handler", zap.Any("storageSvc", storageSvc != nil))
 
 	var tmdbAPIKey string
-	cfg := tmdbSvc.GetConfig()
-	if cfg != nil {
-		tmdbAPIKey = cfg.APIKey
+	if tmdbSvc != nil {
+		cfg := tmdbSvc.GetConfig()
+		if cfg != nil {
+			tmdbAPIKey = cfg.APIKey
+		}
 	}
 
 	var setting Setting
 	if err := db.Where("name = ?", "subscription_config").First(&setting).Error; err == nil && setting.Value.TMDBAPIKey != "" {
-		tmdbSvc.SetAPIKey(setting.Value.TMDBAPIKey)
+		if tmdbSvc != nil {
+			tmdbSvc.SetAPIKey(setting.Value.TMDBAPIKey)
+		}
 		tmdbAPIKey = setting.Value.TMDBAPIKey
 	}
 
@@ -58,7 +69,9 @@ func NewHandler(db *gorm.DB, tmdbSvc tmdb.Service, doubanSvc douban.Service, sto
 		tmdb:                 tmdbSvc,
 		douban:               doubanSvc,
 		storageFacadeService: storageSvc,
+		cloudBridgeService:   cloudBridgeSvc,
 		logger:               logger,
+		httpClient:           &http.Client{Timeout: 120 * time.Second},
 		openaiSvc:            openaiSvc,
 		tmdbAPIKey:           tmdbAPIKey,
 	}
@@ -76,14 +89,16 @@ type customBusinessError struct {
 	httpCode     int
 	businessCode int
 	message      string
+	cause        error
 }
 
 func (e *customBusinessError) GetHTTPCode() int   { return e.httpCode }
 func (e *customBusinessError) GetCode() int       { return e.businessCode }
 func (e *customBusinessError) GetMessage() string { return e.message }
-func (e *customBusinessError) GetError() error    { return nil }
+func (e *customBusinessError) GetError() error    { return e.cause }
 func (e *customBusinessError) Error() string      { return e.message }
 func (e *customBusinessError) WithError(err error) httpcontext.BusinessError {
+	e.cause = err
 	return e
 }
 func (e *customBusinessError) WithHTTPCode(code int) httpcontext.BusinessError {
@@ -259,6 +274,11 @@ var tmdbCategoryGenreMap = map[string]struct {
 
 func (h *Handler) GetTMDbMovies() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
+		if h.tmdb == nil {
+			c.Fail(invalidParams(fmt.Errorf("TMDB 服务未初始化，请检查配置")))
+			return
+		}
+
 		category := c.DefaultQuery("category", "movie_popular")
 		h.logger.Info("[热门数据加载] 正在获取TMDB热门数据", zap.String("category", category))
 
@@ -338,6 +358,11 @@ func (h *Handler) GetTMDbMovies() httpcontext.HandlerFunc {
 
 func (h *Handler) GetTMDbTVs() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
+		if h.tmdb == nil {
+			c.Fail(invalidParams(fmt.Errorf("TMDB 服务未初始化，请检查配置")))
+			return
+		}
+
 		category := c.DefaultQuery("category", "tv_popular")
 		h.logger.Info("[热门数据加载] 正在获取TMDB热门电视剧", zap.String("category", category))
 
@@ -379,6 +404,11 @@ func (h *Handler) GetTMDbTVs() httpcontext.HandlerFunc {
 
 func (h *Handler) GetDoubanMovies() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
+		if h.douban == nil {
+			c.Fail(invalidParams(fmt.Errorf("豆瓣服务未初始化，请检查配置")))
+			return
+		}
+
 		tag := c.DefaultQuery("category", "热门")
 		h.logger.Info("[热门数据加载] 正在获取豆瓣热门数据", zap.String("category", tag))
 
@@ -441,7 +471,7 @@ func (h *Handler) GetConfig() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		var setting Setting
 		result := h.db.Where("name = ?", "subscription_config").First(&setting)
-		if result.Error != nil && result.Error.Error() != "record not found" {
+		if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			c.Fail(invalidParams(result.Error))
 			return
 		}
@@ -524,7 +554,7 @@ func (h *Handler) UpdateConfig() httpcontext.HandlerFunc {
 
 		var setting Setting
 		result := h.db.Where("name = ?", "subscription_config").First(&setting)
-		if result.Error != nil && result.Error.Error() != "record not found" {
+		if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			c.Fail(invalidParams(result.Error))
 			return
 		}
@@ -599,13 +629,7 @@ func (h *Handler) SearchPan() httpcontext.HandlerFunc {
 
 		h.logger.Info("Searching pan", zap.String("url", searchURL))
 
-		postData := map[string]interface{}{
-			"kw":          keyword,
-			"cloud_types": []string{"tianyi"},
-		}
-		postJSON, _ := json.Marshal(postData)
-
-		req, err := http.NewRequestWithContext(c.Request.Context(), "POST", searchURL, bytes.NewReader(postJSON))
+		req, err := http.NewRequestWithContext(c.Request.Context(), "GET", searchURL, nil)
 		if err != nil {
 			c.Fail(invalidParams(fmt.Errorf("请求失败: %w", err)))
 			return
@@ -615,15 +639,16 @@ func (h *Handler) SearchPan() httpcontext.HandlerFunc {
 		req.Header.Set("Accept", "application/json, text/plain, */*")
 		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
 		req.Header.Set("Referer", "https://so.252035.xyz/")
-		req.Header.Set("Content-Type", "application/json")
-
-		client := &http.Client{Timeout: 120 * time.Second}
 
 		// 使用代理（如果配置了）
+		client := h.httpClient
 		proxyURL := os.Getenv("TG_PROXY")
 		if proxyURL != "" {
 			if proxyURL_, err := url.Parse(proxyURL); err == nil {
-				client.Transport = &http.Transport{Proxy: http.ProxyURL(proxyURL_)}
+				client = &http.Client{
+					Timeout:   h.httpClient.Timeout,
+					Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL_)},
+				}
 				h.logger.Info("Using proxy for pan search", zap.String("proxy", proxyURL))
 			}
 		}
@@ -638,16 +663,22 @@ func (h *Handler) SearchPan() httpcontext.HandlerFunc {
 			}
 			return
 		}
+		defer resp.Body.Close()
 
-		bodyBytes, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		// 限制响应体最大 5MB，避免异常大返回耗尽内存
+		const maxResponseSize = 5 << 20
+		bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))
 		if err != nil {
 			h.logger.Error("Failed to read response body", zap.Error(err))
 			c.Fail(invalidParams(fmt.Errorf("读取响应失败: %v", err)))
 			return
 		}
+		if len(bodyBytes) > maxResponseSize {
+			c.Fail(invalidParams(fmt.Errorf("盘搜返回体过大，已拒绝")))
+			return
+		}
 
-		h.logger.Info("Response", zap.Int("status", resp.StatusCode), zap.Int("body_len", len(bodyBytes)), zap.String("body", string(bodyBytes)))
+		h.logger.Info("Pan search response", zap.Int("status", resp.StatusCode), zap.Int("body_len", len(bodyBytes)))
 
 		if resp.StatusCode != http.StatusOK {
 			h.logger.Warn("Pan search returned non-OK status", zap.Int("status", resp.StatusCode), zap.String("url", searchURL))
@@ -686,8 +717,7 @@ func (h *Handler) SearchPan() httpcontext.HandlerFunc {
 		var results []SearchResult
 		if tianyiData, ok := result.Data.MergedByType["tianyi"]; ok {
 			for _, item := range tianyiData {
-				re := regexp.MustCompile(`/t/([a-zA-Z0-9]+)`)
-				matches := re.FindStringSubmatch(item.URL)
+				matches := shareCodeRegex.FindStringSubmatch(item.URL)
 				shareCode := ""
 				if len(matches) > 1 {
 					shareCode = matches[1]
@@ -728,8 +758,7 @@ func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 
 		shareCode := req.ShareCode
 		if shareCode == "" {
-			re := regexp.MustCompile(`/t/([a-zA-Z0-9]+)`)
-			matches := re.FindStringSubmatch(req.ShareURL)
+			matches := shareCodeRegex.FindStringSubmatch(req.ShareURL)
 			if len(matches) >= 2 {
 				shareCode = matches[1]
 			}
@@ -741,6 +770,14 @@ func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 		}
 
 		defaultMountPath := "/热门订阅"
+		// 从 settings 中读取用户自定义默认挂载路径
+		var cfgSetting Setting
+		if err := h.db.Where("name = ?", "subscription_config").First(&cfgSetting).Error; err == nil {
+			if cfgSetting.Value.DefaultMountPath != "" {
+				defaultMountPath = cfgSetting.Value.DefaultMountPath
+			}
+		}
+
 		mountPath := req.MountPath
 		if mountPath == "" {
 			mountPath = defaultMountPath + "/" + req.Title
@@ -753,46 +790,23 @@ func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 
 		ctx := c.GetContext()
 
-		shareInfoURL := fmt.Sprintf("http://127.0.0.1:12395/api/storage/advance/share_info?shareCode=%s", shareCode)
-		shareReq, err := http.NewRequest("GET", shareInfoURL, nil)
+		if h.cloudBridgeService == nil {
+			c.Fail(invalidParams(fmt.Errorf("cloud bridge service is nil, please restart the application")))
+			return
+		}
+
+		shareInfo, err := h.cloudBridgeService.GetShareInfo(ctx, shareCode, "")
 		if err != nil {
 			c.Fail(invalidParams(fmt.Errorf("获取分享信息失败: %v", err)))
-			return
-		}
-		httpClient := &http.Client{Timeout: 30 * time.Second}
-		shareResp, err := httpClient.Do(shareReq)
-		if err != nil {
-			c.Fail(invalidParams(fmt.Errorf("获取分享信息失败: %v", err)))
-			return
-		}
-		defer shareResp.Body.Close()
-
-		type ShareInfoResp struct {
-			Code int `json:"code"`
-			Data struct {
-				ID       string `json:"id"`
-				ShareID  int64  `json:"shareId"`
-				Name     string `json:"name"`
-				IsFolder bool   `json:"isFolder"`
-			} `json:"data"`
-		}
-
-		var shareInfo ShareInfoResp
-		if err := json.NewDecoder(shareResp.Body).Decode(&shareInfo); err != nil {
-			c.Fail(invalidParams(fmt.Errorf("解析分享信息失败: %v", err)))
-			return
-		}
-
-		if shareInfo.Code != 200 {
-			c.Fail(invalidParams(fmt.Errorf("分享信息获取失败，code: %d", shareInfo.Code)))
 			return
 		}
 
 		storageReq := &storagefacade.CreateStorageRequest{
-			LocalPath:  mountPath,
-			OsType:     "subscribe_share_folder",
-			CloudToken: 0,
-			FileId:     shareInfo.Data.ID,
+			LocalPath:     mountPath,
+			OsType:        "subscribe_share_folder",
+			CloudToken:    0,
+			FileId:        shareInfo.ID,
+			AllowExisting: true,
 		}
 		id, err := h.storageFacadeService.CreateStorage(ctx, storageReq)
 		if err != nil {
@@ -806,7 +820,7 @@ func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 			"shareURL":  req.ShareURL,
 			"shareCode": shareCode,
 			"fileId":    id,
-			"name":      shareInfo.Data.Name,
+			"name":      shareInfo.Name,
 		})
 	}
 }
@@ -846,8 +860,7 @@ func (h *Handler) SearchPanWithAI() httpcontext.HandlerFunc {
 		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
 		req.Header.Set("Referer", "https://so.252035.xyz/")
 
-		client := &http.Client{Timeout: 120 * time.Second}
-		resp, err := client.Do(req)
+		resp, err := h.httpClient.Do(req)
 		if err != nil {
 			h.logger.Error("Pan search request failed", zap.Error(err))
 			if strings.Contains(err.Error(), "context canceled") {
@@ -900,9 +913,8 @@ func (h *Handler) SearchPanWithAI() httpcontext.HandlerFunc {
 
 		var results []SearchResult
 		if tianyiData, ok := searchResult.Data.MergedByType["tianyi"]; ok {
-			re := regexp.MustCompile(`/t/([a-zA-Z0-9]+)`)
 			for _, item := range tianyiData {
-				matches := re.FindStringSubmatch(item.URL)
+				matches := shareCodeRegex.FindStringSubmatch(item.URL)
 				shareCode := ""
 				if len(matches) > 1 {
 					shareCode = matches[1]
@@ -951,7 +963,8 @@ func (h *Handler) SearchPanWithAI() httpcontext.HandlerFunc {
 				score += 50
 			}
 
-			if strings.Contains(name, "4k") || strings.Contains(name, "4K") {
+			// 名字已经转小写，只匹配小写关键字
+			if strings.Contains(name, "4k") {
 				score += 20
 			}
 			if strings.Contains(name, "2160p") {

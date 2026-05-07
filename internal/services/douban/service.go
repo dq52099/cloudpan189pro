@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -120,6 +122,22 @@ func (s *service) GetMoviesByTag(tag string) ([]Subject, error) {
 	return result.Items, nil
 }
 
+// top250ItemRegex 解析豆瓣 Top250 页面的条目块。
+// 页面每部电影以 <li> 内 <div class="item"> 包裹，包含：
+//   - <div class="pic"><em class="">rank</em><a href="subjectURL"><img src="cover" alt="title"/>
+//   - <div class="info">...<span class="title">Title</span>...<span class="rating_num">9.7</span>
+//   - <div class="bd"><p class="">Director / Year-country</p></div>
+var (
+	top250ItemRegex   = regexp.MustCompile(`(?s)<div class="item">(.*?)</li>`)
+	top250IDRegex     = regexp.MustCompile(`/subject/(\d+)/`)
+	top250URLRegex    = regexp.MustCompile(`<a href="([^"]+)"[^>]*>\s*<img`)
+	top250CoverRegex  = regexp.MustCompile(`<img[^>]+src="([^"]+)"`)
+	top250TitleRegex  = regexp.MustCompile(`<span class="title">([^<]+)</span>`)
+	top250RatingRegex = regexp.MustCompile(`<span class="rating_num"[^>]*>([\d.]+)</span>`)
+	top250YearRegex   = regexp.MustCompile(`(\d{4})`)
+	top250InfoRegex   = regexp.MustCompile(`(?s)<div class="bd">\s*<p[^>]*>(.*?)</p>`)
+)
+
 func (s *service) GetTop250(start, count int) ([]Subject, error) {
 	apiURL := fmt.Sprintf("https://movie.douban.com/top250?start=%d&filter=", start)
 
@@ -141,11 +159,64 @@ func (s *service) GetTop250(start, count int) ([]Subject, error) {
 		return nil, fmt.Errorf("Douban API returned status: %d", resp.StatusCode)
 	}
 
-	// 豆瓣 Top250 返回 HTML，需要解析
-	// 这里简化为返回空列表，实际应该解析 HTML
-	s.logger.Warn("Douban Top250 HTML parsing not implemented, returning empty list")
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取豆瓣响应失败: %w", err)
+	}
 
-	return []Subject{}, nil
+	subjects := parseDoubanTop250HTML(string(body))
+	if count > 0 && len(subjects) > count {
+		subjects = subjects[:count]
+	}
+
+	return subjects, nil
+}
+
+// parseDoubanTop250HTML 通过正则解析 Top250 HTML。
+// 豆瓣页面结构长期稳定，对 HTML 解析来说正则足以覆盖，且无需额外依赖。
+func parseDoubanTop250HTML(body string) []Subject {
+	items := top250ItemRegex.FindAllStringSubmatch(body, -1)
+	subjects := make([]Subject, 0, len(items))
+
+	for _, m := range items {
+		if len(m) < 2 {
+			continue
+		}
+
+		block := m[1]
+		subject := Subject{Type: "movie"}
+
+		if urlMatches := top250URLRegex.FindStringSubmatch(block); len(urlMatches) > 1 {
+			subject.URL = urlMatches[1]
+		}
+		if idMatches := top250IDRegex.FindStringSubmatch(block); len(idMatches) > 1 {
+			subject.ID = idMatches[1]
+		}
+		if coverMatches := top250CoverRegex.FindStringSubmatch(block); len(coverMatches) > 1 {
+			subject.Cover = coverMatches[1]
+		}
+		if titleMatches := top250TitleRegex.FindStringSubmatch(block); len(titleMatches) > 1 {
+			subject.Title = strings.TrimSpace(titleMatches[1])
+		}
+		if ratingMatches := top250RatingRegex.FindStringSubmatch(block); len(ratingMatches) > 1 {
+			if rating, err := strconv.ParseFloat(ratingMatches[1], 64); err == nil {
+				subject.Rating = rating
+			}
+		}
+		if infoMatches := top250InfoRegex.FindStringSubmatch(block); len(infoMatches) > 1 {
+			if yearMatches := top250YearRegex.FindStringSubmatch(infoMatches[1]); len(yearMatches) > 1 {
+				subject.Year = yearMatches[1]
+			}
+		}
+
+		if subject.Title == "" {
+			continue
+		}
+
+		subjects = append(subjects, subject)
+	}
+
+	return subjects
 }
 
 func (s *service) GetPlaying() ([]Subject, error) {
