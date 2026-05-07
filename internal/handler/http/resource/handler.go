@@ -13,6 +13,7 @@ import (
 	mountpointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 	userSvi "github.com/xxcheng123/cloudpan189-share/internal/services/user"
 	usergroupSvi "github.com/xxcheng123/cloudpan189-share/internal/services/usergroup"
+	"github.com/xxcheng123/cloudpan189-share/internal/types/media"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -43,6 +44,7 @@ func NewHandler(
 	cloudTokenService cloudtokenSvi.Service,
 	mediaConfigService mediaconfigSvi.Service,
 	mediaFileService mediafileSvi.Service,
+	loginLogService loginlogSvi.Service,
 	taskEngine taskengine.TaskEngine,
 ) Handler {
 	return &handler{
@@ -54,6 +56,7 @@ func NewHandler(
 		cloudTokenService:  cloudTokenService,
 		mediaConfigService: mediaConfigService,
 		mediaFileService:   mediaFileService,
+		loginLogService:    loginLogService,
 		taskEngine:         taskEngine,
 	}
 }
@@ -96,41 +99,85 @@ type SummaryResponse struct {
 	} `json:"tasks"`
 }
 
+// countWithLog 统计记录数，失败时记录日志但不中断（资源概览允许部分失败）。
+func (h *handler) countWithLog(model interface{}, where string, args []interface{}, label string) int64 {
+	var count int64
+	q := h.db.Model(model)
+	if where != "" {
+		q = q.Where(where, args...)
+	}
+	if err := q.Count(&count).Error; err != nil {
+		h.logger.Warn("资源概览统计失败", zap.String("label", label), zap.Error(err))
+		return 0
+	}
+	return count
+}
+
 func (h *handler) Summary() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
 		resp := &SummaryResponse{}
 
-		h.db.Model(&models.User{}).Count(&resp.Users.Total)
-		h.db.Model(&models.User{}).Where("status = ?", 1).Count(&resp.Users.Active)
-		h.db.Model(&models.User{}).Where("status = ?", 0).Count(&resp.Users.Disabled)
+		// 用户统计
+		resp.Users.Total = h.countWithLog(&models.User{}, "", nil, "users_total")
+		resp.Users.Active = h.countWithLog(&models.User{}, "status = ?", []interface{}{1}, "users_active")
+		resp.Users.Disabled = h.countWithLog(&models.User{}, "status = ?", []interface{}{0}, "users_disabled")
 
-		h.db.Model(&models.UserGroup{}).Count(&resp.UserGroups)
+		resp.UserGroups = h.countWithLog(&models.UserGroup{}, "", nil, "user_groups")
 
-		h.db.Model(&models.MountPoint{}).Count(&resp.MountPoints.Total)
+		// 挂载点：MountPoint 模型没有 enable 字段，Enabled 等同于 Total
+		resp.MountPoints.Total = h.countWithLog(&models.MountPoint{}, "", nil, "mount_points_total")
 		resp.MountPoints.Enabled = resp.MountPoints.Total
-		h.db.Model(&models.MountPoint{}).Where("enable_auto_refresh = ?", true).Count(&resp.MountPoints.AutoRefresh)
+		resp.MountPoints.AutoRefresh = h.countWithLog(&models.MountPoint{}, "enable_auto_refresh = ?", []interface{}{true}, "mount_points_auto_refresh")
 
-		h.db.Model(&models.CloudToken{}).Count(&resp.CloudTokens.Total)
-		h.db.Model(&models.CloudToken{}).Where("status = ?", 1).Count(&resp.CloudTokens.Active)
+		// 云盘令牌
+		resp.CloudTokens.Total = h.countWithLog(&models.CloudToken{}, "", nil, "cloud_tokens_total")
+		resp.CloudTokens.Active = h.countWithLog(&models.CloudToken{}, "status = ?", []interface{}{1}, "cloud_tokens_active")
 
-		h.db.Model(&models.VirtualFile{}).Where("is_dir = ?", true).Count(&resp.VirtualFiles.Folders)
-		h.db.Model(&models.VirtualFile{}).Where("is_dir = ?", false).Count(&resp.VirtualFiles.Files)
-		h.db.Model(&models.MountPoint{}).Where("os_type = ?", "subscribe_share_folder").Count(&resp.SubscribeShares)
+		// 虚拟文件
+		resp.VirtualFiles.Folders = h.countWithLog(&models.VirtualFile{}, "is_dir = ?", []interface{}{true}, "virtual_files_folders")
+		resp.VirtualFiles.Files = h.countWithLog(&models.VirtualFile{}, "is_dir = ?", []interface{}{false}, "virtual_files_files")
 
+		// 订阅分享：统计所有订阅类型挂载点
+		resp.SubscribeShares = h.countWithLog(
+			&models.MountPoint{},
+			"os_type IN ?",
+			[]interface{}{[]string{
+				string(models.OsTypeSubscribe),
+				string(models.OsTypeSubscribeShareFolder),
+				string(models.OsTypeSubscribeShareFile),
+			}},
+			"subscribe_shares",
+		)
+
+		// 媒体
 		if h.mediaConfigService != nil {
 			config, err := h.mediaConfigService.Query(ctx.GetContext())
-			if err == nil && config != nil {
+			if err != nil {
+				h.logger.Warn("查询媒体配置失败", zap.Error(err))
+			} else if config != nil {
 				resp.Media.Enabled = config.Enable
 				if config.Enable {
-					h.db.Model(&models.MediaFile{}).Where("media_type = ?", "strm").Count(&resp.Media.StrmFiles)
-					h.db.Model(&models.MediaFile{}).Count(&resp.Media.MediaFiles)
+					resp.Media.StrmFiles = h.countWithLog(
+						&models.MediaFile{},
+						"media_type = ?",
+						[]interface{}{string(media.TypeStrm)},
+						"media_strm",
+					)
+					resp.Media.MediaFiles = h.countWithLog(&models.MediaFile{}, "", nil, "media_total")
 				}
 			}
 		}
 
-		h.db.Model(&models.AutoIngestPlan{}).Count(&resp.AutoIngest.Plans)
-		h.db.Model(&models.AutoIngestLog{}).Where("created_at > ?", time.Now().AddDate(0, 0, -1)).Count(&resp.AutoIngest.Logs24h)
+		// 自动入库
+		resp.AutoIngest.Plans = h.countWithLog(&models.AutoIngestPlan{}, "", nil, "auto_ingest_plans")
+		resp.AutoIngest.Logs24h = h.countWithLog(
+			&models.AutoIngestLog{},
+			"created_at > ?",
+			[]interface{}{time.Now().AddDate(0, 0, -1)},
+			"auto_ingest_logs_24h",
+		)
 
+		// 任务引擎状态
 		if h.taskEngine != nil {
 			stats := h.taskEngine.GetStats()
 			resp.Tasks.Pending = stats.PendingTasks

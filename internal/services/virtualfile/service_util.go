@@ -1,6 +1,7 @@
 package virtualfile
 
 import (
+	"fmt"
 	"path"
 
 	"github.com/pkg/errors"
@@ -10,6 +11,8 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
+
+const maxPathDepth = 100
 
 func (s *service) GetMaxId(ctx context.Context) (maxId int64, err error) {
 	if err = s.getDB(ctx).Model(new(models.VirtualFile)).
@@ -23,6 +26,14 @@ func (s *service) GetMaxId(ctx context.Context) (maxId int64, err error) {
 
 // CalFullPath 获取完整路径
 func (s *service) CalFullPath(ctx context.Context, id int64) (string, error) {
+	return s.calFullPathWithDepth(ctx, id, 0)
+}
+
+func (s *service) calFullPathWithDepth(ctx context.Context, id int64, depth int) (string, error) {
+	if depth > maxPathDepth {
+		return "", fmt.Errorf("路径深度超过限制 %d，可能存在循环引用", maxPathDepth)
+	}
+
 	if id == 0 {
 		return "/", nil
 	}
@@ -30,7 +41,7 @@ func (s *service) CalFullPath(ctx context.Context, id int64) (string, error) {
 	if m, err := s.Query(ctx, id); err != nil {
 		return "", err
 	} else {
-		parent, err := s.CalFullPath(ctx, m.ParentId)
+		parent, err := s.calFullPathWithDepth(ctx, m.ParentId, depth+1)
 		if err != nil {
 			return "", err
 		}

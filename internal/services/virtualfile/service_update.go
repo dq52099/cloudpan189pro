@@ -36,7 +36,16 @@ func (s *service) ModifyAddition(ctx context.Context, id int64, key string, valu
 	ctx.Debug("修改文件附加信息", zap.Int64("file_id", id), zap.String("key", key))
 
 	return s.withLock(ctx, func(db *gorm.DB) *gorm.DB {
-		return db.Where("id = ?", id).Update("addition", gorm.Expr("JSON_SET(addition, ?, ?)", "$."+key, value))
+		path := "$." + key
+		var expr interface{}
+		switch db.Dialector.Name() {
+		case "postgres":
+			expr = gorm.Expr("jsonb_set(addition, ?, ?::jsonb)", path, value)
+		default:
+			expr = gorm.Expr("JSON_SET(addition, ?, ?)", path, value)
+		}
+
+		return db.Where("id = ?", id).Update("addition", expr)
 	}).Error
 }
 

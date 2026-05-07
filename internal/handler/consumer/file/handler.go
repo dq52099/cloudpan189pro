@@ -155,8 +155,8 @@ func (h *handler) walkFile(ctx context.Context, rootId int64, walkFunc walkFunc)
 						time.Sleep(10 * time.Millisecond)
 					}()
 
-					if err = h.walkFile(ctx, file.ID, walkFunc); err != nil {
-						errorChan <- err
+					if walkErr := h.walkFile(ctx, file.ID, walkFunc); walkErr != nil {
+						errorChan <- walkErr
 					}
 				}(nextFile)
 			}
