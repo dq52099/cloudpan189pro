@@ -23,8 +23,22 @@ import (
 )
 
 const (
-	retryDelayBase = 100 * time.Millisecond
+	retryDelayBase            = 100 * time.Millisecond
+	maxConcurrentItems        = 32
+	maxPendingItemsPerRefresh = 1000
 )
+
+// isDuplicateEntryError 判断错误是否为"唯一约束冲突"。
+// 兼容 SQLite / MySQL / PostgreSQL 的不同错误文本。
+func isDuplicateEntryError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "UNIQUE constraint failed") ||
+		strings.Contains(msg, "Duplicate entry") ||
+		strings.Contains(msg, "duplicate key value violates unique constraint")
+}
 
 func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 	return func(ctx *taskcontext.Context) error {
@@ -57,6 +71,13 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 		if concurrentCount <= 0 {
 			concurrentCount = 4
 		}
+		if concurrentCount > maxConcurrentItems {
+			logger.Warn("订阅并发数超过上限，已截断",
+				zap.Int("requested", concurrentCount),
+				zap.Int("max", maxConcurrentItems),
+			)
+			concurrentCount = maxConcurrentItems
+		}
 		maxRetryCount := plan.MaxRetryCount
 		if maxRetryCount <= 0 {
 			maxRetryCount = 3
@@ -71,12 +92,25 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 		}
 
 		addition := new(models.AutoIngestPlanSubscribeAddition)
-		_ = plan.Addition.Unmarshal(addition)
+		if err := plan.Addition.Unmarshal(addition); err != nil {
+			logger.Error("解析订阅附加信息失败", zap.Error(err), zap.Int64("plan_id", plan.ID))
+			return err
+		}
+		if addition.UpUserId == "" {
+			logger.Error("订阅附加信息缺少 UpUserId", zap.Int64("plan_id", plan.ID))
+			return errors.New("订阅计划缺少 UpUserId")
+		}
 
 		defer func() {
-			_ = h.autoIngestPlanService.UpdateOffset(ctx.GetContext(), req.PlanId, nextOffset)
-			_ = h.autoIngestPlanService.IncrAddCount(ctx.GetContext(), req.PlanId, addCount)
-			_ = h.autoIngestPlanService.IncrFailedCount(ctx.GetContext(), req.PlanId, failedCount)
+			if err := h.autoIngestPlanService.UpdateOffset(ctx.GetContext(), req.PlanId, nextOffset); err != nil {
+				logger.Warn("更新入库计划 offset 失败", zap.Error(err), zap.Int64("plan_id", req.PlanId))
+			}
+			if err := h.autoIngestPlanService.IncrAddCount(ctx.GetContext(), req.PlanId, addCount); err != nil {
+				logger.Warn("更新入库成功计数失败", zap.Error(err), zap.Int64("plan_id", req.PlanId))
+			}
+			if err := h.autoIngestPlanService.IncrFailedCount(ctx.GetContext(), req.PlanId, failedCount); err != nil {
+				logger.Warn("更新入库失败计数失败", zap.Error(err), zap.Int64("plan_id", req.PlanId))
+			}
 		}()
 
 		type pendingItem struct {
@@ -147,6 +181,15 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 					item:       item,
 					itemOffset: itemOffset,
 				})
+
+				// 防止单次任务堆积过多对象占用内存
+				if len(pendingItems) >= maxPendingItemsPerRefresh {
+					logger.Warn("待处理项达到上限，本次先处理一部分",
+						zap.Int("max", maxPendingItemsPerRefresh),
+					)
+					shouldNext = false
+					break
+				}
 			}
 		}
 
@@ -213,10 +256,13 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 								EnableDeepRefresh: plan.RefreshStrategy.EnableDeepRefresh,
 								AutoRefreshDays:   plan.RefreshStrategy.AutoRefreshDays,
 								RefreshInterval:   plan.RefreshStrategy.RefreshInterval,
+								CreatorUserID:     plan.UserID,
+								// 自动入库允许路径已存在（上面已经检查过 QueryByPath，这里容忍竞态）
+								AllowExisting: true,
 							},
 						)
 						if err != nil {
-							if strings.Contains(err.Error(), "UNIQUE constraint failed") || strings.Contains(err.Error(), "Duplicate entry") {
+							if isDuplicateEntryError(err) {
 								break
 							}
 							if retry < maxRetryCount {
@@ -229,7 +275,7 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 							localFailedCount++
 							mu.Unlock()
 
-							if _, logErr := h.authIngestLogService.Create(ctx.GetContext(),
+							if _, logErr := h.autoIngestLogService.Create(ctx.GetContext(),
 								req.PlanId, autoingest.LogLevelError,
 								fmt.Sprintf("新增入库失败：%s, 错误信息：%s", fullPath, err.Error()),
 							); logErr != nil {
@@ -253,7 +299,7 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 							logger.Error("下发文件扫描任务失败", zap.Error(err))
 						}
 
-						if _, logErr := h.authIngestLogService.Create(ctx.GetContext(),
+						if _, logErr := h.autoIngestLogService.Create(ctx.GetContext(),
 							req.PlanId, autoingest.LogLevelInfo,
 							fmt.Sprintf("新增入库：%s", fullPath),
 						); logErr != nil {

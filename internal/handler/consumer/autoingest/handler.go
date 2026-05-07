@@ -19,7 +19,7 @@ type handler struct {
 	taskEngine            taskengine.TaskEngine
 	cloudbridgeService    cloudbridgeSvi.Service
 	autoIngestPlanService autoingestplanSvi.Service
-	authIngestLogService  autoingestlogSvi.Service
+	autoIngestLogService  autoingestlogSvi.Service
 	storageFacadeService  storagefacadeSvi.Service
 	virtualFileService    virtualfileSvi.Service
 }
@@ -28,7 +28,7 @@ func NewHandler(
 	taskEngine taskengine.TaskEngine,
 	cloudbridgeService cloudbridgeSvi.Service,
 	autoIngestPlanService autoingestplanSvi.Service,
-	authIngestLogService autoingestlogSvi.Service,
+	autoIngestLogService autoingestlogSvi.Service,
 	storageFacadeService storagefacadeSvi.Service,
 	virtualFileService virtualfileSvi.Service,
 ) Handler {
@@ -36,7 +36,7 @@ func NewHandler(
 		taskEngine:            taskEngine,
 		cloudbridgeService:    cloudbridgeService,
 		autoIngestPlanService: autoIngestPlanService,
-		authIngestLogService:  authIngestLogService,
+		autoIngestLogService:  autoIngestLogService,
 		storageFacadeService:  storageFacadeService,
 		virtualFileService:    virtualFileService,
 	}

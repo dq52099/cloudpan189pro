@@ -2,6 +2,7 @@ package autoingest
 
 import (
 	"github.com/samber/lo"
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	autoingestlogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestlog"
@@ -50,6 +51,9 @@ func (h *handler) LogList() httpcontext.HandlerFunc {
 			return
 		}
 
+		userID := ctx.GetInt64(consts.CtxKeyUserId)
+		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
+
 		list, err := h.logService.List(ctx.GetContext(), req)
 		if err != nil {
 			ctx.Fail(codeLogListFailed.WithError(err))
@@ -64,8 +68,11 @@ func (h *handler) LogList() httpcontext.HandlerFunc {
 			return
 		}
 
+		// 仅列出当前用户可见的计划作为 planName 映射，避免越权暴露其他用户的计划名
 		planList, err := h.planService.List(ctx.GetContext(), &autoingestplanSvi.ListRequest{
 			NoPaginate: true,
+			UserID:     userID,
+			IsAdmin:    isAdmin,
 		})
 		if err != nil {
 			ctx.Fail(codeLogListFailed.WithError(err))

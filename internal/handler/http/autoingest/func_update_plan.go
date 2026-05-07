@@ -123,7 +123,7 @@ func (h *handler) UpdatePlan() httpcontext.HandlerFunc {
 		}
 
 		if err := h.planService.Update(ctx.GetContext(), req.ID, fields...); err != nil {
-			ctx.Fail(codePlanQueryFailed.WithError(err))
+			ctx.Fail(codePlanUpdateFailed.WithError(err))
 
 			return
 		}

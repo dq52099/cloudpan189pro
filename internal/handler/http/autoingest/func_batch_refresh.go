@@ -5,17 +5,18 @@ import (
 	"sync"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	"github.com/xxcheng123/cloudpan189-share/internal/types/autoingest"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 )
 
 // BatchRefreshRequest 批量刷新请求
 type BatchRefreshRequest struct {
-	IDs []int64 `json:"ids" binding:"required,min=1"`
+	IDs []int64 `json:"ids" binding:"required,min=1,max=500"`
 }
 
 // BatchRefresh 批量刷新计划
 // @Summary 批量刷新计划
-// @Description 批量触发计划的刷新任务
+// @Description 批量触发计划的刷新任务（上限 500 个，内部限流 16 并发）
 // @Tags 自动挂载管理
 // @Accept json
 // @Produce json
@@ -41,10 +42,11 @@ func (h *handler) BatchRefresh() httpcontext.HandlerFunc {
 			successCnt int
 			failCnt    int
 			mu         sync.Mutex
+			sem        = make(chan struct{}, maxBatchConcurrency)
 		)
 
 		for _, plan := range plans {
-			if plan.SourceType != "subscribe" {
+			if plan.SourceType != autoingest.SourceTypeSubscribe {
 				mu.Lock()
 				failCnt++
 				mu.Unlock()
@@ -52,14 +54,24 @@ func (h *handler) BatchRefresh() httpcontext.HandlerFunc {
 			}
 
 			wg.Add(1)
+			sem <- struct{}{}
+
 			go func(planId int64) {
 				defer wg.Done()
+				defer func() { <-sem }()
 
 				taskReq := &topic.AutoIngestRefreshSubscribeRequest{
 					PlanId:  planId,
 					IsRetry: false,
 				}
-				body, _ := json.Marshal(taskReq)
+				body, err := json.Marshal(taskReq)
+				if err != nil {
+					mu.Lock()
+					failCnt++
+					mu.Unlock()
+					return
+				}
+
 				if err := h.taskEngine.PushMessage(ctx.GetContext(), taskReq.Topic(), body); err != nil {
 					mu.Lock()
 					failCnt++
