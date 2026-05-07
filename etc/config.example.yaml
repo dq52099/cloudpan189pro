@@ -1,0 +1,50 @@
+port: 12395
+dbFile: "data/data.db"
+logFile: "logs/share.log"
+mediaDir: "media_dir"
+dbType: "sqlite"
+postgres:
+  host: "localhost"
+  port: 5432
+  user: "postgres"
+  pass: "postgres"
+  dbName: "share"
+  sslMode: "disable"
+mysql:
+  host: "localhost"
+  port: 3306
+  user: "root"
+  pass: "password"
+  dbName: "share"
+taskEngine:
+  workerCount: 4
+  bufferSize: 89120
+  processTimeout: 7200
+  maxRetry: 3
+
+# Telegram Bot 配置
+# 环境变量优先级: TG_BOT_TOKEN, TG_CHAT_ID, TG_PROXY, TG_PROXY_TYPE
+telegram:
+  botToken: "" # 从 @BotFather 获取
+  chatID: "" # 通知群组/用户 ID
+  proxyURL: "" # 代理地址，如 http://192.168.1.1:7890 或 socks5://192.168.1.1:1080
+  proxyType: "" # 代理类型: http, https, socks5 (不填则自动识别)
+  apiURL: "https://api.telegram.org" # Telegram API 地址 (可配置自建代理)
+  defaultMountPath: "/转存" # 默认挂载路径
+  enableNotify: true # 是否启用通知
+
+# OpenAI 配置 (用于 AI 洗版功能)
+# 环境变量优先级: OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL
+openai:
+  apiKey: "" # OpenAI API Key
+  baseURL: ""  # API 地址 (支持 OpenAI 兼容接口)
+  model: "agent/deepseek-v3.2"  # 默认模型
+
+# 订阅配置 (每日热门资源自动抓取)
+subscription:
+  enabled: false         # 是否启用定时订阅
+  cronExpression: "0 8 * * *"  # Cron 表达式 (默认每天早上 8 点)
+  panSearchURL: ""  # 盘搜接口地址
+  panSearchProxy: ""  # 盘搜代理地址，如 http://192.168.1.1:7890
+  enableTMDB: true       # 是否启用 TMDB 热门
+  enableDouban: true     # 是否启用豆瓣热门

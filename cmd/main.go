@@ -1,9 +1,11 @@
 package main
 
 import (
+	stdContext "context"
 	"fmt"
 
-	stdContext "context"
+	"go.uber.org/zap"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/bootstrap"
 	"github.com/xxcheng123/cloudpan189-share/internal/configs"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
@@ -12,7 +14,6 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/handler/http"
 	"github.com/xxcheng123/cloudpan189-share/internal/handler/scheduler"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/shutdown"
-	"go.uber.org/zap"
 )
 
 func main() {
@@ -34,16 +35,8 @@ func main() {
 		panic(err)
 	}
 
-	var (
-		closeBar func()
-	)
-
-	// 启动 scheduler
-	if closeBar, err = scheduler.Start(svc); err != nil {
-		panic(err)
-	}
-
-	// 初始化扩展服务（Telegram, TMDB, Douban, OpenAI, Subscription）
+	// 先初始化扩展服务（Telegram, TMDB, Douban, OpenAI, Subscription），
+	// 让后续的 scheduler 和 http 都能复用同一份依赖。
 	ctx := context.NewContext(stdContext.Background())
 	extServices, err := bootstrap.InitExtensionServices(svc.GetDB(ctx), svc.GetLogger("extension"), cfg.Config)
 	if err != nil {
@@ -51,6 +44,13 @@ func main() {
 		extServices = nil
 	} else {
 		logger.Info("扩展服务初始化成功")
+	}
+
+	var closeBar func()
+
+	// 启动 scheduler（复用扩展服务中已注入依赖的订阅服务）
+	if closeBar, err = scheduler.Start(svc, extServices); err != nil {
+		panic(err)
 	}
 
 	// 启动 HTTP 服务

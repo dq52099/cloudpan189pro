@@ -39,7 +39,7 @@ type FileTaskLog struct {
 	Total     int64 `gorm:"column:total;type:bigint;default:0" json:"total"`         // 总数量
 
 	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
-	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
+	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"updatedAt"`
 }
 
 func (l *FileTaskLog) TableName() string {
@@ -59,7 +59,7 @@ type LoginLog struct {
 	UserAgent string          `gorm:"column:user_agent;type:varchar(512);default:'';comment:客户端UA" json:"userAgent"`
 	TraceId   string          `gorm:"column:trace_id;type:varchar(255);not null;default:''" json:"traceId"`
 	CreatedAt time.Time       `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP;index:idx_user_time,priority:2;index:idx_status_time,priority:2;index:idx_event_time,priority:2;index:idx_method_time,priority:2;index:idx_addr_time,priority:2" json:"createdAt"`
-	UpdatedAt time.Time       `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
+	UpdatedAt time.Time       `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"updatedAt"`
 }
 
 func (l *LoginLog) TableName() string {

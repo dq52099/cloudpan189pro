@@ -13,7 +13,7 @@ type User struct {
 	GroupID   int64     `gorm:"column:group_id;type:bigint;default:0" json:"groupId"`
 	Version   int       `gorm:"column:version;type:int;default:1" json:"version"`
 	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
-	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
+	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"updatedAt"`
 }
 
 func (u *User) TableName() string {
@@ -29,7 +29,7 @@ type UserGroup struct {
 	Name string `gorm:"column:name;type:varchar(255);not null;uniqueIndex" json:"name"`
 
 	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
-	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
+	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"updatedAt"`
 }
 
 func (u *UserGroup) TableName() string {
@@ -41,7 +41,7 @@ type Group2File struct {
 	GroupId   int64     `gorm:"column:group_id;type:bigint;default:0;index" json:"groupId"`
 	FileId    int64     `gorm:"column:file_id;type:bigint;default:0;index;" json:"fileId"`
 	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
-	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
+	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"updatedAt"`
 }
 
 func (g *Group2File) TableName() string {

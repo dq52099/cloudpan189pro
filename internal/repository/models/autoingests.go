@@ -32,7 +32,7 @@ type AutoIngestPlan struct {
 	TokenId            int64                 `gorm:"column:token_id;type:bigint;not null;default:0;" json:"tokenId"`
 	UserID             int64                 `gorm:"column:user_id;type:bigint;default:1;index" json:"userId"` // 所属用户ID
 	CreatedAt          time.Time             `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
-	UpdatedAt          time.Time             `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
+	UpdatedAt          time.Time             `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"updatedAt"`
 }
 
 func (a *AutoIngestPlan) TableName() string {
@@ -45,7 +45,7 @@ type AutoIngestLog struct {
 	Level     autoingest.LogLevel `gorm:"column:level;type:varchar(64);not null;default:info" json:"level"`
 	Content   string              `gorm:"column:content;type:text;not null;default:'';" json:"content"`
 	CreatedAt time.Time           `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
-	UpdatedAt time.Time           `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
+	UpdatedAt time.Time           `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"updatedAt"`
 }
 
 func (a *AutoIngestLog) TableName() string {

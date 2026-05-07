@@ -19,7 +19,7 @@ type TelegramSetting struct {
 	EnableNotify      bool      `gorm:"column:enable_notify;type:boolean;default:true" json:"enableNotify"`
 	Enable            bool      `gorm:"column:enable;type:boolean;default:false" json:"enable"`
 	CreatedAt         time.Time `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
-	UpdatedAt         time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
+	UpdatedAt         time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"updatedAt"`
 }
 
 func (t *TelegramSetting) TableName() string {
@@ -36,7 +36,7 @@ type TelegramUser struct {
 	IsAdmin    bool      `gorm:"column:is_admin;type:boolean;default:false" json:"isAdmin"`
 	LastSeenAt time.Time `gorm:"column:last_seen_at;type:timestamp" json:"lastSeenAt"`
 	CreatedAt  time.Time `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
-	UpdatedAt  time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
+	UpdatedAt  time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"updatedAt"`
 }
 
 func (t *TelegramUser) TableName() string {
@@ -74,7 +74,7 @@ type Subscription struct {
 	LastRunAt         *time.Time           `gorm:"column:last_run_at;type:timestamp" json:"lastRunAt"`
 	LastMatchAt       *time.Time           `gorm:"column:last_match_at;type:timestamp" json:"lastMatchAt"`
 	CreatedAt         time.Time            `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
-	UpdatedAt         time.Time            `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
+	UpdatedAt         time.Time            `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"updatedAt"`
 }
 
 func (s *Subscription) TableName() string {
@@ -105,7 +105,7 @@ type MatchHistory struct {
 	ErrorMessage   string               `gorm:"column:error_message;type:text" json:"errorMessage"`
 	MatchedAt      *time.Time           `gorm:"column:matched_at;type:timestamp" json:"matchedAt"`
 	CreatedAt      time.Time            `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
-	UpdatedAt      time.Time            `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
+	UpdatedAt      time.Time            `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"updatedAt"`
 }
 
 func (m *MatchHistory) TableName() string {
@@ -118,7 +118,7 @@ type DailyHotHistory struct {
 	ContentID   string    `gorm:"column:content_id;type:varchar(100);not null" json:"contentID"`
 	Title       string    `gorm:"column:title;type:varchar(500);not null" json:"title"`
 	Year        string    `gorm:"column:year;type:varchar(10)" json:"year"`
-	ProcessedAt time.Time `gorm:"column:processed_at;type:date;not null" json:"processedAt"`
+	ProcessedAt time.Time `gorm:"column:processed_at;type:timestamp;not null" json:"processedAt"`
 	CreatedAt   time.Time `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
 }
 

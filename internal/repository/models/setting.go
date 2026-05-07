@@ -19,7 +19,7 @@ type Setting struct {
 	Initialized bool            `gorm:"column:initialized;type:boolean;default:false" json:"initialized"`     // 是否初始化完成
 	Addition    SettingAddition `gorm:"column:addition;type:json" json:"addition" swaggertype:"object"`
 	CreatedAt   time.Time       `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
-	UpdatedAt   time.Time       `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP;on update:CURRENT_TIMESTAMP" json:"updatedAt"`
+	UpdatedAt   time.Time       `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"updatedAt"`
 }
 
 func (s *Setting) TableName() string {

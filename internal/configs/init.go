@@ -41,6 +41,7 @@ var once sync.Once
 func Get() *RuntimeConfig {
 	once.Do(func() {
 		conf.MustLoad(configPath, c, conf.UseEnv())
+		applyDefaults(c)
 	})
 
 	return &RuntimeConfig{
@@ -50,5 +51,16 @@ func Get() *RuntimeConfig {
 		GitBranch:  GitBranch,
 		GitSummary: GitSummary,
 		Version:    Version,
+	}
+}
+
+// applyDefaults 针对无法通过 struct tag 表达的默认值进行补齐。
+func applyDefaults(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+
+	if cfg.Subscription != nil && cfg.Subscription.CronExpression == "" {
+		cfg.Subscription.CronExpression = "0 8 * * *"
 	}
 }
