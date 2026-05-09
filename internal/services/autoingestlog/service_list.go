@@ -1,6 +1,8 @@
 package autoingestlog
 
 import (
+	"time"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"go.uber.org/zap"
@@ -10,10 +12,13 @@ import (
 
 // ListRequest 自动挂载日志列表查询请求
 type ListRequest struct {
-	PlanId      int64  `form:"planId" binding:"omitempty,min=1" example:"1"`
-	Level       string `form:"level" binding:"omitempty" example:"info"`
-	CurrentPage int    `form:"currentPage,omitempty,default=1" binding:"omitempty,min=1" example:"1"`
-	PageSize    int    `form:"pageSize,omitempty,default=10" binding:"omitempty,min=1" example:"10"`
+	PlanId      int64     `form:"planId" binding:"omitempty,min=1" example:"1"`
+	Level       string    `form:"level" binding:"omitempty" example:"info"`
+	Content     string    `form:"content" binding:"omitempty"` // 内容模糊匹配
+	BeginAt     time.Time `form:"beginAt" binding:"omitempty"`
+	EndAt       time.Time `form:"endAt" binding:"omitempty"`
+	CurrentPage int       `form:"currentPage,omitempty,default=1" binding:"omitempty,min=1" example:"1"`
+	PageSize    int       `form:"pageSize,omitempty,default=10" binding:"omitempty,min=1" example:"10"`
 }
 
 // List 列出自动挂载日志
@@ -63,6 +68,18 @@ func (s *service) getListQuery(ctx context.Context, req *ListRequest) *gorm.DB {
 
 	if req.Level != "" {
 		query = query.Where("level = ?", req.Level)
+	}
+
+	if req.Content != "" {
+		query = query.Where("content LIKE ?", "%"+req.Content+"%")
+	}
+
+	if !req.BeginAt.IsZero() {
+		query = query.Where("created_at >= ?", req.BeginAt)
+	}
+
+	if !req.EndAt.IsZero() {
+		query = query.Where("created_at <= ?", req.EndAt)
 	}
 
 	return query

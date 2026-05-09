@@ -98,7 +98,7 @@ func (s *service) fetchRealDownloadLink(ctx context.Context, link string) (strin
 		return location, nil
 	}
 
-	return "", errors.Wrap(err, "获取重定向地址失败")
+	return "", fmt.Errorf("获取重定向地址失败: 期望重定向响应，实际状态码 %d", resp.StatusCode)
 }
 
 func (s *service) loadOrFetch(ctx context.Context, cacheKey string, fn func() (string, error)) (string, error) {

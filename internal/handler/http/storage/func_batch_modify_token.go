@@ -8,17 +8,18 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
 type batchModifyTokenRequest struct {
-	IDs     []int64 `json:"ids" binding:"required,min=1"`
+	IDs     []int64 `json:"ids" binding:"required,min=1,max=500"`
 	TokenID int64   `json:"tokenId"` // 新的令牌ID，0 表示解绑
 }
 
 // BatchModifyToken 批量修改存储挂载点令牌
 // @Summary 批量修改存储挂载点令牌
-// @Description 用户批量绑定自己的令牌到挂载点，异步提交后台处理
+// @Description 用户批量绑定自己的令牌到挂载点，异步提交后台处理（上限 500 个）
 // @Tags 存储管理
 // @Accept json
 // @Produce json
@@ -61,6 +62,38 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 			}
 		}
 
+		// 校验每个挂载点是否在当前用户的可见范围内（非管理员）
+		if !isAdmin {
+			var groupFileIds []int64
+			if userGroupID > 0 {
+				groupFileIds, _ = h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupID)
+			}
+			groupFileSet := make(map[int64]struct{}, len(groupFileIds))
+			for _, fid := range groupFileIds {
+				groupFileSet[fid] = struct{}{}
+			}
+
+			for _, id := range req.IDs {
+				mp, err := h.mountPointService.Query(ctx.GetContext(), id)
+				if err != nil {
+					if errors.Is(err, gorm.ErrRecordNotFound) {
+						ctx.Fail(busCodeStorageMountPointNotFound.WithError(err))
+					} else {
+						ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
+					}
+					return
+				}
+				if mp.CreatorUserID == userID {
+					continue
+				}
+				if _, ok := groupFileSet[mp.FileId]; ok {
+					continue
+				}
+				ctx.Fail(busCodeStorageMountPointNotFound.WithMessage(fmt.Sprintf("无权操作挂载点 %d", id)))
+				return
+			}
+		}
+
 		taskReq := &topic.FileBatchModifyTokenRequest{
 			IDs:         req.IDs,
 			TokenID:     req.TokenID,
@@ -69,7 +102,12 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 			UserGroupID: userGroupID,
 		}
 
-		body, _ := json.Marshal(taskReq)
+		body, err := json.Marshal(taskReq)
+		if err != nil {
+			ctx.Fail(busCodeStorageSendTaskFail.WithError(err))
+			return
+		}
+
 		if err := h.taskEngine.PushMessage(
 			ctx.GetContext().WithValue(consts.CtxKeyInvokeHandlerName, "批量修改令牌"),
 			taskReq.Topic(),
@@ -83,6 +121,13 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 		if req.TokenID == 0 {
 			actionText = "解绑"
 		}
+
+		ctx.GetContext().Info(
+			"批量修改令牌已提交",
+			zap.Int("count", len(req.IDs)),
+			zap.Int64("token_id", req.TokenID),
+			zap.Int64("user_id", userID),
+		)
 
 		ctx.Success(fmt.Sprintf("批量%s令牌任务已提交，共 %d 个挂载点", actionText, len(req.IDs)))
 	}

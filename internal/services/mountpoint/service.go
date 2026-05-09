@@ -33,6 +33,8 @@ type Service interface {
 	ModifyToken(ctx context.Context, req *ModifyTokenRequest) error
 	BatchParseText(ctx context.Context, req *topic.BatchParseTextRequest) ([]*topic.BatchParseItem, error)
 	UpdateRefreshTime(ctx context.Context, fileId int64) error
+	// UpdateLastState 写入挂载点最近一次操作的结果摘要（通常为"成功"或简短错误信息）。
+	UpdateLastState(ctx context.Context, fileId int64, state string) error
 }
 
 type service struct {
@@ -59,6 +61,19 @@ func NewService(
 // UpdateRefreshTime 更新挂载点的刷新时间
 func (s *service) UpdateRefreshTime(ctx context.Context, fileId int64) error {
 	return s.getDB(ctx).Where("file_id = ?", fileId).Update("updated_at", time.Now()).Error
+}
+
+// UpdateLastState 写入挂载点最近一次同步结果。
+// 超过 1024 字符会被截断以适配 last_state 字段的类型。
+func (s *service) UpdateLastState(ctx context.Context, fileId int64, state string) error {
+	if state == "" {
+		state = "成功"
+	}
+	if len([]rune(state)) > 512 {
+		state = string([]rune(state)[:512]) + "..."
+	}
+
+	return s.getDB(ctx).Where("file_id = ?", fileId).Update("last_state", state).Error
 }
 
 func (s *service) getDB(ctx context.Context) *gorm.DB {

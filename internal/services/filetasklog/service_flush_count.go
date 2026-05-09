@@ -1,8 +1,6 @@
 package filetasklog
 
 import (
-	"fmt"
-
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -24,6 +22,14 @@ func (c *counter) Name() string {
 
 func (c *counter) Count() int {
 	return c.count
+}
+
+// allowedCounterColumns 白名单，限制可通过 FlushCount 更新的列名，避免 SQL 注入。
+var allowedCounterColumns = map[string]struct{}{
+	"completed": {},
+	"total":     {},
+	"processed": {},
+	"failed":    {},
 }
 
 func WithCompletedCounter(count int) Counter {
@@ -67,6 +73,8 @@ func WithFailedCounter(count int) Counter {
 	}
 }
 
+// FlushCount 刷新计数列（在已有值基础上做原子递增）。
+// 列名通过白名单校验，不受外部 Counter 实现污染影响。
 func (s *service) FlushCount(ctx context.Context, key LogKey, counters ...Counter) (err error) {
 	ctx.Debug("刷新文件任务日志计数", zap.Int64("task_id", key.GetID()))
 
@@ -77,16 +85,23 @@ func (s *service) FlushCount(ctx context.Context, key LogKey, counters ...Counte
 	countMp := map[string]int{}
 
 	for _, ct := range counters {
-		if v, ok := countMp[ct.Name()]; ok {
-			countMp[ct.Name()] = v + ct.Count()
-		} else {
-			countMp[ct.Name()] = ct.Count()
+		name := ct.Name()
+		if _, ok := allowedCounterColumns[name]; !ok {
+			ctx.Warn("忽略未知的计数列", zap.String("column", name))
+			continue
 		}
+
+		countMp[name] += ct.Count()
+	}
+
+	if len(countMp) == 0 {
+		return nil
 	}
 
 	mp := map[string]any{}
 	for k, v := range countMp {
-		mp[k] = gorm.Expr(fmt.Sprintf("%s + %d", k, v))
+		// 使用参数化表达式防止 SQL 注入；k 已经在白名单内
+		mp[k] = gorm.Expr(gormColumnExpr(k), v)
 	}
 
 	if err = s.getDB(ctx).
@@ -96,4 +111,10 @@ func (s *service) FlushCount(ctx context.Context, key LogKey, counters ...Counte
 	}
 
 	return
+}
+
+// gormColumnExpr 构造形如 "col + ?" 的表达式字符串。
+// col 由白名单校验，不存在注入风险。
+func gormColumnExpr(col string) string {
+	return col + " + ?"
 }

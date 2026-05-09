@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -36,7 +37,8 @@ func ensurePostgresDB(c *configs.Config) error {
 	var count int64
 	db.Raw("SELECT COUNT(*) FROM pg_database WHERE datname = ?", c.Postgres.DBName).Scan(&count)
 	if count == 0 {
-		db.Exec(fmt.Sprintf("CREATE DATABASE %s", c.Postgres.DBName))
+		// 使用引号包裹标识符防止SQL注入，PostgreSQL不支持参数化DDL
+		db.Exec(fmt.Sprintf("CREATE DATABASE \"%s\"", strings.ReplaceAll(c.Postgres.DBName, "\"", "\"\"")))
 	}
 
 	sqlDB, _ := db.DB()
@@ -60,7 +62,8 @@ func ensureMySQLDB(c *configs.Config) error {
 	var count int64
 	db.Raw("SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?", c.MySQL.DBName).Scan(&count)
 	if count == 0 {
-		db.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", c.MySQL.DBName))
+		// 使用反引号包裹标识符防止SQL注入
+		db.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", strings.ReplaceAll(c.MySQL.DBName, "`", "``")))
 	}
 
 	sqlDB, _ := db.DB()

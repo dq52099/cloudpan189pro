@@ -7,6 +7,7 @@ session.json
 .vscode
 .env
 /media_files
+/etc/config.yaml
 
 datadir
 media_dir

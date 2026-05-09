@@ -20,11 +20,22 @@ type Service interface {
 	Completed(ctx context.Context, key LogKey, opts ...utils.Field) error
 	Failed(ctx context.Context, key LogKey, opts ...utils.Field) error
 
+	// CompletedWithProgress 完成任务并记录 processed/total 进度
+	CompletedWithProgress(ctx context.Context, key LogKey, processed, total int) error
+	// FailedWithReason 失败任务并记录失败原因
+	FailedWithReason(ctx context.Context, key LogKey, reason string) error
+
 	List(ctx context.Context, req *ListRequest) ([]*models.FileTaskLog, error)
 	Count(ctx context.Context, req *ListRequest) (int64, error)
 	FindStaleTasksByDuration(ctx context.Context, duration time.Duration) ([]*models.FileTaskLog, error)
+	// FindByFileID 根据文件ID查询相关任务
+	FindByFileID(ctx context.Context, fileID int64) ([]*models.FileTaskLog, error)
 
 	WithError(ctx context.Context, key LogKey, err error) error
+	// WithErrorAndFail 附加错误信息并标记任务失败
+	WithErrorAndFail(ctx context.Context, key LogKey, err error) error
+	// ClearError 清空错误信息字段
+	ClearError(ctx context.Context, key LogKey) error
 
 	Clear(ctx context.Context) error
 	ClearByDuration(ctx context.Context, duration string) error

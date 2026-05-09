@@ -59,7 +59,7 @@ func (h *handler) Refresh() httpcontext.HandlerFunc {
 			return
 		}
 
-		// todo 目前仅支持订阅来源类型
+		// 当前刷新任务仅实现了订阅来源类型；新增来源时需要同步实现对应的刷新任务处理器。
 		if plan.SourceType != autoingest.SourceTypeSubscribe {
 			ctx.Fail(codePlanInvalidSource)
 
@@ -75,7 +75,12 @@ func (h *handler) Refresh() httpcontext.HandlerFunc {
 			PlanId: plan.ID,
 		}
 
-		body, _ := json.Marshal(taskReq)
+		body, jerr := json.Marshal(taskReq)
+		if jerr != nil {
+			ctx.Fail(codePlanRefreshFailed.WithError(jerr))
+			return
+		}
+
 		if err = h.taskEngine.PushMessage(ctx.GetContext(), taskReq.Topic(), body); err != nil {
 			ctx.Fail(codePlanRefreshFailed.WithError(err))
 
@@ -128,7 +133,7 @@ func (h *handler) RetryFailed() httpcontext.HandlerFunc {
 		oldOffset := plan.Offset
 		if err := h.planService.UpdateOffset(ctx.GetContext(), req.PlanId, 0); err != nil {
 			ctx.GetContext().Error("重置偏移量失败", zap.Error(err))
-			ctx.Fail(codePlanRefreshFailed.WithError(err))
+			ctx.Fail(codePlanUpdateFailed.WithError(err))
 			return
 		}
 
@@ -143,7 +148,12 @@ func (h *handler) RetryFailed() httpcontext.HandlerFunc {
 			PlanId: plan.ID,
 		}
 
-		body, _ := json.Marshal(taskReq)
+		body, jerr := json.Marshal(taskReq)
+		if jerr != nil {
+			ctx.Fail(codePlanRefreshFailed.WithError(jerr))
+			return
+		}
+
 		if err = h.taskEngine.PushMessage(ctx.GetContext(), taskReq.Topic(), body); err != nil {
 			ctx.Fail(codePlanRefreshFailed.WithError(err))
 			return

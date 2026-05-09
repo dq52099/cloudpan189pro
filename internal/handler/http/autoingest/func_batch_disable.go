@@ -8,12 +8,12 @@ import (
 
 // BatchDisableRequest 批量停用请求
 type BatchDisableRequest struct {
-	IDs []int64 `json:"ids" binding:"required,min=1"`
+	IDs []int64 `json:"ids" binding:"required,min=1,max=500"`
 }
 
 // BatchDisable 批量停用计划
 // @Summary 批量停用计划
-// @Description 批量停用自动入库计划
+// @Description 批量停用自动入库计划（上限 500 个，内部限流 16 并发）
 // @Tags 自动挂载管理
 // @Accept json
 // @Produce json
@@ -33,12 +33,16 @@ func (h *handler) BatchDisable() httpcontext.HandlerFunc {
 			successCnt int
 			failCnt    int
 			mu         sync.Mutex
+			sem        = make(chan struct{}, maxBatchConcurrency)
 		)
 
 		for _, id := range req.IDs {
 			wg.Add(1)
+			sem <- struct{}{}
+
 			go func(planId int64) {
 				defer wg.Done()
+				defer func() { <-sem }()
 
 				if err := h.planService.Disable(ctx.GetContext(), planId); err != nil {
 					mu.Lock()

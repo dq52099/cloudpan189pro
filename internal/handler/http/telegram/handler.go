@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -82,7 +83,7 @@ func (h *Handler) GetSetting() httpcontext.HandlerFunc {
 		var setting models.TelegramSetting
 		result := h.db.First(&setting)
 		if result.Error != nil {
-			if result.Error.Error() == "record not found" {
+			if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 				c.Success(models.TelegramSetting{
 					Enable:           false,
 					DefaultMountPath: "/转存",
@@ -294,6 +295,31 @@ func (h *Handler) ProcessShareLink() httpcontext.HandlerFunc {
 			return
 		}
 
+		// 优先使用已启动的 Telegram 服务（具有挂载依赖注入）
+		if h.service != nil && h.service.IsEnabled() {
+			result, err := h.service.ParseAndMountShareLink(req.ShareURL, req.MountPath, req.AutoMount)
+			if err != nil {
+				c.Fail(invalidParams(err))
+				return
+			}
+
+			if result.Success {
+				c.Success(gin.H{
+					"success":   true,
+					"message":   result.Message,
+					"mountPath": result.MountPath,
+					"shareID":   result.ShareID,
+					"fileID":    result.FileID,
+				})
+				return
+			}
+
+			c.Fail(invalidParams(fmt.Errorf("%s", result.Message)))
+
+			return
+		}
+
+		// 回退：根据数据库中的配置临时创建服务（无挂载依赖，将走 HTTP 自调）
 		var setting models.TelegramSetting
 		if err := h.db.First(&setting).Error; err != nil {
 			c.Fail(invalidParams(fmt.Errorf("failed to get settings: %w", err)))

@@ -9,10 +9,9 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/autoingest"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
+	"go.uber.org/zap"
 )
 
-// CreateSubscribePlan 创建订阅型自动挂载计划（占位实现）
-// 说明：请求结构体与处理逻辑由你后续补充，这里仅提供占位使编译通过并符合注释规范。
 type refreshStrategyRequest struct {
 	EnableAutoRefresh bool `json:"enableAutoRefresh" binding:"omitempty" example:"false"`
 	AutoRefreshDays   int  `json:"autoRefreshDays" binding:"omitempty,min=1" example:"7"`
@@ -29,20 +28,22 @@ type createSubscribePlanRequest struct {
 	OneClickAddHistory bool                   `json:"oneClickAddHistory" binding:"omitempty" example:"true"`                // 是否一键添加之前的
 	RefreshStrategy    refreshStrategyRequest `json:"refreshStrategy"`
 	CloudToken         int64                  `json:"cloudToken"`
+	// Enable 显式控制是否立即启用；为 nil 时按 AutoIngestInterval 是否 > 0 决定（保留向后兼容）
+	Enable *bool `json:"enable"`
 }
 
 type createSubscribePlanResponse struct {
 	ID int64 `json:"id" example:"1"`
 }
 
-// CreateSubscribePlan 创建订阅计划（占位）
+// CreateSubscribePlan 创建订阅型自动挂载计划
 // @Summary 创建订阅型自动挂载计划
-// @Description 创建订阅计划（占位实现，后续由你补充具体逻辑）
+// @Description 创建订阅计划；enable 字段为空时回退到 AutoIngestInterval > 0 的旧语义，传入 false 则计划创建后保持停用。
 // @Tags 自动挂载管理
 // @Accept json
 // @Produce json
 // @Param Authorization header string true "Bearer token"
-// @Param request body createSubscribePlanRequest true "订阅计划参数（占位）"
+// @Param request body createSubscribePlanRequest true "订阅计划参数"
 // @Success 200 {object} httpcontext.Response{data=createSubscribePlanResponse} "创建成功"
 // @Failure 400 {object} httpcontext.Response "参数验证失败，code=99998"
 // @Failure 401 {object} httpcontext.Response "未授权访问"
@@ -64,38 +65,31 @@ func (h *handler) CreateSubscribePlan() httpcontext.HandlerFunc {
 			return
 		}
 
+		// 构造启用状态：显式 Enable 优先，否则兼容旧逻辑
 		enable := req.AutoIngestInterval > 0
+		if req.Enable != nil {
+			enable = *req.Enable
+		}
 
 		addition := &models.AutoIngestPlanSubscribeAddition{
 			UpUserId: req.UpUserId,
 		}
 
-		// 构造刷新策略，做兜底
+		// 构造刷新策略，统一做兜底；即使 EnableAutoRefresh=false，也保留用户传入的数值
 		rs := models.RefreshStrategy{
-			EnableAutoRefresh: false,
-			AutoRefreshDays:   0,
-			RefreshInterval:   0,
-			EnableDeepRefresh: false,
+			EnableAutoRefresh: req.RefreshStrategy.EnableAutoRefresh,
+			AutoRefreshDays:   req.RefreshStrategy.AutoRefreshDays,
+			RefreshInterval:   req.RefreshStrategy.RefreshInterval,
+			EnableDeepRefresh: req.RefreshStrategy.EnableDeepRefresh,
 		}
-		if req.RefreshStrategy.EnableAutoRefresh {
-			rs.EnableAutoRefresh = true
-			// 天数兜底
-			days := req.RefreshStrategy.AutoRefreshDays
-			if days <= 0 {
-				days = 7
+
+		if rs.EnableAutoRefresh {
+			if rs.AutoRefreshDays <= 0 {
+				rs.AutoRefreshDays = 7
 			}
-
-			rs.AutoRefreshDays = days
-
-			// 间隔兜底（最小30）
-			interval := req.RefreshStrategy.RefreshInterval
-			if interval < 30 {
-				interval = 30
+			if rs.RefreshInterval < 30 {
+				rs.RefreshInterval = 30
 			}
-
-			rs.RefreshInterval = interval
-
-			rs.EnableDeepRefresh = req.RefreshStrategy.EnableDeepRefresh
 		}
 
 		offset := time.Now().Unix()
@@ -132,9 +126,12 @@ func (h *handler) CreateSubscribePlan() httpcontext.HandlerFunc {
 				PlanId: id,
 			}
 
-			taskBody, _ := json.Marshal(taskReq)
-
-			_ = h.taskEngine.PushMessage(ctx.GetContext(), taskReq.Topic(), taskBody)
+			taskBody, jerr := json.Marshal(taskReq)
+			if jerr != nil {
+				ctx.GetContext().Warn("序列化一键入库任务失败", zap.Int64("plan_id", id), zap.Error(jerr))
+			} else if perr := h.taskEngine.PushMessage(ctx.GetContext(), taskReq.Topic(), taskBody); perr != nil {
+				ctx.GetContext().Warn("一键入库任务下发失败", zap.Int64("plan_id", id), zap.Error(perr))
+			}
 		}
 
 		ctx.Success(&createSubscribePlanResponse{ID: id})

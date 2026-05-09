@@ -2,7 +2,7 @@ package telegram
 
 import (
 	"bytes"
-	"context"
+	stdCtx "context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -21,6 +21,16 @@ var (
 	shareLinkRegex2 = regexp.MustCompile(`https?://[^/]+/t/([a-zA-Z0-9]+)`)
 )
 
+// resolveBackendURL 解析本地后端基础地址，优先使用环境变量 LOCAL_BACKEND_URL，
+// 否则回退到默认端口 12395。
+func resolveBackendURL() string {
+	if envURL := strings.TrimSpace(os.Getenv("LOCAL_BACKEND_URL")); envURL != "" {
+		return strings.TrimRight(envURL, "/")
+	}
+
+	return "http://127.0.0.1:12395"
+}
+
 type Service interface {
 	SendMessage(msg string) error
 	SendNotification(title, content string) error
@@ -31,6 +41,34 @@ type Service interface {
 	StopBot()
 	TestConnection() error
 	ParseAndMountShareLink(shareURL, mountPath string, autoMount bool) (*MountResult, error)
+	SetMountDependencies(fetcher ShareInfoFetcher, mounter StorageMounter)
+}
+
+// ShareInfoFetcher 分享信息获取接口（用于 Telegram 收到链接时解析）
+type ShareInfoFetcher interface {
+	GetShareInfo(ctx stdCtx.Context, shareCode, accessCode string) (*ShareInfo, error)
+}
+
+// StorageMounter 存储挂载接口
+type StorageMounter interface {
+	CreateMountPoint(ctx stdCtx.Context, req *MountRequest) (int64, error)
+}
+
+// ShareInfo Telegram 模块需要的分享元数据子集
+type ShareInfo struct {
+	Name     string
+	ShareId  int64
+	FileId   string
+	IsFolder bool
+}
+
+// MountRequest 挂载请求
+type MountRequest struct {
+	LocalPath         string
+	OsType            string
+	ShareCode         string
+	FileID            string
+	EnableDeepRefresh bool
 }
 
 type MountResult struct {
@@ -83,26 +121,32 @@ type service struct {
 	proxyURL   string
 	proxyType  string
 	apiURL     string
+	backendURL string
 	enabled    bool
 	logger     *zap.Logger
 	client     *http.Client
 	mu         sync.RWMutex
-	ctx        context.Context
-	cancel     context.CancelFunc
+	ctx        stdCtx.Context
+	cancel     stdCtx.CancelFunc
+
 	lastOffset int64
 	stopChan   chan struct{}
 	wg         sync.WaitGroup
+
+	shareFetcher ShareInfoFetcher
+	mounter      StorageMounter
 }
 
 func NewService(botToken, chatID, proxyURL, proxyType, apiURL string, logger *zap.Logger) Service {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := stdCtx.WithCancel(stdCtx.Background())
 	s := &service{
-		botToken:  botToken,
-		chatID:    chatID,
-		proxyURL:  proxyURL,
-		proxyType: proxyType,
-		apiURL:    apiURL,
-		logger:    logger,
+		botToken:   botToken,
+		chatID:     chatID,
+		proxyURL:   proxyURL,
+		proxyType:  proxyType,
+		apiURL:     apiURL,
+		backendURL: resolveBackendURL(),
+		logger:     logger,
 		client: &http.Client{
 			Timeout: 35 * time.Second,
 		},
@@ -205,6 +249,15 @@ func (s *service) buildURL(method string) string {
 	return fmt.Sprintf("%s/bot%s/%s", s.apiURL, s.botToken, method)
 }
 
+// SetMountDependencies 注入挂载相关依赖，避免 Bot 处理消息时通过 HTTP 回调自身。
+func (s *service) SetMountDependencies(fetcher ShareInfoFetcher, mounter StorageMounter) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.shareFetcher = fetcher
+	s.mounter = mounter
+}
+
 func (s *service) SendMessage(msg string) error {
 	s.mu.RLock()
 	if !s.enabled || s.botToken == "" {
@@ -242,40 +295,46 @@ func (s *service) doRequestWithRetry(method string, body interface{}, maxRetries
 }
 
 func (s *service) doRequest(method string, body interface{}) error {
+	_, err := s.doRequestWithData(method, body)
+
+	return err
+}
+
+func (s *service) doRequestWithData(method string, body interface{}) (map[string]interface{}, error) {
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	req, err := http.NewRequestWithContext(s.ctx, "POST", s.buildURL(method), bytes.NewReader(jsonBody))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("telegram API returned status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("telegram API returned status: %d", resp.StatusCode)
 	}
 
 	var result map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return err
+		return nil, err
 	}
 
 	okVal, ok := result["ok"].(bool)
 	if !ok || !okVal {
 		description, _ := result["description"].(string)
-		return fmt.Errorf("telegram API error: %s", description)
+		return nil, fmt.Errorf("telegram API error: %s", description)
 	}
 
-	return nil
+	return result, nil
 }
 
 func (s *service) SendNotification(title, content string) error {
@@ -459,11 +518,9 @@ func (s *service) handleCommand(cmd string, chatID, userID int64) {
 func (s *service) handleShareLink(link string, chatID, userID int64) {
 	s.sendMessageToChat(chatID, "收到分享链接，正在处理...")
 
-	re := regexp.MustCompile(`cloud\.189\.cn\/t\/([a-zA-Z0-9]+)`)
-	matches := re.FindStringSubmatch(link)
+	matches := shareLinkRegex.FindStringSubmatch(link)
 	if len(matches) < 2 {
-		re2 := regexp.MustCompile(`https?://[^/]+/t/([a-zA-Z0-9]+)`)
-		matches = re2.FindStringSubmatch(link)
+		matches = shareLinkRegex2.FindStringSubmatch(link)
 		if len(matches) < 2 {
 			s.sendMessageToChat(chatID, "无法识别分享链接，请检查链接格式")
 			return
@@ -471,8 +528,15 @@ func (s *service) handleShareLink(link string, chatID, userID int64) {
 	}
 	shareCode := matches[1]
 
-	apiURL := fmt.Sprintf("http://127.0.0.1:12395/api/storage/advance/share_info?shareCode=%s", shareCode)
-	req, err := http.NewRequest("GET", apiURL, nil)
+	// 若已注入分享/挂载依赖，则直接调用内部服务，避免 HTTP 自调
+	if s.shareFetcher != nil && s.mounter != nil {
+		s.handleShareLinkDirect(shareCode, chatID)
+		return
+	}
+
+	// 兼容模式：通过本地 HTTP 调用（保留原有行为）
+	apiURL := fmt.Sprintf("%s/api/storage/advance/share_info?shareCode=%s", s.backendURL, shareCode)
+	req, err := http.NewRequestWithContext(s.ctx, "GET", apiURL, nil)
 	if err != nil {
 		s.sendMessageToChat(chatID, fmt.Sprintf("解析失败: %v", err))
 		return
@@ -529,12 +593,9 @@ func (s *service) handleShareLink(link string, chatID, userID int64) {
 		s.sendMessageToChat(chatID, fmt.Sprintf("创建挂载点失败: %v", err))
 		return
 	}
-	apiURL = s.apiURL
-	if apiURL == "" {
-		apiURL = "http://127.0.0.1:12395"
-	}
+	apiURL = s.backendURL
 	batchAddURL := apiURL + "/api/storage/batch_add"
-	req, err = http.NewRequest("POST", batchAddURL, bytes.NewReader(batchAddJSON))
+	req, err = http.NewRequestWithContext(s.ctx, "POST", batchAddURL, bytes.NewReader(batchAddJSON))
 	if err != nil {
 		s.sendMessageToChat(chatID, fmt.Sprintf("创建挂载点失败: %v", err))
 		return
@@ -584,6 +645,48 @@ func (s *service) handleShareLink(link string, chatID, userID int64) {
 	s.sendMessageToChat(chatID, fmt.Sprintf("❌ 创建挂载点失败: %s", errMsg))
 }
 
+// handleShareLinkDirect 使用内部服务直接完成分享解析与挂载。
+func (s *service) handleShareLinkDirect(shareCode string, chatID int64) {
+	info, err := s.shareFetcher.GetShareInfo(s.ctx, shareCode, "")
+	if err != nil {
+		s.sendMessageToChat(chatID, fmt.Sprintf("获取分享信息失败: %v", err))
+		return
+	}
+
+	name := info.Name
+	if name == "" {
+		name = shareCode
+	}
+
+	localPath := fmt.Sprintf("/Telegram/%s", name)
+
+	s.sendMessageToChat(chatID, fmt.Sprintf(`📁 名称: %s
+🔗 ShareID: %d
+📂 FileID: %s
+
+正在自动创建挂载点...`, name, info.ShareId, info.FileId))
+
+	mountID, err := s.mounter.CreateMountPoint(s.ctx, &MountRequest{
+		LocalPath:         localPath,
+		OsType:            "subscribe_share_folder",
+		ShareCode:         shareCode,
+		FileID:            info.FileId,
+		EnableDeepRefresh: true,
+	})
+	if err != nil {
+		s.sendMessageToChat(chatID, fmt.Sprintf("❌ 创建挂载点失败: %v", err))
+		return
+	}
+
+	s.sendMessageToChat(chatID, fmt.Sprintf(`✅ <b>挂载成功！</b>
+
+📁 本地路径: %s
+🔗 ShareID: %d
+🆔 挂载ID: %d
+
+请通过文件管理器查看，或等待后台扫描完成后使用。`, localPath, info.ShareId, mountID))
+}
+
 func (s *service) sendMessageToChat(chatID int64, text string) {
 	msg := telegramMessage{
 		ChatID:    fmt.Sprintf("%d", chatID),
@@ -607,11 +710,11 @@ func (s *service) TestConnection() error {
 }
 
 func (s *service) GetMe() (map[string]interface{}, error) {
-	var result map[string]interface{}
-	err := s.doRequest("getMe", nil)
+	result, err := s.doRequestWithData("getMe", nil)
 	if err != nil {
 		return nil, err
 	}
+
 	return result, nil
 }
 
@@ -625,9 +728,14 @@ func (s *service) ParseAndMountShareLink(shareURL, mountPath string, autoMount b
 	}
 	shareCode := matches[1]
 
-	storageAPIURL := "http://127.0.0.1:12395"
-	apiURL := fmt.Sprintf("%s/api/public/share_info?shareCode=%s", storageAPIURL, shareCode)
-	req, err := http.NewRequest("GET", apiURL, nil)
+	// 优先使用内部服务
+	if s.shareFetcher != nil {
+		return s.parseAndMountDirect(shareCode, mountPath, autoMount)
+	}
+
+	// 兼容模式：通过本地 HTTP 调用
+	apiURL := fmt.Sprintf("%s/api/public/share_info?shareCode=%s", s.backendURL, shareCode)
+	req, err := http.NewRequestWithContext(s.ctx, "GET", apiURL, nil)
 	if err != nil {
 		return &MountResult{Success: false, Message: fmt.Sprintf("解析失败: %v", err)}, nil
 	}
@@ -695,12 +803,9 @@ func (s *service) ParseAndMountShareLink(shareURL, mountPath string, autoMount b
 	if err != nil {
 		return &MountResult{Success: false, Message: fmt.Sprintf("创建挂载点失败: %v", err)}, nil
 	}
-	apiURL = s.apiURL
-	if apiURL == "" {
-		apiURL = "http://127.0.0.1:12395"
-	}
+	apiURL = s.backendURL
 	batchAddURL := apiURL + "/api/storage/batch_add"
-	req, err = http.NewRequest("POST", batchAddURL, bytes.NewReader(batchAddJSON))
+	req, err = http.NewRequestWithContext(s.ctx, "POST", batchAddURL, bytes.NewReader(batchAddJSON))
 	if err != nil {
 		return &MountResult{Success: false, Message: fmt.Sprintf("创建挂载点失败: %v", err)}, nil
 	}
@@ -742,4 +847,56 @@ func (s *service) ParseAndMountShareLink(shareURL, mountPath string, autoMount b
 		}
 	}
 	return &MountResult{Success: false, Message: fmt.Sprintf("创建挂载点失败: %s", errMsg)}, nil
+}
+
+// parseAndMountDirect 使用内部服务完成分享解析与挂载。
+func (s *service) parseAndMountDirect(shareCode, mountPath string, autoMount bool) (*MountResult, error) {
+	info, err := s.shareFetcher.GetShareInfo(s.ctx, shareCode, "")
+	if err != nil {
+		return &MountResult{Success: false, Message: fmt.Sprintf("解析失败: %v", err)}, nil
+	}
+
+	if !autoMount {
+		return &MountResult{
+			Success:   true,
+			Message:   "分享链接解析成功",
+			MountPath: mountPath,
+			ShareID:   info.ShareId,
+			FileID:    info.FileId,
+		}, nil
+	}
+
+	if s.mounter == nil {
+		return &MountResult{Success: false, Message: "挂载服务未初始化"}, nil
+	}
+
+	localPath := mountPath
+	if localPath == "" {
+		name := info.Name
+		if name == "" {
+			name = shareCode
+		}
+		localPath = fmt.Sprintf("/Telegram/%s", name)
+	}
+
+	mountID, err := s.mounter.CreateMountPoint(s.ctx, &MountRequest{
+		LocalPath:         localPath,
+		OsType:            "subscribe_share_folder",
+		ShareCode:         shareCode,
+		FileID:            info.FileId,
+		EnableDeepRefresh: true,
+	})
+	if err != nil {
+		return &MountResult{Success: false, Message: fmt.Sprintf("创建挂载点失败: %v", err)}, nil
+	}
+
+	_ = mountID
+
+	return &MountResult{
+		Success:   true,
+		Message:   "挂载成功",
+		MountPath: localPath,
+		ShareID:   info.ShareId,
+		FileID:    info.FileId,
+	}, nil
 }

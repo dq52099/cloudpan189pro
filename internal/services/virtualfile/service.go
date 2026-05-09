@@ -41,11 +41,32 @@ type Service interface {
 type service struct {
 	svc    bootstrap.ServiceContext
 	dbLock sync.Mutex
+
+	// usesLocalLock 是否启用进程级互斥锁。
+	// SQLite 写并发能力弱，开启锁可大幅降低 "database is locked" 错误；
+	// MySQL/Postgres 有自己的锁机制，全局锁会变成严重瓶颈。
+	usesLocalLock bool
 }
 
 func NewService(svc bootstrap.ServiceContext) Service {
 	return &service{
-		svc: svc,
+		svc:           svc,
+		usesLocalLock: dbNeedsLocalLock(svc),
+	}
+}
+
+// dbNeedsLocalLock 根据当前底层数据库方言决定是否需要进程级锁。
+func dbNeedsLocalLock(svc bootstrap.ServiceContext) bool {
+	db := svc.GetDBWithoutContext()
+	if db == nil || db.Dialector == nil {
+		return true
+	}
+
+	switch db.Dialector.Name() {
+	case "sqlite", "sqlite3":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -53,8 +74,12 @@ func (s *service) getDB(ctx context.Context) *gorm.DB {
 	return s.svc.GetDB(ctx).Model(new(models.VirtualFile))
 }
 
-// withLock 默认使用 sqlite，性能差
+// withLock 默认使用 sqlite 串行写；非 SQLite 场景直接透传，避免全局锁瓶颈。
 func (s *service) withLock(ctx context.Context, fn func(db *gorm.DB) *gorm.DB) *gorm.DB {
+	if !s.usesLocalLock {
+		return fn(s.getDB(ctx))
+	}
+
 	s.dbLock.Lock()
 	defer s.dbLock.Unlock()
 

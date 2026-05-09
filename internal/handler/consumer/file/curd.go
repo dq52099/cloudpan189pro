@@ -149,6 +149,14 @@ func (h *handler) batchCreateFiles(ctx context.Context, pid int64, filesToCreate
 	return nil
 }
 
+// updateStrmContext 封装一次扫描中需要同步的 STRM 更新信息。
+type updateStrmContext struct {
+	// oldFile 数据库里当前的状态（更新前）。
+	oldFile *models.VirtualFile
+	// newFile 云端拉到的最新状态（已拥有 newName/newRev 等字段，但还未写回 DB）。
+	newFile *models.VirtualFile
+}
+
 func (h *handler) batchUpdateFiles(ctx context.Context, filesToUpdate map[int64][]utils.Field) (err error) {
 	if err = h.virtualFileService.BatchUpdate(ctx, filesToUpdate); err != nil {
 		ctx.Error("批量更新文件 - 服务层更新失败", zap.Error(err))
@@ -156,6 +164,98 @@ func (h *handler) batchUpdateFiles(ctx context.Context, filesToUpdate map[int64]
 	}
 
 	return nil
+}
+
+// syncStrmAfterUpdate 针对扫描时检测到变更的文件同步更新 STRM。
+// 逻辑：
+//   - 如果新旧文件名不同，先删除旧 STRM 再按新名创建；
+//   - 如果仅 Rev 变化（URL 签名需要刷新），按新名重写覆盖；
+//   - 仅处理非目录且命中 includedSuffixes 的文件。
+//
+// 该函数在 batchUpdateFiles 成功后调用，不会破坏事务一致性；
+// 任何单文件失败只打日志不阻塞整个扫描。
+func (h *handler) syncStrmAfterUpdate(ctx context.Context, updates []*updateStrmContext) {
+	if shared.MediaConfig == nil || !shared.MediaConfig.Enable {
+		return
+	}
+
+	if len(updates) == 0 {
+		return
+	}
+
+	dirPath, ok := ctx.GetString(consts.CtxKeyFileFullPath)
+	if !ok {
+		ctx.Warn("同步 STRM - 缺少 ctx 路径信息，跳过")
+		return
+	}
+
+	for _, u := range updates {
+		if u == nil || u.oldFile == nil || u.newFile == nil {
+			continue
+		}
+		if u.oldFile.IsDir || u.newFile.IsDir {
+			continue
+		}
+
+		extOld := path.Ext(u.oldFile.Name)
+		extNew := path.Ext(u.newFile.Name)
+
+		includedOld := len(shared.MediaConfig.IncludedSuffixes) == 0 || slices.Contains(shared.MediaConfig.IncludedSuffixes, extOld)
+		includedNew := len(shared.MediaConfig.IncludedSuffixes) == 0 || slices.Contains(shared.MediaConfig.IncludedSuffixes, extNew)
+
+		// 旧文件是媒体、新文件不是（极少见：后缀变化），先清理旧 STRM 即可
+		if includedOld && !includedNew {
+			oldStrm := strings.TrimSuffix(u.oldFile.Name, extOld) + ".strm"
+			oldFull := path.Join(shared.MediaConfig.StoragePath, dirPath, oldStrm)
+			if err := h.mediaFileService.DeleteStrmByFullPath(ctx, oldFull); err != nil {
+				ctx.Warn("同步 STRM - 删除旧 STRM 失败", zap.String("path", oldFull), zap.Error(err))
+			}
+			_ = h.mediaFileService.DeleteStrm(ctx, u.oldFile.ID, shared.MediaConfig.StoragePath)
+			continue
+		}
+
+		// 新文件不是媒体格式，不管旧的情况都跳过创建
+		if !includedNew {
+			continue
+		}
+
+		// 如果名称变了，先删除旧 STRM
+		if u.oldFile.Name != u.newFile.Name {
+			oldStrm := strings.TrimSuffix(u.oldFile.Name, extOld) + ".strm"
+			oldFull := path.Join(shared.MediaConfig.StoragePath, dirPath, oldStrm)
+			if err := h.mediaFileService.DeleteStrmByFullPath(ctx, oldFull); err != nil {
+				ctx.Warn("同步 STRM - 重命名清理旧 STRM 失败", zap.String("path", oldFull), zap.Error(err))
+			}
+			if err := h.mediaFileService.DeleteStrm(ctx, u.oldFile.ID, shared.MediaConfig.StoragePath); err != nil {
+				ctx.Warn("同步 STRM - 清理旧 STRM DB 记录失败", zap.Error(err))
+			}
+		}
+
+		// 以新名为文件名重建/更新 STRM
+		filename := strings.TrimSuffix(u.newFile.Name, extNew) + ".strm"
+		values, err := h.verifyService.SignV1(ctx, u.oldFile.ID, verifySvi.WithV1NoExpire())
+		if err != nil {
+			ctx.Warn("同步 STRM - 获取签名失败", zap.Int64("file_id", u.oldFile.ID), zap.Error(err))
+			continue
+		}
+
+		// 如果 conflict policy 是 skip 且 DB 已有记录，WriteStrm 会直接返回 (0,nil) 不覆盖。
+		// 这里强制走 replace 语义：先清掉 DB 记录让 WriteStrm 重新创建。
+		_ = h.mediaFileService.DeleteStrm(ctx, u.oldFile.ID, shared.MediaConfig.StoragePath)
+
+		if _, err := h.mediaFileService.WriteStrm(
+			ctx,
+			shared.MediaConfig.GetCar(dirPath, filename),
+			u.oldFile.ID,
+			shared.JoinDownloadURL(u.oldFile.ID, values),
+		); err != nil {
+			ctx.Warn("同步 STRM - 重写 STRM 失败",
+				zap.Int64("file_id", u.oldFile.ID),
+				zap.String("name", u.newFile.Name),
+				zap.Error(err),
+			)
+		}
+	}
 }
 
 func (h *handler) createStrmIteratorfunc(ctx context.Context, result *gorm.DB, files []*models.VirtualFile) {

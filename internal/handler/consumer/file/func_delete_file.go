@@ -157,7 +157,9 @@ func (h *handler) HandleDelete() taskcontext.HandlerFunc {
 		// 获取父任务tracker（用于批量任务汇总进度）
 		var parentTracker *filetasklog.Tracker
 		if v := ctx.GetContext().Value(consts.CtxKeyTaskTracker); v != nil {
-			parentTracker = v.(*filetasklog.Tracker)
+			if tracker, ok := v.(*filetasklog.Tracker); ok {
+				parentTracker = tracker
+			}
 		}
 
 		tracker, logErr := h.fileTaskLogService.Create(

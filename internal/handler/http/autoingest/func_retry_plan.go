@@ -2,9 +2,12 @@ package autoingest
 
 import (
 	"encoding/json"
+	"errors"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
+	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 // RetryPlanRequest 重试计划请求
@@ -36,6 +39,10 @@ func (h *handler) RetryPlan() httpcontext.HandlerFunc {
 		// 查询计划是否存在
 		plan, err := h.planService.Query(ctx.GetContext(), req.ID)
 		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(codePlanNotFound.WithError(err))
+				return
+			}
 			ctx.Fail(codePlanQueryFailed.WithError(err))
 
 			return
@@ -67,9 +74,20 @@ func (h *handler) RetryPlan() httpcontext.HandlerFunc {
 			IsRetry: true,
 		}
 
-		taskBody, _ := json.Marshal(taskReq)
+		taskBody, jerr := json.Marshal(taskReq)
+		if jerr != nil {
+			ctx.GetContext().Warn("序列化重试任务失败", zap.Int64("plan_id", req.ID), zap.Error(jerr))
+			ctx.Fail(codePlanRefreshFailed.WithError(jerr))
 
-		_ = h.taskEngine.PushMessage(ctx.GetContext(), taskReq.Topic(), taskBody)
+			return
+		}
+
+		if perr := h.taskEngine.PushMessage(ctx.GetContext(), taskReq.Topic(), taskBody); perr != nil {
+			ctx.GetContext().Warn("下发重试任务失败", zap.Int64("plan_id", req.ID), zap.Error(perr))
+			ctx.Fail(codePlanRefreshFailed.WithError(perr))
+
+			return
+		}
 
 		ctx.Success()
 	}

@@ -118,7 +118,7 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 		loginLogHandler     = loginlogHandler.NewHandler(loginLogService)
 		mediaHandler        = media.NewHandler(mediaConfigService, mediaFileService, mountPointService, virtualFileService, verifyService, fileTaskLogService, taskEngine)
 		telegramHTTPHandler = telegramHandler.NewHandler(db, telegramService, svc.GetLogger("telegram-http"))
-		resourceHandler     = resourceHandlerPkg.NewHandler(db, svc.GetLogger("resource"), userService, userGroupService, mountPointService, cloudTokenService, mediaConfigService, mediaFileService, taskEngine)
+		resourceHandler     = resourceHandlerPkg.NewHandler(db, svc.GetLogger("resource"), userService, userGroupService, mountPointService, cloudTokenService, mediaConfigService, mediaFileService, loginLogService, taskEngine)
 	)
 
 	var tmdbService tmdbSvi.Service
@@ -131,7 +131,21 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 		doubanService = extServices.Douban
 		openaiService = extServices.OpenAI
 	}
-	subscriptionHTTPHandler := subscriptionHandler.NewHandler(db, tmdbService, doubanService, storageFacadeService, svc.GetLogger("subscription-http"), openaiService)
+	subscriptionHTTPHandler := subscriptionHandler.NewHandler(db, tmdbService, doubanService, storageFacadeService, cloudBridgeService, svc.GetLogger("subscription-http"), openaiService)
+
+	// 为订阅服务注入挂载和分享信息服务（实际挂载能力）
+	if extServices != nil && extServices.Subscription != nil {
+		extServices.Subscription.SetMountService(&subscriptionMountAdapter{inner: storageFacadeService})
+		extServices.Subscription.SetShareInfoFetcher(&subscriptionShareAdapter{inner: cloudBridgeService})
+	}
+
+	// 为 Telegram 服务注入挂载依赖，避免 Bot 处理消息时通过 HTTP 自调
+	if extServices != nil && extServices.Telegram != nil {
+		extServices.Telegram.SetMountDependencies(
+			&telegramShareAdapter{inner: cloudBridgeService},
+			&telegramMountAdapter{inner: storageFacadeService, taskEngine: taskEngine, mountPointService: mountPointService},
+		)
+	}
 
 	var (
 		userMiddleware = newAuthMiddleware(userService)
@@ -183,7 +197,6 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 			storageRouter.POST("/batch_add", wrap(storageHandler.BatchAdd()))
 			storageRouter.POST("/delete", wrap(storageHandler.Delete()))
 			storageRouter.POST("/batch_delete", wrap(storageHandler.BatchDelete()))
-			storageRouter.POST("/clear_all", wrap(storageHandler.ClearAll()))
 			storageRouter.POST("/batch_parse_text", wrap(storageHandler.BatchParseFromText()))
 			storageRouter.POST("/batch_refresh", wrap(storageHandler.BatchRefresh()))
 			storageRouter.POST("/batch_modify_token", wrap(storageHandler.BatchModifyToken()))
@@ -192,6 +205,12 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 			storageRouter.POST("/refresh", wrap(storageHandler.Refresh()))
 			storageRouter.POST("/toggle_auto_refresh", wrap(storageHandler.ToggleAutoRefresh()))
 			storageRouter.POST("/modify_token", wrap(storageHandler.ModifyToken()))
+		}
+
+		// 危险操作仅允许管理员执行
+		storageAdminRouter := openapiRouter.Group("/storage", wrap(userMiddleware.Auth(true)))
+		{
+			storageAdminRouter.POST("/clear_all", wrap(storageHandler.ClearAll()))
 		}
 
 		storageAdvanceRouter := openapiRouter.Group("/storage/advance", wrap(userMiddleware.Auth()))
@@ -204,8 +223,11 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 			storageAdvanceRouter.GET("/share_info", wrap(storageAdvanceHandler.GetShareInfo()))
 		}
 
+		// 兼容入口：旧版 Telegram 服务会调用 /api/public/share_info 做自回调
+		// 这里补加登录鉴权，避免匿名用户查询云端分享元数据
 		{
-			openapiRouter.GET("/public/share_info", wrap(storageAdvanceHandler.GetShareInfo()))
+			publicShareRouter := openapiRouter.Group("/public", wrap(userMiddleware.Auth()))
+			publicShareRouter.GET("/share_info", wrap(storageAdvanceHandler.GetShareInfo()))
 		}
 	}
 
@@ -280,12 +302,17 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 			autoIngestRouter.POST("/plan/retry", wrap(autoIngestHandler.RetryPlan()))
 			autoIngestRouter.GET("/log/list", wrap(autoIngestHandler.LogList()))
 			autoIngestRouter.POST("/log/delete_error", wrap(autoIngestHandler.DeleteErrorLogs()))
-			autoIngestRouter.POST("/log/clear", wrap(autoIngestHandler.ClearLogs()))
 			autoIngestRouter.POST("/plan/batch_retry", wrap(autoIngestHandler.BatchRetry()))
 			autoIngestRouter.POST("/plan/batch_refresh", wrap(autoIngestHandler.BatchRefresh()))
 			autoIngestRouter.POST("/plan/batch_delete", wrap(autoIngestHandler.BatchDelete()))
 			autoIngestRouter.POST("/plan/batch_enable", wrap(autoIngestHandler.BatchEnable()))
 			autoIngestRouter.POST("/plan/batch_disable", wrap(autoIngestHandler.BatchDisable()))
+		}
+
+		// 清空全部日志属于危险操作，仅允许管理员
+		autoIngestAdminRouter := openapiRouter.Group("/auto_ingest", wrap(userMiddleware.Auth(true)))
+		{
+			autoIngestAdminRouter.POST("/log/clear", wrap(autoIngestHandler.ClearLogs()))
 		}
 	}
 
@@ -293,6 +320,7 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 		loginLogRouter := openapiRouter.Group("/login_log", wrap(userMiddleware.Auth(true)))
 		{
 			loginLogRouter.GET("/list", wrap(loginLogHandler.List()))
+			loginLogRouter.POST("/clear", wrap(loginLogHandler.Clear()))
 		}
 	}
 
@@ -337,7 +365,7 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 	}
 
 	{
-		resourceRouter := openapiRouter.Group("/resource")
+		resourceRouter := openapiRouter.Group("/resource", wrap(userMiddleware.Auth()))
 		{
 			resourceRouter.GET("/summary", wrap(resourceHandler.Summary()))
 		}

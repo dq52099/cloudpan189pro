@@ -1,16 +1,21 @@
 package mediafile
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/pkg/errors"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	"github.com/xxcheng123/cloudpan189-share/internal/shared"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
+// DeleteStrm 删除单个 STRM 文件及其数据库记录。
+// 磁盘删除失败会记录 warning 并继续删除 DB 记录，避免孤儿 DB 记录阻塞后续流程。
 func (s *service) DeleteStrm(ctx context.Context, fid int64, rootPath string) error {
 	file, err := s.QueryStrm(ctx, fid)
 	if err != nil {
@@ -21,14 +26,30 @@ func (s *service) DeleteStrm(ctx context.Context, fid int64, rootPath string) er
 		return err
 	}
 
-	// 删除文件
-	_ = os.Remove(filepath.Join(rootPath, file.Path))
+	// 删除磁盘文件
+	if err := os.Remove(filepath.Join(rootPath, file.Path)); err != nil && !os.IsNotExist(err) {
+		ctx.Warn("删除 STRM 文件失败（将继续清理 DB 记录）",
+			zap.String("path", filepath.Join(rootPath, file.Path)),
+			zap.Error(err),
+		)
+	}
+
 	// 删除记录
 	return s.getDB(ctx).Where("id = ?", file.ID).Delete(new(models.MediaFile)).Error
 }
 
-// ClearStrm 清除所有文件（夹）
+// Clear 清除根路径下所有文件夹并清空对应 DB 记录。
+// 单个文件删除失败时记录 warning 并继续；所有文件处理完后统一清理 DB。
+//
+// 安全检查：
+//   - rootPath 必须与 shared.MediaConfig.StoragePath 一致，防止调用方传入错误的危险路径；
+//   - rootPath 不能是根目录 `/` 或 Windows 盘符根 `C:\`。
 func (s *service) Clear(ctx context.Context, rootPath string) error {
+	if err := validateMediaStorageRoot(rootPath); err != nil {
+		ctx.Error("拒绝清理非法媒体根路径", zap.String("path", rootPath), zap.Error(err))
+		return err
+	}
+
 	entries, err := os.ReadDir(rootPath)
 	if err != nil {
 		ctx.Error("读取目录失败", zap.String("path", rootPath), zap.Error(err))
@@ -36,34 +57,71 @@ func (s *service) Clear(ctx context.Context, rootPath string) error {
 		return err
 	}
 
-	for _, entry := range entries {
-		// 删除文件
-		if err := os.RemoveAll(filepath.Join(rootPath, entry.Name())); err != nil {
-			ctx.Error("删除文件失败", zap.Error(err), zap.String("path", filepath.Join(rootPath, entry.Name())))
+	var failedCount int
 
-			return err
+	for _, entry := range entries {
+		target := filepath.Join(rootPath, entry.Name())
+		if err := os.RemoveAll(target); err != nil {
+			ctx.Warn("删除文件失败，已跳过", zap.Error(err), zap.String("path", target))
+			failedCount++
 		}
 	}
 
-	// 再删除数据库中的所有记录
+	if failedCount > 0 {
+		ctx.Warn("部分磁盘文件清理失败，将继续清理 DB 记录", zap.Int("failed_count", failedCount))
+	}
+
+	// 再删除数据库中的所有记录（即便部分磁盘清理失败也要保持 DB 一致）
 	if err := s.getDB(ctx).Where("1 = 1").Delete(new(models.MediaFile)).Error; err != nil {
 		ctx.Error("清空数据库失败", zap.Error(err))
 
 		return err
 	}
 
-	ctx.Info("清空媒体文件数据成功", zap.String("rootPath", rootPath))
+	ctx.Info("清空媒体文件数据成功", zap.String("rootPath", rootPath), zap.Int("disk_failed", failedCount))
 
 	return nil
 }
 
-// ClearAll 清空所有媒体文件记录（不清除实际文件）
-func (s *service) ClearAll(ctx context.Context) error {
-	db := s.svc.GetDB(ctx).Exec("DELETE FROM media_files")
-	if db.Error != nil {
-		ctx.Error("清空 media_files 失败", zap.Error(db.Error))
-		return db.Error
+// validateMediaStorageRoot 对 Clear 传入的 root 做最小安全校验。
+func validateMediaStorageRoot(rootPath string) error {
+	clean := strings.TrimSpace(rootPath)
+	if clean == "" {
+		return errors.New("媒体根路径不能为空")
 	}
-	ctx.Info("清空 media_files 成功", zap.Int64("deleted", db.RowsAffected))
+
+	absPath, err := filepath.Abs(clean)
+	if err != nil {
+		return fmt.Errorf("解析路径失败: %w", err)
+	}
+
+	// 防止 `/` 或 盘符根
+	if absPath == "/" || absPath == `\` || (len(absPath) == 3 && absPath[1] == ':') {
+		return errors.New("拒绝清理系统根目录或盘符根")
+	}
+
+	// 必须与当前配置的 StoragePath 一致（校准从 http handler 传来的值）
+	if cfg := shared.MediaConfig; cfg != nil && cfg.StoragePath != "" {
+		absCfg, err := filepath.Abs(cfg.StoragePath)
+		if err == nil && absCfg != absPath {
+			return fmt.Errorf("传入路径与媒体配置不一致: got=%s, want=%s", absPath, absCfg)
+		}
+	}
+
+	return nil
+}
+
+// ClearAll 清空所有媒体文件的 DB 记录（不清除实际文件）。
+// 适用于场景：外部手动维护磁盘文件，只需重置 DB 登记。
+func (s *service) ClearAll(ctx context.Context) error {
+	result := s.getDB(ctx).Unscoped().Where("1 = 1").Delete(new(models.MediaFile))
+	if result.Error != nil {
+		ctx.Error("清空 media_files 失败", zap.Error(result.Error))
+
+		return result.Error
+	}
+
+	ctx.Info("清空 media_files 成功", zap.Int64("deleted", result.RowsAffected))
+
 	return nil
 }

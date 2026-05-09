@@ -6,13 +6,14 @@ import (
 
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	filetasklogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/filetasklog"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
 )
 
 type batchDeleteRequest struct {
-	IDs []int64 `json:"ids" binding:"required,min=1"`
+	IDs []int64 `json:"ids" binding:"required,min=1,max=1000"`
 }
 
 type batchDeleteResponse struct {
@@ -23,7 +24,7 @@ type batchDeleteResponse struct {
 
 // BatchDelete 批量删除存储挂载
 // @Summary 批量删除存储挂载
-// @Description 批量删除指定的存储挂载点，为每个挂载点创建独立任务，由工作流并发处理
+// @Description 批量删除指定的存储挂载点，为每个挂载点创建独立任务，由工作流并发处理（上限 1000 个）
 // @Tags 存储管理
 // @Accept json
 // @Produce json
@@ -47,62 +48,72 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 		userID := ctx.GetInt64(consts.CtxKeyUserId)
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
 
-		// 查询所有挂载点并过滤有权限删除的
-		validIds := make([]int64, 0)
+		// 查询所有挂载点并按权限过滤；缓存已查到的对象避免二次查询
+		validMountPoints := make([]*models.MountPoint, 0, len(req.IDs))
 		for _, id := range req.IDs {
 			mountPoint, err := h.mountPointService.Query(ctx.GetContext(), id)
 			if err != nil {
+				ctx.GetContext().Debug("查询挂载点失败，跳过", zap.Int64("id", id), zap.Error(err))
 				continue
 			}
-			// 检查权限
-			if isAdmin || mountPoint.CreatorUserID == userID {
-				validIds = append(validIds, mountPoint.FileId)
+			// 检查权限：管理员或创建者可以删除
+			if !(isAdmin || mountPoint.CreatorUserID == userID) {
+				ctx.GetContext().Debug("无权限删除该挂载点，跳过", zap.Int64("id", id), zap.Int64("creator_user_id", mountPoint.CreatorUserID))
+				continue
 			}
+			validMountPoints = append(validMountPoints, mountPoint)
 		}
 
 		// 创建任务日志
-		tracker, _ := h.fileTaskLogService.Create(
+		tracker, logErr := h.fileTaskLogService.Create(
 			ctx.GetContext(),
 			"批量删除",
-			fmt.Sprintf("批量删除 %d 个挂载点", len(validIds)),
-			filetasklogSvi.WithFile(0),
-			filetasklogSvi.WithDesc(fmt.Sprintf("ID列表: %v", validIds)),
+			fmt.Sprintf("批量删除 %d 个挂载点", len(validMountPoints)),
+			filetasklogSvi.WithDesc(fmt.Sprintf("请求ID数量: %d, 授权通过: %d", len(req.IDs), len(validMountPoints))),
 		)
-		if tracker != nil {
+		if logErr != nil {
+			ctx.GetContext().Warn("创建批量删除任务日志失败", zap.Error(logErr))
+		} else if tracker != nil {
 			_ = h.fileTaskLogService.Running(ctx.GetContext(), tracker)
-			_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithTotalCounter(len(validIds)))
+			_ = h.fileTaskLogService.FlushCount(
+				ctx.GetContext(), tracker,
+				filetasklogSvi.WithTotalCounter(len(validMountPoints)),
+			)
 		}
 
-		// 为每个挂载点创建独立任务
+		// 为每个挂载点推送独立删除任务
 		successCount := 0
-		for _, id := range validIds {
-			mountPoint, err := h.mountPointService.Query(ctx.GetContext(), id)
+		for _, mountPoint := range validMountPoints {
+			taskReq := &topic.FileBatchDeleteRequest{
+				IDs: []int64{mountPoint.FileId},
+			}
+			body, err := json.Marshal(taskReq)
 			if err != nil {
-				ctx.GetContext().Warn("查询挂载点失败，跳过", zap.Int64("id", id), zap.Error(err))
+				ctx.GetContext().Warn("序列化删除任务失败", zap.Int64("file_id", mountPoint.FileId), zap.Error(err))
 				continue
 			}
 
-			taskReq := &topic.FileDeleteRequest{
-				FileId: mountPoint.FileId,
-			}
-			body, _ := json.Marshal(taskReq)
-			err = h.taskEngine.PushMessage(
+			if err := h.taskEngine.PushMessage(
 				ctx.GetContext().
 					WithValue(consts.CtxKeyFullPath, mountPoint.FullPath).
 					WithValue(consts.CtxKeyInvokeHandlerName, "删除文件").
 					WithValue(consts.CtxKeyTaskTracker, tracker),
 				taskReq.Topic(),
 				body,
-			)
-
-			if err != nil {
-				ctx.GetContext().Warn("推送删除任务失败，跳过", zap.Int64("id", id), zap.Error(err))
+			); err != nil {
+				ctx.GetContext().Warn("推送删除任务失败，跳过", zap.Int64("file_id", mountPoint.FileId), zap.Error(err))
 				continue
 			}
 			successCount++
 		}
 
-		ctx.GetContext().Info("批量删除请求已加入队列", zap.Int("total", len(req.IDs)), zap.Int("valid", len(validIds)), zap.Int("success", successCount))
+		ctx.GetContext().Info(
+			"批量删除请求已加入队列",
+			zap.Int("total", len(req.IDs)),
+			zap.Int("valid", len(validMountPoints)),
+			zap.Int("success", successCount),
+		)
+
 		ctx.Success(batchDeleteResponse{
 			Total:   len(req.IDs),
 			Success: successCount,

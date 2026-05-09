@@ -10,12 +10,12 @@ import (
 
 // BatchDeleteRequest 批量删除请求
 type BatchDeleteRequest struct {
-	IDs []int64 `json:"ids" binding:"required,min=1"`
+	IDs []int64 `json:"ids" binding:"required,min=1,max=500"`
 }
 
 // BatchDelete 批量删除计划
 // @Summary 批量删除计划
-// @Description 批量删除自动入库计划
+// @Description 批量删除自动入库计划（上限 500 个 id，内部限流 16 并发）
 // @Tags 自动挂载管理
 // @Accept json
 // @Produce json
@@ -39,12 +39,16 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 			successCnt int
 			failCnt    int
 			mu         sync.Mutex
+			sem        = make(chan struct{}, maxBatchConcurrency)
 		)
 
 		for _, id := range req.IDs {
 			wg.Add(1)
+			sem <- struct{}{}
+
 			go func(planId int64) {
 				defer wg.Done()
+				defer func() { <-sem }()
 
 				deleteReq := &autoingestplanSvi.DeleteRequest{
 					ID:      planId,

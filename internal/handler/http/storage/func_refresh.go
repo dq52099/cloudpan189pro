@@ -3,9 +3,11 @@ package storage
 import (
 	"encoding/json"
 
+	"github.com/pkg/errors"
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
+	"gorm.io/gorm"
 )
 
 type refreshRequest struct {
@@ -23,6 +25,7 @@ type refreshRequest struct {
 // @Param request body refreshRequest true "刷新请求参数"
 // @Success 200 {object} httpcontext.Response "存储挂载刷新成功"
 // @Failure 400 {object} httpcontext.Response "参数验证失败，code=99998"
+// @Failure 400 {object} httpcontext.Response "挂载点不存在，code=4022"
 // @Failure 400 {object} httpcontext.Response "查询挂载点失败，code=4018"
 // @Failure 400 {object} httpcontext.Response "添加扫描任务失败，code=4015"
 // @Failure 401 {object} httpcontext.Response "未授权访问"
@@ -39,7 +42,11 @@ func (h *handler) Refresh() httpcontext.HandlerFunc {
 
 		mountPoint, err := h.mountPointService.Query(ctx.GetContext(), req.ID)
 		if err != nil {
-			ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(busCodeStorageMountPointNotFound.WithError(err))
+			} else {
+				ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
+			}
 
 			return
 		}
@@ -49,7 +56,13 @@ func (h *handler) Refresh() httpcontext.HandlerFunc {
 			Deep:   req.Deep,
 		}
 
-		body, _ := json.Marshal(taskReq)
+		body, err := json.Marshal(taskReq)
+		if err != nil {
+			ctx.Fail(busCodeStorageAddTaskFailed.WithError(err))
+
+			return
+		}
+
 		if err = h.taskEngine.PushMessage(ctx.GetContext().
 			WithValue(consts.CtxKeyFullPath, mountPoint.FullPath).
 			WithValue(consts.CtxKeyInvokeHandlerName, "手动刷新"),

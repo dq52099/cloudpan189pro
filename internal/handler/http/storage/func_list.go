@@ -6,6 +6,7 @@ import (
 	"github.com/samber/lo"
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	"go.uber.org/zap"
 
 	cloudtokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
 	filetasklogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/filetasklog"
@@ -81,8 +82,19 @@ func (h *handler) List() httpcontext.HandlerFunc {
 		var err error
 		taskLogMapList := make(map[int64][]*models.FileTaskLog)
 
+		// 当 CurrentPage/PageSize 为 0 时使用默认值，避免后续 slice 越界
+		if req.CurrentPage <= 0 {
+			req.CurrentPage = 1
+		}
+		if req.PageSize <= 0 {
+			req.PageSize = 10
+		}
+
 		if req.TaskLogStatus != "" {
 			// 带日志筛选：先取出所有符合权限的挂载点
+			// 注意：此分支会在内存中做过滤，存在大规模数据性能隐患（见 TODO）。
+			// 为了避免 OOM，这里限制一次最多处理 maxInMemoryMountPoints 个挂载点。
+			const maxInMemoryMountPoints = 5000
 			allList, err := h.mountPointService.List(ctx.GetContext(), &mountpointSvi.ListRequest{
 				FullPath:     req.Path,
 				NoPaginate:   true,
@@ -93,6 +105,13 @@ func (h *handler) List() httpcontext.HandlerFunc {
 			if err != nil {
 				ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
 				return
+			}
+			if len(allList) > maxInMemoryMountPoints {
+				ctx.GetContext().Warn("按任务日志状态过滤挂载点数量过大，已截断",
+					zap.Int("total", len(allList)),
+					zap.Int("max", maxInMemoryMountPoints),
+				)
+				allList = allList[:maxInMemoryMountPoints]
 			}
 
 			// 获取所有挂载点的日志
