@@ -9,12 +9,12 @@ import (
 
 type batchBindFilesRequest struct {
 	GroupID int64   `json:"groupId" binding:"required,min=1" example:"1"`        // 用户组ID
-	FileIDs []int64 `json:"fileIds" binding:"required" example:"1001,1002,1003"` // 文件ID列表
+	FileIDs []int64 `json:"fileIds" binding:"required" example:"1001,1002,1003"` // 文件ID列表，空数组表示清空绑定
 }
 
 // BatchBindFiles 批量绑定文件到用户组
 // @Summary 批量绑定文件到用户组
-// @Description 批量绑定文件到指定用户组，会先删除该组的所有旧文件绑定关系，然后创建新的绑定关系。支持文件ID去重处理
+// @Description 批量绑定文件到指定用户组，会先删除该组的所有旧文件绑定关系，然后创建新的绑定关系。支持文件ID去重处理；fileIds 为空数组时清空绑定
 // @Tags 用户组管理
 // @Accept json
 // @Produce json

@@ -39,12 +39,17 @@ func (m *mockUserGroupService) Query(ctx appContext.Context, gid int64) (*models
 
 type mockUserGroupBindFileService struct {
 	group2fileSvi.Service
-	batchBindCalls int
-	getBindCalls   int
+	batchBindCalls   int
+	batchBindGroupID int64
+	batchBindFileIDs []int64
+	getBindCalls     int
 }
 
 func (m *mockUserGroupBindFileService) BatchBindFiles(ctx appContext.Context, groupID int64, fileIDs []int64) error {
 	m.batchBindCalls++
+	m.batchBindGroupID = groupID
+
+	m.batchBindFileIDs = append([]int64(nil), fileIDs...)
 
 	return nil
 }
@@ -192,5 +197,42 @@ func TestBatchBindFilesReturnsGenericFailureForQueryErrors(t *testing.T) {
 
 	if group2FileService.batchBindCalls != 0 {
 		t.Fatalf("expected group binding service not called, got %d calls", group2FileService.batchBindCalls)
+	}
+}
+
+func TestBatchBindFilesAllowsEmptyFileIDsForClearingBindings(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	group2FileService := &mockUserGroupBindFileService{}
+	router := newUserGroupTestRouter(
+		&mockUserGroupService{},
+		group2FileService,
+	)
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/batch_bind_files",
+		strings.NewReader(`{"groupId":1,"fileIds":[]}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected success, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if group2FileService.batchBindCalls != 1 {
+		t.Fatalf("expected group binding service called once, got %d calls", group2FileService.batchBindCalls)
+	}
+
+	if group2FileService.batchBindGroupID != 1 {
+		t.Fatalf("expected group id 1, got %d", group2FileService.batchBindGroupID)
+	}
+
+	if len(group2FileService.batchBindFileIDs) != 0 {
+		t.Fatalf("expected empty file ids for clearing bindings, got %v", group2FileService.batchBindFileIDs)
 	}
 }

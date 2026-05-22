@@ -13,7 +13,7 @@ import (
 var errInvalidGroupID = errors.New("groupId 必须大于 0")
 var errInvalidFileID = errors.New("fileIds 必须全部大于 0")
 
-// BatchBindFiles 批量绑定文件权限到用户组 先删除 再绑定
+// BatchBindFiles 批量绑定文件权限到用户组 先删除 再绑定。fileIds 为空时清空该组所有文件绑定。
 func (s *service) BatchBindFiles(ctx context.Context, groupId int64, fileIds []int64) error {
 	if groupId <= 0 {
 		return errInvalidGroupID
@@ -41,6 +41,7 @@ func (s *service) BatchBindFiles(ctx context.Context, groupId int64, fileIds []i
 		}
 
 		if len(uniqueFileIDs) == 0 {
+			// 空 fileIds 是显式清空语义，旧绑定删除后无需创建新绑定。
 			return nil
 		}
 

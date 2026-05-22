@@ -169,34 +169,46 @@ func TestBatchBindFilesRejectsMissingFileIDWithoutChangingBindings(t *testing.T)
 }
 
 func TestBatchBindFilesAllowsClearingAllBindings(t *testing.T) {
-	tDB := setupGroup2FileTestDB(t)
-	svc := NewService(tDB)
-	ctx := context.NewContext(stdctx.Background())
-
-	createGroupFileBinding(t, tDB.db, 10, 1001)
-	createGroupFileBinding(t, tDB.db, 10, 1002)
-	createGroupFileBinding(t, tDB.db, 20, 2001)
-
-	if err := svc.BatchBindFiles(ctx, 10, nil); err != nil {
-		t.Fatalf("clear bind files: %v", err)
+	tests := []struct {
+		name    string
+		fileIDs []int64
+	}{
+		{name: "nil file ids", fileIDs: nil},
+		{name: "empty file ids", fileIDs: []int64{}},
 	}
 
-	fileIDs, err := svc.GetBindFiles(ctx, 10)
-	if err != nil {
-		t.Fatalf("get bind files: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tDB := setupGroup2FileTestDB(t)
+			svc := NewService(tDB)
+			ctx := context.NewContext(stdctx.Background())
 
-	if len(fileIDs) != 0 {
-		t.Fatalf("expected group bindings cleared, got %v", fileIDs)
-	}
+			createGroupFileBinding(t, tDB.db, 10, 1001)
+			createGroupFileBinding(t, tDB.db, 10, 1002)
+			createGroupFileBinding(t, tDB.db, 20, 2001)
 
-	otherFileIDs, err := svc.GetBindFiles(ctx, 20)
-	if err != nil {
-		t.Fatalf("get other group bind files: %v", err)
-	}
+			if err := svc.BatchBindFiles(ctx, 10, tt.fileIDs); err != nil {
+				t.Fatalf("clear bind files: %v", err)
+			}
 
-	if !reflect.DeepEqual(otherFileIDs, []int64{2001}) {
-		t.Fatalf("expected other group unchanged, got %v", otherFileIDs)
+			fileIDs, err := svc.GetBindFiles(ctx, 10)
+			if err != nil {
+				t.Fatalf("get bind files: %v", err)
+			}
+
+			if len(fileIDs) != 0 {
+				t.Fatalf("expected group bindings cleared, got %v", fileIDs)
+			}
+
+			otherFileIDs, err := svc.GetBindFiles(ctx, 20)
+			if err != nil {
+				t.Fatalf("get other group bind files: %v", err)
+			}
+
+			if !reflect.DeepEqual(otherFileIDs, []int64{2001}) {
+				t.Fatalf("expected other group unchanged, got %v", otherFileIDs)
+			}
+		})
 	}
 }
 

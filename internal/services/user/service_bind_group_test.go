@@ -589,6 +589,46 @@ func TestDelCleansOwnedResourcesAndReferences(t *testing.T) {
 	assertCount(t, tDB.db, &models.VirtualFile{}, "id = ?", 1, otherMountPoint.FileId)
 }
 
+func TestDelAllowsMissingOwnedMountPointRoot(t *testing.T) {
+	tDB := setupUserTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	createUser(t, tDB.db, "founder", 0)
+	user := createUser(t, tDB.db, "delete-with-missing-root", 0)
+
+	token := &models.CloudToken{
+		Name:        "owned-token",
+		AccessToken: "access",
+		ExpiresIn:   3600,
+		Status:      1,
+		UserID:      user.ID,
+	}
+	if err := tDB.db.Create(token).Error; err != nil {
+		t.Fatalf("create cloud token: %v", err)
+	}
+
+	mountPoint := &models.MountPoint{
+		FileId:        2001,
+		OsType:        models.OsTypeFolder,
+		TokenId:       token.ID,
+		CreatorUserID: user.ID,
+		Name:          "missing-root",
+		FullPath:      "/missing-root",
+	}
+	if err := tDB.db.Create(mountPoint).Error; err != nil {
+		t.Fatalf("create mount point: %v", err)
+	}
+
+	if err := svc.Del(ctx, &DelRequest{ID: user.ID}); err != nil {
+		t.Fatalf("delete user: %v", err)
+	}
+
+	assertCount(t, tDB.db, &models.User{}, "id = ?", 0, user.ID)
+	assertCount(t, tDB.db, &models.CloudToken{}, "id = ?", 0, token.ID)
+	assertCount(t, tDB.db, &models.MountPoint{}, "id = ?", 0, mountPoint.ID)
+}
+
 func TestDelMissingUserKeepsRelations(t *testing.T) {
 	tDB := setupUserTestDB(t)
 	svc := NewService(tDB)
