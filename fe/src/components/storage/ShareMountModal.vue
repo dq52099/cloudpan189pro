@@ -135,6 +135,7 @@ import type { ApiResponse } from '@/utils/api'
 import { formatDateTime } from '@/utils/time'
 import { OS_TYPES } from '@/utils/osType'
 import { useMountPointBind } from '@/composables/useMountPointBind'
+import { normalizeShareInfo } from '@/utils/responseGuards'
 
 // Emits
 interface Emits {
@@ -194,6 +195,7 @@ const handleGetShareInfo = () => {
   const currentOperation = operationVersion
 
   shareState.loading = true
+  shareState.shareInfo = null
 
   const params: GetShareInfoQuery = {
     shareCode: shareState.shareCode.trim(),
@@ -209,8 +211,15 @@ const handleGetShareInfo = () => {
         return
       }
 
-      if (response.code === 200 && response.data) {
-        shareState.shareInfo = response.data
+      if (response.code === 200) {
+        const shareInfo = normalizeShareInfo(response.data)
+
+        if (!shareInfo) {
+          message.error('响应数据格式异常')
+          return
+        }
+
+        shareState.shareInfo = shareInfo
         currentStep.value = 2
         message.success('获取分享信息成功')
       } else {

@@ -15,6 +15,40 @@ const TOKEN_REFRESH_BUFFER = 5 * 60 * 1000
 // Token自动刷新阈值（60分钟）
 const TOKEN_AUTO_REFRESH_THRESHOLD = 60 * 60 * 1000
 
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return typeof value === 'object' && value !== null
+}
+
+const isNonEmptyString = (value: unknown): value is string => {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+const isPositiveFiniteNumber = (value: unknown): value is number => {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+}
+
+const isValidExpireTime = (value: unknown): value is number => {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+}
+
+const normalizeLoginResponse = (value: unknown): LoginResponse | null => {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  if (
+    !isNonEmptyString(value.accessToken) ||
+    !isNonEmptyString(value.refreshToken) ||
+    !isNonEmptyString(value.tokenType) ||
+    !isPositiveFiniteNumber(value.expiresIn) ||
+    !isRecord(value.user)
+  ) {
+    return null
+  }
+
+  return value as unknown as LoginResponse
+}
+
 export const useAuthStore = defineStore('auth', () => {
   const userStore = useUserStore()
 
@@ -35,17 +69,38 @@ export const useAuthStore = defineStore('auth', () => {
 
   let refreshPromise: Promise<string | null> | null = null
 
-  accessToken.value = localStg.get('token') || ''
-  refreshToken.value = localStg.get('refreshToken') || ''
-  expireTime.value = localStg.get('expireTime') || 0
+  const storedAccessToken = localStg.get('token')
+  const storedRefreshToken = localStg.get('refreshToken')
+  const storedExpireTime = localStg.get('expireTime')
+
+  accessToken.value = typeof storedAccessToken === 'string' ? storedAccessToken : ''
+  refreshToken.value = typeof storedRefreshToken === 'string' ? storedRefreshToken : ''
+  expireTime.value = isValidExpireTime(storedExpireTime) ? storedExpireTime : 0
+
+  if (storedAccessToken !== null && typeof storedAccessToken !== 'string') {
+    localStg.remove('token')
+  }
+  if (storedRefreshToken !== null && typeof storedRefreshToken !== 'string') {
+    localStg.remove('refreshToken')
+  }
+  if (storedExpireTime !== null && !isValidExpireTime(storedExpireTime)) {
+    localStg.remove('expireTime')
+  }
 
   const login = (loginData: LoginRequest): Promise<ApiResponse<LoginResponse>> => {
     loading.value = true
 
     return loginApi(loginData)
       .then((res) => {
-        if (res.code === 200 && res.data) {
-          storeWithUser(res.data)
+        if (res.code !== 200) {
+          throw new Error(res.msg || '登录失败，请检查用户名和密码')
+        }
+
+        const loginResponse = normalizeLoginResponse(res.data)
+        if (!loginResponse || !storeWithUser(loginResponse)) {
+          clearSession()
+
+          throw new Error('登录失败：响应数据格式异常')
         }
 
         return res
@@ -83,9 +138,14 @@ export const useAuthStore = defineStore('auth', () => {
     })
       .then((res) => {
         if (res.code === 200 && res.data) {
-          storeWithUser(res.data)
+          const loginResponse = normalizeLoginResponse(res.data)
+          if (!loginResponse || !storeWithUser(loginResponse)) {
+            clearSession()
 
-          return res.data.accessToken
+            return null
+          }
+
+          return loginResponse.accessToken
         }
 
         clearSession()
@@ -105,8 +165,13 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   const storeWithUser = (loginResponse: LoginResponse) => {
+    if (!userStore.store(loginResponse.user)) {
+      return false
+    }
+
     store(loginResponse)
-    userStore.store(loginResponse.user)
+
+    return true
   }
 
   const store = (data: { accessToken: string; refreshToken: string; expiresIn: number }) => {

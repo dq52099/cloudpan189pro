@@ -1,4 +1,4 @@
-import type { FamilyInfo, FileNode } from '@/api/storage/advance'
+import type { FamilyInfo, FileNode, ShareInfo } from '@/api/storage/advance'
 import type { ConfigInfoResponse } from '@/api/media'
 import type {
   CategoriesResponse,
@@ -92,6 +92,32 @@ export const normalizeFileNodes = (value: unknown): FileNode[] | null => {
       (item.isFolder === 0 || item.isFolder === 1)
     )
   })
+}
+
+export const normalizeShareInfo = (value: unknown): ShareInfo | null => {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  if (
+    !isString(value.id) ||
+    !isString(value.name) ||
+    !isFiniteNumber(value.shareId) ||
+    !isString(value.shareTime) ||
+    !isBoolean(value.isFolder) ||
+    !isString(value.accessCode)
+  ) {
+    return null
+  }
+
+  return {
+    id: value.id,
+    name: value.name,
+    shareId: value.shareId,
+    shareTime: value.shareTime,
+    isFolder: value.isFolder,
+    accessCode: value.accessCode,
+  }
 }
 
 const isOptionalString = (value: unknown): value is string | undefined => {

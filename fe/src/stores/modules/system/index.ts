@@ -7,6 +7,44 @@ import type { ApiResponse } from '@/utils/api'
 type SystemInfo = Models.SystemInfo
 type SystemRefreshResult = ApiResponse<SystemInfo> | void
 
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return typeof value === 'object' && value !== null
+}
+
+const isString = (value: unknown): value is string => typeof value === 'string'
+
+const isBoolean = (value: unknown): value is boolean => typeof value === 'boolean'
+
+const isSafeNonNegativeInteger = (value: unknown): value is number => {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
+const normalizeSystemInfo = (value: unknown): SystemInfo | null => {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  if (
+    !isString(value.baseURL) ||
+    !isBoolean(value.enableAuth) ||
+    !isBoolean(value.initialized) ||
+    !isSafeNonNegativeInteger(value.runTime) ||
+    !isString(value.runTimeHuman) ||
+    !isString(value.title)
+  ) {
+    return null
+  }
+
+  return {
+    baseURL: value.baseURL,
+    enableAuth: value.enableAuth,
+    initialized: value.initialized,
+    runTime: value.runTime,
+    runTimeHuman: value.runTimeHuman,
+    title: value.title,
+  }
+}
+
 // 默认系统信息
 const defaultSystemInfo: SystemInfo = {
   initialized: true,
@@ -27,14 +65,30 @@ export const useSystemStore = defineStore('system', () => {
 
   const load = () => {
     const _systemInfo = localStg.get('systemInfo')
-    if (_systemInfo) {
-      Object.assign(systemInfo, _systemInfo)
+    if (!_systemInfo) {
+      return
     }
+
+    const normalizedSystemInfo = normalizeSystemInfo(_systemInfo)
+    if (!normalizedSystemInfo) {
+      localStg.remove('systemInfo')
+
+      return
+    }
+
+    Object.assign(systemInfo, normalizedSystemInfo)
   }
 
-  const store = (_systemInfo: SystemInfo) => {
-    localStg.set('systemInfo', _systemInfo)
-    Object.assign(systemInfo, _systemInfo)
+  const store = (_systemInfo: unknown) => {
+    const normalizedSystemInfo = normalizeSystemInfo(_systemInfo)
+    if (!normalizedSystemInfo) {
+      return false
+    }
+
+    localStg.set('systemInfo', normalizedSystemInfo)
+    Object.assign(systemInfo, normalizedSystemInfo)
+
+    return true
   }
 
   const refresh = (): Promise<SystemRefreshResult> => {
@@ -48,7 +102,12 @@ export const useSystemStore = defineStore('system', () => {
     refreshPromise = getSystemInfo()
       .then((response) => {
         if (response.code === 200 && response.data) {
-          store(response.data)
+          if (!store(response.data)) {
+            error.value = '获取系统信息失败：响应数据格式异常'
+
+            return response
+          }
+
           loaded.value = true
         } else {
           error.value = response.msg || '获取系统信息失败'

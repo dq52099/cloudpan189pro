@@ -25,6 +25,14 @@
           </div>
         </div>
 
+        <div v-else-if="qrcodeFormatInvalid" class="format-warning-container">
+          <n-icon size="40" color="#f0a020">
+            <AlertCircleOutline />
+          </n-icon>
+          <p>响应数据格式异常</p>
+          <n-button type="primary" :disabled="isBusy" @click="initQrcode">重新生成</n-button>
+        </div>
+
         <div v-else class="error-container">
           <n-icon size="40" color="#d03050">
             <CloseCircleOutline />
@@ -98,7 +106,12 @@
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { NModal, NQrCode, NSpin, NButton, NIcon, NSpace, NAlert, useMessage } from 'naive-ui'
-import { CheckmarkCircleOutline, CloseCircleOutline, TimeOutline } from '@vicons/ionicons5'
+import {
+  AlertCircleOutline,
+  CheckmarkCircleOutline,
+  CloseCircleOutline,
+  TimeOutline,
+} from '@vicons/ionicons5'
 import { initQrcode as initQrcodeApi, checkQrcode } from '@/api/cloudtoken'
 
 // Props
@@ -122,6 +135,7 @@ const loading = ref(false)
 const checkLoading = ref(false)
 const qrcodeUuid = ref('')
 const qrcodeUrl = ref('')
+const qrcodeFormatInvalid = ref(false)
 const countdown = ref(0)
 const statusMessage = ref('')
 const statusType = ref<'success' | 'info' | 'warning' | 'error'>('info')
@@ -168,6 +182,24 @@ const invalidatePendingWork = () => {
   clearTimers()
 }
 
+const normalizeQrcodeUuid = (value: unknown) => {
+  if (typeof value !== 'object' || value === null || !('uuid' in value)) {
+    return null
+  }
+
+  const uuid = (value as { uuid: unknown }).uuid
+  if (typeof uuid !== 'string') {
+    return null
+  }
+
+  const normalizedUuid = uuid.trim()
+  if (!normalizedUuid) {
+    return null
+  }
+
+  return normalizedUuid
+}
+
 // 初始化二维码
 const initQrcode = () => {
   if (!showModal.value || isBusy.value) {
@@ -180,6 +212,10 @@ const initQrcode = () => {
   loading.value = true
   checkLoading.value = false
   successPending.value = false
+  qrcodeFormatInvalid.value = false
+  qrcodeUuid.value = ''
+  qrcodeUrl.value = ''
+  countdown.value = 0
   statusMessage.value = ''
   clearTimers()
 
@@ -189,10 +225,19 @@ const initQrcode = () => {
         return
       }
 
-      if (response.code === 200 && response.data) {
-        qrcodeUuid.value = response.data.uuid
+      if (response.code === 200) {
+        const uuid = normalizeQrcodeUuid(response.data)
+        if (!uuid) {
+          qrcodeFormatInvalid.value = true
+          statusMessage.value = '响应数据格式异常'
+          statusType.value = 'warning'
+
+          return
+        }
+
+        qrcodeUuid.value = uuid
         // 构建二维码URL，这里假设后端返回的是uuid，需要构建完整的登录URL
-        qrcodeUrl.value = `https://cloud.189.cn/api/portal/loginUrl.action?redirectURL=https://cloud.189.cn&uuid=${response.data.uuid}`
+        qrcodeUrl.value = `https://cloud.189.cn/api/portal/loginUrl.action?redirectURL=https://cloud.189.cn&uuid=${encodeURIComponent(uuid)}`
 
         // 开始倒计时（120秒）
         startCountdown(120, currentOperation)
@@ -212,6 +257,7 @@ const initQrcode = () => {
       console.error('初始化二维码失败:', error)
       statusMessage.value = '二维码生成失败，请重试'
       statusType.value = 'error'
+      qrcodeFormatInvalid.value = false
       qrcodeUrl.value = ''
     })
     .finally(() => {
@@ -342,6 +388,7 @@ const clearTimers = () => {
 const resetState = () => {
   qrcodeUuid.value = ''
   qrcodeUrl.value = ''
+  qrcodeFormatInvalid.value = false
   countdown.value = 0
   statusMessage.value = ''
   loading.value = false
@@ -404,6 +451,14 @@ onUnmounted(() => {
 }
 
 .error-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 40px;
+}
+
+.format-warning-container {
   display: flex;
   flex-direction: column;
   align-items: center;
