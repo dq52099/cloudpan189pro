@@ -142,6 +142,143 @@ let fileOpenRequestId = 0
 // 计算属性
 const canGoBack = computed(() => breadcrumbs.value.length > 0)
 
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+const isString = (value: unknown): value is string => {
+  return typeof value === 'string'
+}
+
+const isSafeNonNegativeInteger = (value: unknown): value is number => {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
+const isFileAddition = (value: unknown): value is Record<string, unknown> => {
+  return value === undefined || value === null || isRecord(value)
+}
+
+const normalizeBaseFile = (
+  value: unknown
+): (Models.VirtualFile & { href: string; apiPath: string }) | null => {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  if (
+    !isSafeNonNegativeInteger(value.id) ||
+    !isString(value.cloudId) ||
+    !isSafeNonNegativeInteger(value.parentId) ||
+    !isSafeNonNegativeInteger(value.topId) ||
+    typeof value.isTop !== 'boolean' ||
+    typeof value.isDir !== 'boolean' ||
+    !isString(value.name) ||
+    !isSafeNonNegativeInteger(value.size) ||
+    !isString(value.hash) ||
+    !isString(value.osType) ||
+    !isFileAddition(value.addition) ||
+    !isString(value.rev) ||
+    !isString(value.createDate) ||
+    !isString(value.modifyDate) ||
+    !isString(value.createdAt) ||
+    !isString(value.updatedAt) ||
+    !isString(value.href) ||
+    !isString(value.apiPath)
+  ) {
+    return null
+  }
+
+  return {
+    id: value.id,
+    cloudId: value.cloudId,
+    parentId: value.parentId,
+    topId: value.topId,
+    isTop: value.isTop,
+    isDir: value.isDir,
+    name: value.name,
+    size: value.size,
+    hash: value.hash,
+    osType: value.osType,
+    addition: value.addition || {},
+    rev: value.rev,
+    createDate: value.createDate,
+    modifyDate: value.modifyDate,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    href: value.href,
+    apiPath: value.apiPath,
+  }
+}
+
+const normalizeFileChildren = (value: unknown): FileChild[] | null => {
+  if (value === undefined) {
+    return []
+  }
+  if (!Array.isArray(value)) {
+    return null
+  }
+
+  const children: FileChild[] = []
+  for (const item of value) {
+    const child = normalizeBaseFile(item)
+    if (!child) {
+      return null
+    }
+    children.push(child)
+  }
+
+  return children
+}
+
+const normalizeBreadcrumbs = (value: unknown): BreadcrumbItem[] | null => {
+  if (value === undefined || value === null) {
+    return []
+  }
+
+  if (!Array.isArray(value)) {
+    return null
+  }
+
+  const items: BreadcrumbItem[] = []
+  for (const item of value) {
+    if (!isRecord(item) || !isString(item.href) || !isString(item.name)) {
+      return null
+    }
+    items.push({
+      href: item.href,
+      name: item.name,
+    })
+  }
+
+  return items
+}
+
+const normalizeFileOpenResponse = (value: unknown): FileOpenResponse | null => {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  const file = normalizeBaseFile(value)
+  const children = normalizeFileChildren(value.children)
+  const normalizedBreadcrumbs = normalizeBreadcrumbs(value.breadcrumbs)
+
+  if (
+    !file ||
+    !children ||
+    !normalizedBreadcrumbs ||
+    !isSafeNonNegativeInteger(value.childrenTotal)
+  ) {
+    return null
+  }
+
+  return {
+    ...file,
+    children,
+    childrenTotal: value.childrenTotal,
+    breadcrumbs: normalizedBreadcrumbs,
+  }
+}
+
 // 方法
 const isCurrentFileOpenRequest = (requestId: number) => {
   return isComponentMounted && fileOpenRequestId === requestId
@@ -157,10 +294,18 @@ const loadPath = (path: string) => {
     .then((response) => {
       if (!isCurrentFileOpenRequest(requestId)) return
 
-      if (response.code === 200 && response.data) {
-        fileInfo.value = response.data
+      if (response.code === 200) {
+        const openedFile = normalizeFileOpenResponse(response.data)
+        if (!openedFile) {
+          console.error('文件打开响应数据格式异常:', response.data)
+          message.error('响应数据格式异常')
+
+          return
+        }
+
+        fileInfo.value = openedFile
         currentPath.value = path
-        breadcrumbs.value = response.data.breadcrumbs || []
+        breadcrumbs.value = openedFile.breadcrumbs
       } else {
         message.error(response.msg || '加载失败')
       }
@@ -276,8 +421,7 @@ const downloadFile = (file: FileChild) => {
 watch(
   () => route.query.path,
   (newPath) => {
-    const path = (newPath as string) || '/'
-    currentPath.value = path
+    const path = typeof newPath === 'string' && newPath ? newPath : '/'
     loadPath(path)
   },
   { immediate: true }

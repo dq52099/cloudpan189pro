@@ -179,6 +179,7 @@ import {
   NTag,
   NText,
   NIcon,
+  useMessage,
 } from 'naive-ui'
 import {
   PeopleOutline,
@@ -196,6 +197,7 @@ import { getResourceSummary, type ResourceSummary } from '@/api/resource'
 
 const userStore = useUserStore()
 const systemStore = useSystemStore()
+const message = useMessage()
 
 const userInfo = userStore.get()
 const systemInfo = systemStore.get()
@@ -213,15 +215,110 @@ const summaryData = ref<ResourceSummary>({
   tasks: { pending: 0, running: 0, failed: 0, completed: 0 },
 })
 
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+const isSafeNonNegativeInteger = (value: unknown): value is number => {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
+const normalizeCountGroup = <T extends readonly string[]>(
+  value: unknown,
+  keys: T
+): Record<T[number], number> | null => {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  const result = {} as Record<T[number], number>
+  for (const key of keys as readonly T[number][]) {
+    const item = value[key]
+    if (!isSafeNonNegativeInteger(item)) {
+      return null
+    }
+    result[key] = item
+  }
+
+  return result
+}
+
+const normalizeResourceSummary = (value: unknown): ResourceSummary | null => {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  const users = normalizeCountGroup(value.users, ['total', 'active', 'disabled'] as const)
+  const mountPoints = normalizeCountGroup(value.mountPoints, [
+    'total',
+    'enabled',
+    'autoRefresh',
+  ] as const)
+  const cloudTokens = normalizeCountGroup(value.cloudTokens, ['total', 'active'] as const)
+  const virtualFiles = normalizeCountGroup(value.virtualFiles, ['folders', 'files'] as const)
+  const autoIngest = normalizeCountGroup(value.autoIngest, ['plans', 'logs24h'] as const)
+  const tasks = normalizeCountGroup(value.tasks, [
+    'pending',
+    'running',
+    'failed',
+    'completed',
+  ] as const)
+  const media = value.media
+
+  if (
+    !users ||
+    !mountPoints ||
+    !cloudTokens ||
+    !virtualFiles ||
+    !autoIngest ||
+    !tasks ||
+    !isRecord(media) ||
+    typeof media.enabled !== 'boolean' ||
+    !isSafeNonNegativeInteger(media.strmFiles) ||
+    !isSafeNonNegativeInteger(media.mediaFiles) ||
+    !isSafeNonNegativeInteger(value.userGroups) ||
+    !isSafeNonNegativeInteger(value.subscribeShares)
+  ) {
+    return null
+  }
+
+  return {
+    users,
+    userGroups: value.userGroups,
+    mountPoints,
+    cloudTokens,
+    virtualFiles,
+    subscribeShares: value.subscribeShares,
+    media: {
+      enabled: media.enabled,
+      strmFiles: media.strmFiles,
+      mediaFiles: media.mediaFiles,
+    },
+    autoIngest,
+    tasks,
+  }
+}
+
 const loadSummary = async () => {
   loadingSummary.value = true
   try {
     const res = await getResourceSummary()
-    if (res.code === 200 && res.data) {
-      summaryData.value = res.data
+    if (res.code === 200) {
+      const summary = normalizeResourceSummary(res.data)
+      if (!summary) {
+        console.error('资源统计响应数据格式异常', res.data)
+        message.error('资源统计响应数据格式异常')
+
+        return
+      }
+
+      summaryData.value = summary
+    } else {
+      message.error(res.msg || '加载资源统计失败')
     }
   } catch (err) {
     console.error('加载资源统计失败', err)
+    message.error('加载资源统计失败')
   } finally {
     loadingSummary.value = false
   }

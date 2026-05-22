@@ -261,7 +261,11 @@ import {
   type SearchResult,
   type CategoryOption,
 } from '@/api/subscription'
-import { normalizeSearchResults } from '@/utils/responseGuards'
+import {
+  normalizeCategoriesResponse,
+  normalizeHotMoviesResponse,
+  normalizeSearchResults,
+} from '@/utils/responseGuards'
 
 const message = useMessage()
 
@@ -366,12 +370,24 @@ const isMountSubscriptionResponse = (value: unknown): value is MountSubscription
 const loadCategories = async () => {
   try {
     const res = await getCategories()
-    if (res.code === 200 && res.data) {
-      tmdbCategories.value = res.data.tmdb || []
-      doubanCategories.value = res.data.douban || []
+    if (res.code === 200) {
+      const categories = normalizeCategoriesResponse(res.data)
+      if (!categories) {
+        message.error('加载分类失败：响应数据格式异常')
+
+        return
+      }
+
+      tmdbCategories.value = categories.tmdb
+      doubanCategories.value = categories.douban
+
+      return
     }
+
+    message.error(res.msg || '加载分类失败')
   } catch (err) {
     console.error('加载分类失败', err)
+    message.error('加载分类失败')
   }
 }
 
@@ -407,7 +423,15 @@ const loadHotData = async () => {
     }
 
     if (res.code === 200) {
-      movies.value = res.data?.movies || []
+      const hotData = normalizeHotMoviesResponse(res.data)
+      if (!hotData) {
+        message.error('加载数据失败：响应数据格式异常')
+        movies.value = []
+
+        return
+      }
+
+      movies.value = hotData.movies
     } else {
       message.error(res.msg || '加载数据失败')
       movies.value = []

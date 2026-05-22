@@ -239,7 +239,7 @@ import {
   type TelegramSetting,
   type TelegramUser,
 } from '@/api/telegram'
-import { normalizeTelegramUsers } from '@/utils/responseGuards'
+import { normalizeTelegramSetting, normalizeTelegramUsers } from '@/utils/responseGuards'
 
 const message = useMessage()
 
@@ -374,8 +374,15 @@ const loadSetting = async () => {
       return
     }
 
-    if (res.code === 200 && res.data) {
-      form.value = res.data
+    if (res.code === 200) {
+      const setting = normalizeTelegramSetting(res.data)
+      if (!setting) {
+        message.error('加载设置失败：响应数据格式异常')
+
+        return
+      }
+
+      form.value = setting
 
       return
     }
