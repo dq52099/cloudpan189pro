@@ -295,6 +295,10 @@ const showBatchOperationResult = (
   }
 }
 
+const isValidClearCount = (value: unknown): value is number => {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
 const isActiveRequest = (requestId: number, latestRequestId: number) =>
   isPageAlive && requestId === latestRequestId
 
@@ -1157,7 +1161,12 @@ const handleClearLogsSelect = (key: string | number) => {
       clearAutoIngestLogs(duration ? { duration } : undefined)
         .then((res) => {
           if (res.code === 200) {
-            message.success(`${text.successPrefix} ${res.data} 条日志`)
+            if (isValidClearCount(res.data)) {
+              message.success(`${text.successPrefix} ${res.data} 条日志`)
+            } else {
+              message.warning('清理完成但响应统计缺失/异常')
+            }
+
             logPagination.page = 1
             fetchLogList()
           } else {
