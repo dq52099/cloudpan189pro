@@ -58,15 +58,15 @@ func failAutoIngestRetryError(ctx *httpcontext.Context, err error) {
 }
 
 func (h *handler) resetAutoIngestRetryState(ctx *httpcontext.Context, planID int64, offset int64, resetCounters bool) error {
-	if err := h.planService.UpdateOffset(ctx.GetContext(), planID, offset); err != nil {
-		return err
-	}
-
 	if !resetCounters {
-		return nil
+		return h.planService.UpdateOffset(ctx.GetContext(), planID, offset)
 	}
 
-	return h.planService.ResetCounters(ctx.GetContext(), planID)
+	return h.planService.Update(ctx.GetContext(), planID,
+		utils.WithField("offset", offset),
+		utils.WithField("add_count", int64(0)),
+		utils.WithField("failed_count", int64(0)),
+	)
 }
 
 func (h *handler) restoreAutoIngestRetryState(ctx *httpcontext.Context, planID int64, snapshot autoIngestRetrySnapshot) {
@@ -109,8 +109,6 @@ func (h *handler) dispatchRetryWithRollback(ctx *httpcontext.Context, plan *mode
 
 	snapshot := snapshotAutoIngestRetryState(plan)
 	if err := h.resetAutoIngestRetryState(ctx, plan.ID, offset, resetCounters); err != nil {
-		h.restoreAutoIngestRetryState(ctx, plan.ID, snapshot)
-
 		return &autoIngestRetryError{phase: autoIngestRetryPhaseReset, err: err}
 	}
 

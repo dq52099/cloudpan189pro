@@ -86,6 +86,15 @@ func (m *mockPlanAccessService) ResetCounters(ctx appContext.Context, id int64) 
 	return nil
 }
 
+func fieldsToMap(fields []utils.Field) map[string]any {
+	result := make(map[string]any, len(fields))
+	for _, field := range fields {
+		result[field.Key] = field.Value
+	}
+
+	return result
+}
+
 type mockPlanAccessTaskEngine struct {
 	taskengine.TaskEngine
 	mu       sync.Mutex
@@ -289,29 +298,30 @@ func TestRetryPlanRestoresStateWhenQueueingFails(t *testing.T) {
 		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
 	}
 
-	if got, want := planService.offsetIDs, []int64{11}; !int64SlicesEqual(got, want) {
-		t.Fatalf("expected retry offset reset %v, got %v", want, got)
+	if len(planService.offsetIDs) != 0 {
+		t.Fatalf("expected retry plan not to use separate offset update, got %v", planService.offsetIDs)
 	}
 
-	if got, want := planService.resetCounterIDs, []int64{11}; !int64SlicesEqual(got, want) {
-		t.Fatalf("expected retry counter reset %v, got %v", want, got)
+	if len(planService.resetCounterIDs) != 0 {
+		t.Fatalf("expected retry plan not to use separate counter reset, got %v", planService.resetCounterIDs)
 	}
 
-	if got, want := planService.updatedIDs, []int64{11}; !int64SlicesEqual(got, want) {
-		t.Fatalf("expected rollback update %v, got %v", want, got)
+	if got, want := planService.updatedIDs, []int64{11, 11}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected reset and rollback updates %v, got %v", want, got)
 	}
 
-	if len(planService.updatedFields) != 1 {
-		t.Fatalf("expected one rollback update, got %d", len(planService.updatedFields))
+	if len(planService.updatedFields) != 2 {
+		t.Fatalf("expected reset and rollback fields, got %d", len(planService.updatedFields))
 	}
 
-	fields := map[string]any{}
-	for _, field := range planService.updatedFields[0] {
-		fields[field.Key] = field.Value
+	resetFields := fieldsToMap(planService.updatedFields[0])
+	if resetFields["offset"] != int64(1) || resetFields["add_count"] != int64(0) || resetFields["failed_count"] != int64(0) {
+		t.Fatalf("unexpected reset fields: %+v", resetFields)
 	}
 
-	if fields["offset"] != int64(88) || fields["add_count"] != int64(7) || fields["failed_count"] != int64(3) {
-		t.Fatalf("unexpected rollback fields: %+v", fields)
+	rollbackFields := fieldsToMap(planService.updatedFields[1])
+	if rollbackFields["offset"] != int64(88) || rollbackFields["add_count"] != int64(7) || rollbackFields["failed_count"] != int64(3) {
+		t.Fatalf("unexpected rollback fields: %+v", rollbackFields)
 	}
 }
 
@@ -355,11 +365,7 @@ func TestRetryFailedRestoresOffsetWhenQueueingFails(t *testing.T) {
 		t.Fatalf("expected rollback update %v, got %v", want, got)
 	}
 
-	fields := map[string]any{}
-	for _, field := range planService.updatedFields[0] {
-		fields[field.Key] = field.Value
-	}
-
+	fields := fieldsToMap(planService.updatedFields[0])
 	if fields["offset"] != int64(66) || fields["add_count"] != int64(4) || fields["failed_count"] != int64(1) {
 		t.Fatalf("unexpected rollback fields: %+v", fields)
 	}

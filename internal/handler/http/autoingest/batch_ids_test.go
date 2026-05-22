@@ -269,9 +269,9 @@ func TestBatchOperationsRejectEmptyIDs(t *testing.T) {
 				t.Helper()
 
 				if len(planService.listByIDsReqs) != 0 || len(planService.offsetIDs) != 0 ||
-					len(planService.resetIDs) != 0 || len(taskEngine.payloads) != 0 {
-					t.Fatalf("expected no retry side effects, got list=%v offset=%v reset=%v payloads=%d",
-						planService.listByIDsReqs, planService.offsetIDs, planService.resetIDs, len(taskEngine.payloads))
+					len(planService.resetIDs) != 0 || len(planService.updatedIDs) != 0 || len(taskEngine.payloads) != 0 {
+					t.Fatalf("expected no retry side effects, got list=%v offset=%v reset=%v update=%v payloads=%d",
+						planService.listByIDsReqs, planService.offsetIDs, planService.resetIDs, planService.updatedIDs, len(taskEngine.payloads))
 				}
 			},
 		},
@@ -759,11 +759,19 @@ func TestBatchRetryCountsMissingPlansAsFailed(t *testing.T) {
 		t.Fatalf("expected deduplicated list IDs %v, got %v", want, got)
 	}
 
-	gotOffsetIDs := append([]int64(nil), planService.offsetIDs...)
-	sort.Slice(gotOffsetIDs, func(i, j int) bool { return gotOffsetIDs[i] < gotOffsetIDs[j] })
+	if len(planService.offsetIDs) != 0 {
+		t.Fatalf("expected batch retry not to use separate offset updates, got %v", planService.offsetIDs)
+	}
 
-	if want := []int64{11, 22}; !int64SlicesEqual(gotOffsetIDs, want) {
-		t.Fatalf("expected offset updates %v, got %v", want, gotOffsetIDs)
+	if len(planService.resetIDs) != 0 {
+		t.Fatalf("expected batch retry not to use separate counter resets, got %v", planService.resetIDs)
+	}
+
+	gotUpdatedIDs := append([]int64(nil), planService.updatedIDs...)
+	sort.Slice(gotUpdatedIDs, func(i, j int) bool { return gotUpdatedIDs[i] < gotUpdatedIDs[j] })
+
+	if want := []int64{11, 22}; !int64SlicesEqual(gotUpdatedIDs, want) {
+		t.Fatalf("expected retry reset updates %v, got %v", want, gotUpdatedIDs)
 	}
 
 	if len(taskEngine.payloads) != 2 {
@@ -818,29 +826,30 @@ func TestBatchRetryRestoresStateWhenQueueingFails(t *testing.T) {
 		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
 	}
 
-	if got, want := planService.offsetIDs, []int64{11}; !int64SlicesEqual(got, want) {
-		t.Fatalf("expected retry offset reset %v, got %v", want, got)
+	if len(planService.offsetIDs) != 0 {
+		t.Fatalf("expected batch retry not to use separate offset update, got %v", planService.offsetIDs)
 	}
 
-	if got, want := planService.resetIDs, []int64{11}; !int64SlicesEqual(got, want) {
-		t.Fatalf("expected retry counter reset %v, got %v", want, got)
+	if len(planService.resetIDs) != 0 {
+		t.Fatalf("expected batch retry not to use separate counter reset, got %v", planService.resetIDs)
 	}
 
-	if got, want := planService.updatedIDs, []int64{11}; !int64SlicesEqual(got, want) {
-		t.Fatalf("expected rollback update %v, got %v", want, got)
+	if got, want := planService.updatedIDs, []int64{11, 11}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected reset and rollback updates %v, got %v", want, got)
 	}
 
-	if len(planService.updatedFields) != 1 {
-		t.Fatalf("expected one rollback update, got %d", len(planService.updatedFields))
+	if len(planService.updatedFields) != 2 {
+		t.Fatalf("expected reset and rollback fields, got %d", len(planService.updatedFields))
 	}
 
-	fields := map[string]any{}
-	for _, field := range planService.updatedFields[0] {
-		fields[field.Key] = field.Value
+	resetFields := fieldsToMap(planService.updatedFields[0])
+	if resetFields["offset"] != int64(1) || resetFields["add_count"] != int64(0) || resetFields["failed_count"] != int64(0) {
+		t.Fatalf("unexpected reset fields: %+v", resetFields)
 	}
 
-	if fields["offset"] != int64(44) || fields["add_count"] != int64(5) || fields["failed_count"] != int64(2) {
-		t.Fatalf("unexpected rollback fields: %+v", fields)
+	rollbackFields := fieldsToMap(planService.updatedFields[1])
+	if rollbackFields["offset"] != int64(44) || rollbackFields["add_count"] != int64(5) || rollbackFields["failed_count"] != int64(2) {
+		t.Fatalf("unexpected rollback fields: %+v", rollbackFields)
 	}
 
 	var response struct {
@@ -885,12 +894,16 @@ func TestBatchRetrySkipsOtherUsersPlans(t *testing.T) {
 		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
 	}
 
-	if got, want := planService.offsetIDs, []int64{11}; !int64SlicesEqual(got, want) {
-		t.Fatalf("expected offset updates %v, got %v", want, got)
+	if len(planService.offsetIDs) != 0 {
+		t.Fatalf("expected batch retry not to use separate offset update, got %v", planService.offsetIDs)
 	}
 
-	if got, want := planService.resetIDs, []int64{11}; !int64SlicesEqual(got, want) {
-		t.Fatalf("expected reset counter IDs %v, got %v", want, got)
+	if len(planService.resetIDs) != 0 {
+		t.Fatalf("expected batch retry not to use separate counter reset, got %v", planService.resetIDs)
+	}
+
+	if got, want := planService.updatedIDs, []int64{11}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected reset update IDs %v, got %v", want, got)
 	}
 
 	if len(taskEngine.payloads) != 1 {
