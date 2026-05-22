@@ -1,4 +1,5 @@
 import type { FamilyInfo, FileNode } from '@/api/storage/advance'
+import type { ConfigInfoResponse } from '@/api/media'
 import type {
   CategoriesResponse,
   CategoryOption,
@@ -237,4 +238,54 @@ export const normalizeTelegramUsers = (value: unknown): TelegramUser[] | null =>
       isString(item.createdAt)
     )
   })
+}
+
+const isStringArray = (value: unknown): value is string[] => {
+  return Array.isArray(value) && value.every(isString)
+}
+
+const isMediaFileConflictPolicy = (value: unknown): value is Enums.MediaFileConflictPolicy => {
+  return value === 'skip' || value === 'replace'
+}
+
+const normalizeMediaConfig = (value: unknown): Models.MediaConfig | null => {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  if (
+    !isSafeNonNegativeInteger(value.id) ||
+    !isBoolean(value.enable) ||
+    !isString(value.storagePath) ||
+    !isBoolean(value.autoClean) ||
+    !isMediaFileConflictPolicy(value.conflictPolicy) ||
+    !isString(value.baseURL) ||
+    !isStringArray(value.includedSuffixes) ||
+    !isBoolean(value.autoRebuildEnable) ||
+    !isString(value.autoRebuildCron)
+  ) {
+    return null
+  }
+
+  return value as unknown as Models.MediaConfig
+}
+
+export const normalizeMediaConfigInfoResponse = (value: unknown): ConfigInfoResponse | null => {
+  if (!isRecord(value) || !isBoolean(value.initialized)) {
+    return null
+  }
+
+  if (!value.initialized) {
+    return { initialized: false }
+  }
+
+  const config = normalizeMediaConfig(value.config)
+  if (!config) {
+    return null
+  }
+
+  return {
+    initialized: true,
+    config,
+  }
 }

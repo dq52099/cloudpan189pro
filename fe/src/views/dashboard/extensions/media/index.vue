@@ -317,6 +317,7 @@ import {
   clearMediaFiles,
   rebuildStrmFiles,
 } from '@/api/media'
+import { normalizeMediaConfigInfoResponse } from '@/utils/responseGuards'
 
 const message = useMessage()
 const dialog = useDialog()
@@ -338,7 +339,7 @@ let configRequestId = 0
 let initRequestId = 0
 let editRequestId = 0
 
-const editForm = reactive<ConfigUpdateRequest>({
+const buildDefaultEditForm = (): ConfigUpdateRequest => ({
   storagePath: '',
   autoClean: false,
   conflictPolicy: 'skip',
@@ -347,6 +348,12 @@ const editForm = reactive<ConfigUpdateRequest>({
   autoRebuildEnable: false,
   autoRebuildCron: '0 2 * * *',
 })
+
+const editForm = reactive<ConfigUpdateRequest>(buildDefaultEditForm())
+
+const resetEditForm = () => {
+  Object.assign(editForm, buildDefaultEditForm())
+}
 
 // 初始化表单
 const initForm = reactive<ConfigInitRequest>({
@@ -462,13 +469,29 @@ const reload = () => {
     .then((res) => {
       if (!isCurrentConfigRequest(requestId)) return
 
-      if (isBusinessSuccess(res) && res.data) {
-        initialized.value = !!res.data.initialized
-        config.value = res.data.config
-        Object.assign(editForm, res.data.config)
-      } else {
+      if (!isBusinessSuccess(res) || !res.data) {
         message.error(res.msg || '获取媒体配置失败')
+
+        return
       }
+
+      const configInfo = normalizeMediaConfigInfoResponse(res.data)
+      if (!configInfo) {
+        message.error('获取媒体配置失败：响应数据格式异常')
+
+        return
+      }
+
+      initialized.value = configInfo.initialized
+      if (!configInfo.initialized) {
+        config.value = undefined
+        resetEditForm()
+
+        return
+      }
+
+      config.value = configInfo.config
+      Object.assign(editForm, configInfo.config)
     })
     .catch((err) => {
       if (!isCurrentConfigRequest(requestId)) return
