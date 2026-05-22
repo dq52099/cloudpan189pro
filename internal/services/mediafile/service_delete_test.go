@@ -391,6 +391,34 @@ func TestDeleteStrmByFullPathDeletesLegacyRelativePathRecord(t *testing.T) {
 	}
 }
 
+func TestDeleteStrmByFullPathAllowsMissingDBRecord(t *testing.T) {
+	tDB := setupMediaFileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	root := t.TempDir()
+	withMediaConfig(t, &models.MediaConfig{StoragePath: root})
+
+	relPath := "/movies/missing-db.strm"
+	fullPath := filepath.Join(root, relPath)
+
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		t.Fatalf("create strm dir: %v", err)
+	}
+
+	if err := os.WriteFile(fullPath, []byte("http://example.test"), 0o644); err != nil {
+		t.Fatalf("write strm: %v", err)
+	}
+
+	if err := svc.DeleteStrmByFullPath(ctx, fullPath); err != nil {
+		t.Fatalf("delete strm by full path: %v", err)
+	}
+
+	if _, err := os.Stat(fullPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected strm file removed, got %v", err)
+	}
+}
+
 func TestDeleteStrmByFullPathReturnsDBCleanupError(t *testing.T) {
 	tDB := setupMediaFileTestDB(t)
 	svc := NewService(tDB)

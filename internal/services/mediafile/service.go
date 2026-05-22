@@ -72,10 +72,15 @@ func (s *service) DeleteStrmByFullPath(ctx context.Context, fullPath string) err
 		return err
 	}
 
-	if err := s.getDB(ctx).Where("path IN ?", mediaFilePathCandidates(relPath)).Delete(new(models.MediaFile)).Error; err != nil {
-		ctx.Warn("清理 STRM DB 记录失败（磁盘已删除）", zap.String("path", fullPath), zap.Error(err))
+	result := s.getDB(ctx).Where("path IN ?", mediaFilePathCandidates(relPath)).Delete(new(models.MediaFile))
+	if result.Error != nil {
+		ctx.Warn("清理 STRM DB 记录失败（磁盘已删除）", zap.String("path", fullPath), zap.Error(result.Error))
 
-		return err
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		ctx.Warn("未找到 STRM DB 记录（磁盘已删除）", zap.String("path", fullPath), zap.String("relative_path", relPath))
 	}
 
 	return nil

@@ -77,6 +77,12 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 			validMountPoints = append(validMountPoints, mountPoint)
 		}
 
+		if len(validMountPoints) == 0 {
+			ctx.Fail(busCodeStorageMountPointDeleteFail.WithError(errors.New("挂载点不存在或无权限删除")))
+
+			return
+		}
+
 		// 创建任务日志
 		tracker, logErr := h.fileTaskLogService.Create(
 			ctx.GetContext(),

@@ -233,6 +233,83 @@ func TestBatchDeleteAllowsDuplicateIDsBeyondRawLimit(t *testing.T) {
 	}
 }
 
+func TestBatchDeleteRejectsWhenAllDeduplicatedIDsMissingOrUnauthorized(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: {FileId: 1101, FullPath: "/movies", CreatorUserID: 200},
+			22: {FileId: 2201, FullPath: "/series", CreatorUserID: 300},
+		},
+	}
+	taskLogDB := setupStorageTaskLogTestDB(t)
+	fileTaskLogService := filetasklogSvi.NewService(taskLogDB)
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/batch_delete", wrapper.Wrap(NewHandler(
+		taskEngine,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		fileTaskLogService,
+		nil,
+		nil,
+		nil,
+		nil,
+	).BatchDelete()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_delete", strings.NewReader(`{"ids":[11,11,22,33]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if got, want := mountPointService.queries, []int64{11, 22, 33}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected deduplicated queries %v, got %v", want, got)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no queued tasks, got %d", len(taskEngine.payloads))
+	}
+
+	var response struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Code != busCodeStorageMountPointDeleteFail.GetCode() {
+		t.Fatalf("expected business code %d, got %d", busCodeStorageMountPointDeleteFail.GetCode(), response.Code)
+	}
+
+	if response.Msg != "挂载点删除失败" {
+		t.Fatalf("expected business error message, got %q", response.Msg)
+	}
+
+	var logCount int64
+	if err := taskLogDB.db.Model(&models.FileTaskLog{}).Count(&logCount).Error; err != nil {
+		t.Fatalf("count task logs: %v", err)
+	}
+
+	if logCount != 0 {
+		t.Fatalf("expected no task logs, got %d", logCount)
+	}
+}
+
 func TestBatchDeleteTaskLogRecordsDispatchFailures(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
