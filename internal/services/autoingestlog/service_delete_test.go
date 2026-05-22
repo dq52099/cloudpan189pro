@@ -167,12 +167,12 @@ func TestDeleteByIdsReturnsNotFoundWhenSomeIDsMissing(t *testing.T) {
 		t.Fatalf("expected record not found, got %v", err)
 	}
 
-	if deleted != 1 {
-		t.Fatalf("expected one deleted row before not found, got %d", deleted)
+	if deleted != 0 {
+		t.Fatalf("expected zero deleted rows on not found, got %d", deleted)
 	}
 
-	if count := countAutoIngestLogs(t, tDB.db, "id = ?", log.ID); count != 0 {
-		t.Fatalf("expected existing log to be deleted, got count %d", count)
+	if count := countAutoIngestLogs(t, tDB.db, "id = ?", log.ID); count != 1 {
+		t.Fatalf("expected existing log to remain, got count %d", count)
 	}
 }
 

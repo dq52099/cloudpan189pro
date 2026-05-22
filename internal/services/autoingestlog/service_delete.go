@@ -38,16 +38,38 @@ func (s *service) DeleteByIds(ctx appContext.Context, ids []int64) (int64, error
 		return 0, err
 	}
 
-	result := s.getDB(ctx).Where("id IN ?", normalizedIds).Delete(&models.AutoIngestLog{})
-	if result.Error != nil {
-		return result.RowsAffected, result.Error
+	var deleted int64
+
+	err = s.svc.GetDB(ctx).Transaction(func(tx *gorm.DB) error {
+		tx = tx.Model(new(models.AutoIngestLog))
+
+		var count int64
+		if err := tx.Where("id IN ?", normalizedIds).Count(&count).Error; err != nil {
+			return err
+		}
+
+		if count != int64(len(normalizedIds)) {
+			return errors.Wrap(gorm.ErrRecordNotFound, "部分自动入库日志不存在")
+		}
+
+		result := tx.Where("id IN ?", normalizedIds).Delete(&models.AutoIngestLog{})
+		if result.Error != nil {
+			return result.Error
+		}
+
+		if result.RowsAffected != int64(len(normalizedIds)) {
+			return errors.Wrap(gorm.ErrRecordNotFound, "部分自动入库日志不存在")
+		}
+
+		deleted = result.RowsAffected
+
+		return nil
+	})
+	if err != nil {
+		return 0, err
 	}
 
-	if result.RowsAffected != int64(len(normalizedIds)) {
-		return result.RowsAffected, errors.Wrap(gorm.ErrRecordNotFound, "部分自动入库日志不存在")
-	}
-
-	return result.RowsAffected, nil
+	return deleted, nil
 }
 
 // DeleteErrorLogsByPlanId 删除指定计划的所有错误日志。
