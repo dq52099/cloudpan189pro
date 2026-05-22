@@ -131,6 +131,7 @@ import {
 import { getCloudTokenList, deleteCloudToken, modifyCloudTokenName } from '@/api/cloudtoken'
 import { QrcodeLoginModal, PasswordLoginModal } from '@/components/cloudtoken'
 import { getListItems, getListTotal } from '@/utils/pagination'
+import { normalizeDashboardCloudTokens } from '@/utils/responseGuards'
 import { formatRemainingTime, formatDateTime } from '@/utils/time'
 
 // 表格数据
@@ -343,7 +344,8 @@ const fetchTokenList = () => {
       }
 
       if (response.code === 200 && response.data) {
-        const items = getListItems<Models.CloudToken>(response.data)
+        const rawItems = getListItems<Models.CloudToken>(response.data)
+        const items = normalizeDashboardCloudTokens(rawItems)
         const total = getListTotal(response.data)
 
         if (!items) {

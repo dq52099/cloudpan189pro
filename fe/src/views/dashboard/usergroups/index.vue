@@ -71,6 +71,7 @@ import { PeopleOutline, TrashOutline, CreateOutline, LinkOutline } from '@vicons
 import { getUserGroupList, deleteUserGroup } from '@/api/usergroup'
 import { AddUserGroupModal, ModifyUserGroupNameModal, BindFilesModal } from '@/components/usergroup'
 import { getListItems, getListTotal } from '@/utils/pagination'
+import { normalizeDashboardUserGroups } from '@/utils/responseGuards'
 import { formatDateTime } from '@/utils/time'
 
 // 表格数据
@@ -128,7 +129,8 @@ const fetchUserGroupList = () => {
       if (currentRequestId !== userGroupListRequestId) return
 
       if (response.code === 200 && response.data) {
-        const items = getListItems<Models.UserGroup>(response.data)
+        const rawItems = getListItems<Models.UserGroup>(response.data)
+        const items = normalizeDashboardUserGroups(rawItems)
         const total = getListTotal(response.data)
 
         if (!items) {

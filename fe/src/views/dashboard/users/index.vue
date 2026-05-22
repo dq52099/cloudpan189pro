@@ -78,6 +78,7 @@ import {
 import { getUserList, deleteUser, toggleUserStatus } from '@/api/user'
 import { AddUserModal, ResetPasswordModal, BindGroupModal } from '@/components/user'
 import { getListItems, getListTotal } from '@/utils/pagination'
+import { normalizeDashboardUsers } from '@/utils/responseGuards'
 import { formatDateTime } from '@/utils/time'
 
 // 表格数据
@@ -135,7 +136,8 @@ const fetchUserList = () => {
       if (currentRequestId !== userListRequestId) return
 
       if (response.code === 200 && response.data) {
-        const items = getListItems<Models.UserInfo>(response.data)
+        const rawItems = getListItems<Models.UserInfo>(response.data)
+        const items = normalizeDashboardUsers(rawItems)
         const total = getListTotal(response.data)
 
         if (!items) {

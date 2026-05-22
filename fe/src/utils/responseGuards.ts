@@ -33,6 +33,10 @@ const isString = (value: unknown): value is string => {
   return typeof value === 'string'
 }
 
+const isOptionalString = (value: unknown): value is string | undefined => {
+  return value === undefined || isString(value)
+}
+
 const isBoolean = (value: unknown): value is boolean => {
   return typeof value === 'boolean'
 }
@@ -47,6 +51,58 @@ const normalizeItems = <T>(value: unknown, isValidItem: (item: unknown) => boole
   }
 
   return value as T[]
+}
+
+export const normalizeDashboardUsers = (value: unknown): Models.UserInfo[] | null => {
+  return normalizeItems<Models.UserInfo>(value, (item) => {
+    if (!isRecord(item)) {
+      return false
+    }
+
+    return (
+      isSafePositiveInteger(item.id) &&
+      isString(item.username) &&
+      isSafeNonNegativeInteger(item.status) &&
+      isBoolean(item.isAdmin) &&
+      isSafeNonNegativeInteger(item.groupId) &&
+      isOptionalString(item.groupName) &&
+      isString(item.createdAt)
+    )
+  })
+}
+
+export const normalizeDashboardUserGroups = (value: unknown): Models.UserGroup[] | null => {
+  return normalizeItems<Models.UserGroup>(value, (item) => {
+    if (!isRecord(item)) {
+      return false
+    }
+
+    return (
+      isSafePositiveInteger(item.id) &&
+      isString(item.name) &&
+      isSafeNonNegativeInteger(item.userCount) &&
+      isString(item.createdAt) &&
+      isString(item.updatedAt)
+    )
+  })
+}
+
+export const normalizeDashboardCloudTokens = (value: unknown): Models.CloudToken[] | null => {
+  return normalizeItems<Models.CloudToken>(value, (item) => {
+    if (!isRecord(item)) {
+      return false
+    }
+
+    return (
+      isSafePositiveInteger(item.id) &&
+      isString(item.name) &&
+      isString(item.username) &&
+      isSafeNonNegativeInteger(item.loginType) &&
+      isSafeNonNegativeInteger(item.status) &&
+      isSafeNonNegativeInteger(item.expiresIn) &&
+      isString(item.updatedAt)
+    )
+  })
 }
 
 export const normalizeCloudTokens = (value: unknown): Models.CloudToken[] | null => {
@@ -217,10 +273,6 @@ export const normalizeGetSubscribeUserAllResponse = (
     total: value.total,
     data,
   }
-}
-
-const isOptionalString = (value: unknown): value is string | undefined => {
-  return value === undefined || isString(value)
 }
 
 const normalizeCategoryOptions = (value: unknown): CategoryOption[] | null => {
