@@ -122,6 +122,29 @@ const form = reactive({
 
 let operationVersion = 0
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null
+
+const getErrorMessage = (error: unknown) => {
+  if (!isRecord(error)) {
+    return undefined
+  }
+
+  const response = error.response
+  if (!isRecord(response)) {
+    return undefined
+  }
+
+  const data = response.data
+  if (!isRecord(data)) {
+    return undefined
+  }
+
+  const msg = data.msg
+
+  return typeof msg === 'string' && msg ? msg : undefined
+}
+
 // 表单验证规则
 const formRules: FormRules = {
   password: [
@@ -239,8 +262,9 @@ const handleConfirm = () => {
       }
 
       console.error('重置密码失败:', error)
-      if (error?.response?.data?.msg) {
-        message.error(error.response.data.msg)
+      const errorMessage = getErrorMessage(error)
+      if (errorMessage) {
+        message.error(errorMessage)
       } else {
         message.error('重置密码失败，请稍后重试')
       }
