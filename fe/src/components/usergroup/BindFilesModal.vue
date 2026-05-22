@@ -255,6 +255,99 @@ const buildParams = (noPaginate = false) => ({
   path: searchKeyword.value || undefined,
 })
 
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return value !== null && typeof value === 'object'
+}
+
+const isPositiveInteger = (value: unknown): value is number => {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+}
+
+const isNonNegativeInteger = (value: unknown): value is number => {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
+const normalizePositiveIds = (value: unknown): number[] | null => {
+  if (!Array.isArray(value)) {
+    return null
+  }
+
+  const ids: number[] = []
+  const seen = new Set<number>()
+
+  for (const item of value) {
+    if (!isPositiveInteger(item)) {
+      return null
+    }
+
+    if (seen.has(item)) {
+      continue
+    }
+
+    seen.add(item)
+    ids.push(item)
+  }
+
+  return ids
+}
+
+const isStorageSelectItem = (value: unknown): value is StorageSelectItem => {
+  if (!isRecord(value)) {
+    return false
+  }
+
+  return (
+    isPositiveInteger(value.id) &&
+    typeof value.name === 'string' &&
+    value.name.trim().length > 0 &&
+    typeof value.path === 'string'
+  )
+}
+
+const normalizeStorageSelectItems = (value: unknown): StorageSelectItem[] | null => {
+  if (!Array.isArray(value)) {
+    return null
+  }
+
+  const items: StorageSelectItem[] = []
+  const seen = new Set<number>()
+
+  for (const item of value) {
+    if (!isStorageSelectItem(item)) {
+      return null
+    }
+
+    if (seen.has(item.id)) {
+      continue
+    }
+
+    seen.add(item.id)
+    items.push(item)
+  }
+
+  return items
+}
+
+const normalizeStoragePage = (
+  value: unknown
+): Models.PaginationResponse<StorageSelectItem> | null => {
+  if (!isRecord(value) || !isNonNegativeInteger(value.total)) {
+    return null
+  }
+
+  const items = normalizeStorageSelectItems(value.data)
+  if (!items) {
+    return null
+  }
+
+  return {
+    currentPage: isPositiveInteger(value.currentPage) ? value.currentPage : pagination.page,
+    pageSize: isPositiveInteger(value.pageSize) ? value.pageSize : pagination.pageSize,
+    total: value.total,
+    data: items,
+  }
+}
+
 const mergeStorageMeta = (items: StorageSelectItem[]) => {
   const nextMap = { ...selectedStorageMap.value }
   items.forEach((item) => {
@@ -277,7 +370,14 @@ const loadBindFiles = async (
     if (!isCurrentOperation(version, userGroupId)) return
 
     if (response.code === 200 && response.data) {
-      selectedStorageIds.value = response.data.fileIds || []
+      const fileIds = normalizePositiveIds(response.data.fileIds)
+      if (!fileIds) {
+        message.error('已绑定存储响应格式异常')
+
+        return
+      }
+
+      selectedStorageIds.value = fileIds
       bindFilesLoaded.value = true
     } else {
       message.error(response.msg || '获取已绑定存储失败')
@@ -307,8 +407,15 @@ const fetchStorageList = async (
     if (!isCurrentOperation(version, userGroupId)) return
 
     if (response.code === 200 && response.data) {
-      storageList.value = response.data.data || []
-      pagination.itemCount = response.data.total || 0
+      const page = normalizeStoragePage(response.data)
+      if (!page) {
+        message.error('存储列表响应格式异常')
+
+        return
+      }
+
+      storageList.value = page.data
+      pagination.itemCount = page.total
       mergeStorageMeta(storageList.value)
     } else {
       message.error(response.msg || '获取存储列表失败')
@@ -351,7 +458,11 @@ const handleSelectionChange = (keys: Array<string | number>) => {
   if (submitting.value) return
 
   const pageIDs = new Set(storageList.value.map((item) => item.id))
-  const pageSelectedIDs = keys.map((key) => Number(key))
+  const pageSelectedIDs = normalizePositiveIds(keys.map((key) => Number(key)))
+  if (!pageSelectedIDs) {
+    return
+  }
+
   const reservedIDs = selectedStorageIds.value.filter((id) => !pageIDs.has(id))
 
   selectedStorageIds.value = [...reservedIDs, ...pageSelectedIDs]
@@ -395,7 +506,14 @@ const selectAllSearchResults = async () => {
       return
     }
 
-    const items = response.data.data || []
+    const page = normalizeStoragePage(response.data)
+    if (!page) {
+      message.error('存储列表响应格式异常')
+
+      return
+    }
+
+    const items = page.data
     mergeStorageMeta(items)
     selectedStorageIds.value = items.map((item) => item.id)
     message.success(`已选择 ${selectedStorageIds.value.length} 个存储挂载点`)
