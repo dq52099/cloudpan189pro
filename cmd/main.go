@@ -38,9 +38,11 @@ func main() {
 	// 先初始化扩展服务（Telegram, TMDB, Douban, OpenAI, Subscription），
 	// 让后续的 scheduler 和 http 都能复用同一份依赖。
 	ctx := context.NewContext(stdContext.Background())
+
 	extServices, err := bootstrap.InitExtensionServices(svc.GetDB(ctx), svc.GetLogger("extension"), cfg.Config)
 	if err != nil {
 		logger.Warn("初始化扩展服务失败", zap.Error(err))
+
 		extServices = nil
 	} else {
 		logger.Info("扩展服务初始化成功")

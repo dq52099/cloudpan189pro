@@ -8,7 +8,7 @@ import (
 
 type initSystemRequest struct {
 	Title         string `json:"title" binding:"required" example:"我的云盘系统"`                      // 系统标题
-	EnableAuth    bool   `json:"enableAuth" binding:"required" example:"true"`                   // 是否启用认证
+	EnableAuth    *bool  `json:"enableAuth" binding:"required" example:"true"`                   // 是否启用认证
 	BaseURL       string `json:"baseURL" binding:"required,url" example:"https://example.com"`   // 系统基础URL
 	SuperUsername string `json:"superUsername" binding:"required,min=3,max=20" example:"admin"`  // 超级管理员用户名，长度3-20位
 	SuperPassword string `json:"superPassword" binding:"required,min=6,max=20" example:"123456"` // 超级管理员密码，长度6-20位
@@ -37,7 +37,7 @@ func (h *handler) InitSystem() httpcontext.HandlerFunc {
 
 		if err := h.settingService.InitSystem(ctx.GetContext(), &setting.InitSystemRequest{
 			Title:      req.Title,
-			EnableAuth: req.EnableAuth,
+			EnableAuth: *req.EnableAuth,
 			BaseURL:    req.BaseURL,
 		}); err != nil {
 			ctx.Fail(codeInitSettingErr.WithError(err))

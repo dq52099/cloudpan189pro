@@ -6,7 +6,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
-	mountpointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"gorm.io/gorm"
 )
@@ -37,6 +36,7 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 		req := new(deleteRequest)
 		if err := ctx.ShouldBindJSON(req); err != nil {
 			ctx.AbortWithInvalidParams(err)
+
 			return
 		}
 
@@ -47,6 +47,7 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 			} else {
 				ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
 			}
+
 			return
 		}
 
@@ -54,18 +55,11 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 		userID := ctx.GetInt64(consts.CtxKeyUserId)
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
 
-		deleteReq := &mountpointSvi.DeleteRequest{
-			FileId:        req.ID,
-			CreatorUserID: userID,
-			IsAdmin:       isAdmin,
-		}
+		if !isAdmin && (userID <= 0 || mountPointInfo.CreatorUserID != userID) {
+			ctx.Fail(busCodeStorageMountPointDeleteFail.WithError(errors.New("挂载点不存在或无权限删除")))
 
-		if err = h.mountPointService.Delete(ctx.GetContext(), deleteReq); err != nil {
-			ctx.Fail(busCodeStorageMountPointDeleteFail.WithError(err))
 			return
 		}
-
-		_ = h.virtualFileService.ClearUnusedAncestorFolder(ctx.GetContext(), mountPointInfo.FileId)
 
 		taskReq := &topic.FileBatchDeleteRequest{
 			IDs: []int64{mountPointInfo.FileId},
@@ -81,6 +75,7 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 			body,
 		); err != nil {
 			ctx.Fail(busCodeStorageSendTaskFail.WithError(err))
+
 			return
 		}
 

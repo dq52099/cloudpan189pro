@@ -11,6 +11,10 @@ import (
 )
 
 func (s *service) Query(ctx context.Context, fileId int64) (*models.MountPoint, error) {
+	if fileId <= 0 {
+		return nil, errInvalidMountPointFileID
+	}
+
 	var mountPoint models.MountPoint
 
 	if err := s.getDB(ctx).Where("file_id = ?", fileId).First(&mountPoint).Error; err != nil {
@@ -46,28 +50,41 @@ func (s *service) QueryByPath(ctx context.Context, fullPath string) (*models.Mou
 // 管理员返回所有挂载点，普通用户可以访问：1.自己创建的 2.用户组分享的 3.自己绑定了令牌的
 func (s *service) GetAccessibleMountPointIDs(ctx context.Context, userID int64, isAdmin bool, groupFileIds []int64) ([]int64, error) {
 	var ids []int64
+
 	query := s.getDB(ctx).Model(new(models.MountPoint))
 
-	if !isAdmin && userID > 0 {
+	if !isAdmin {
+		if userID <= 0 {
+			return nil, errInvalidMountPointUserID
+		}
+
 		query = query.Where("creator_user_id = ?", userID)
 
 		if len(groupFileIds) > 0 {
-			query = query.Or("file_id IN ?", groupFileIds)
+			normalizedGroupFileIDs, err := normalizeMountPointFileIDs(groupFileIds)
+			if err != nil {
+				return nil, err
+			}
+
+			query = query.Or("file_id IN ?", normalizedGroupFileIDs)
 		}
 
-		boundMountPointIDs, err := s.userMountPointTokenService.GetUserMountPointIDs(ctx, userID)
-		if err != nil {
-			return nil, err
-		}
+		if s.userMountPointTokenService != nil {
+			boundMountPointIDs, err := s.userMountPointTokenService.GetUserMountPointIDs(ctx, userID)
+			if err != nil {
+				return nil, err
+			}
 
-		if len(boundMountPointIDs) > 0 {
-			query = query.Or("id IN ?", boundMountPointIDs)
+			if len(boundMountPointIDs) > 0 {
+				query = query.Or("id IN ?", boundMountPointIDs)
+			}
 		}
 	}
 	// 管理员：可以访问所有挂载点
 
 	if err := query.Pluck("file_id", &ids).Error; err != nil {
 		ctx.Error("获取可访问挂载点ID失败", zap.Error(err), zap.Int64("user_id", userID), zap.Bool("is_admin", isAdmin))
+
 		return nil, err
 	}
 

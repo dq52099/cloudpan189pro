@@ -68,21 +68,36 @@
     />
 
     <!-- 编辑令牌名称弹窗 -->
-    <n-modal v-model:show="showEditModal" preset="dialog" title="编辑令牌名称">
+    <n-modal
+      :show="showEditModal"
+      preset="dialog"
+      title="编辑令牌名称"
+      :closable="!editLoading"
+      :mask-closable="!editLoading"
+      :close-on-esc="!editLoading"
+      @update:show="handleUpdateEditModalShow"
+    >
       <n-form ref="editFormRef" :model="editForm" :rules="editRules">
         <n-form-item label="令牌名称" path="name">
           <n-input
             v-model:value="editForm.name"
             placeholder="请输入令牌名称"
             clearable
+            :disabled="editLoading"
             @keyup.enter="handleConfirmEdit"
           />
         </n-form-item>
       </n-form>
       <template #action>
         <n-space>
-          <n-button @click="showEditModal = false">取消</n-button>
-          <n-button type="primary" @click="handleConfirmEdit" :loading="editLoading">确认</n-button>
+          <n-button :disabled="editLoading" @click="handleCloseEditModal">取消</n-button>
+          <n-button
+            type="primary"
+            :loading="editLoading"
+            :disabled="editLoading"
+            @click="handleConfirmEdit"
+            >确认</n-button
+          >
         </n-space>
       </template>
     </n-modal>
@@ -90,7 +105,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, h } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, h } from 'vue'
 import {
   NDataTable,
   NInput,
@@ -121,6 +136,7 @@ import { QrcodeLoginModal, PasswordLoginModal } from '@/components/cloudtoken'
 const tableData = ref<Models.CloudToken[]>([])
 const loading = ref(false)
 const searchKeyword = ref('')
+let tokenListRequestId = 0
 
 // 添加令牌相关
 const showQrcodeModal = ref(false)
@@ -139,6 +155,7 @@ const editFormRef = ref<FormInst>()
 const editForm = reactive({
   name: '',
 })
+let editSessionVersion = 0
 const editRules = {
   name: [
     { required: true, message: '请输入令牌名称', trigger: 'blur' },
@@ -158,12 +175,10 @@ const paginationReactive = reactive<PaginationProps>({
   pageSizes: [10, 20, 50, 100],
   prefix: ({ itemCount }) => `共 ${itemCount} 条`,
   onChange: (page: number) => {
-    console.log('分页切换到:', page)
     paginationReactive.page = page
     fetchTokenList()
   },
   onUpdatePageSize: (pageSize: number) => {
-    console.log('每页大小切换到:', pageSize)
     paginationReactive.pageSize = pageSize
     paginationReactive.page = 1
     fetchTokenList()
@@ -310,6 +325,8 @@ const columns: DataTableColumns<Models.CloudToken> = [
 
 // 获取令牌列表
 const fetchTokenList = () => {
+  const requestId = ++tokenListRequestId
+
   loading.value = true
 
   const params = {
@@ -318,23 +335,29 @@ const fetchTokenList = () => {
     name: searchKeyword.value || undefined,
   }
 
-  console.log('请求参数:', params)
-
   getCloudTokenList(params)
     .then((response) => {
-      console.log('API响应:', response)
+      if (requestId !== tokenListRequestId) {
+        return
+      }
 
       if (response.code === 200 && response.data) {
         tableData.value = response.data.data || []
         paginationReactive.itemCount = response.data.total || 0
-        console.log('表格数据:', tableData.value)
-        console.log('总数据量:', paginationReactive.itemCount)
       }
     })
     .catch((error) => {
+      if (requestId !== tokenListRequestId) {
+        return
+      }
+
       console.error('获取令牌列表失败:', error)
     })
     .finally(() => {
+      if (requestId !== tokenListRequestId) {
+        return
+      }
+
       loading.value = false
     })
 }
@@ -343,7 +366,6 @@ const fetchTokenList = () => {
 const handleSearch = () => {
   paginationReactive.page = 1 // 搜索时重置到第一页
   fetchTokenList()
-  console.log('搜索关键词:', searchKeyword.value)
 }
 
 // 重置
@@ -391,48 +413,113 @@ const handleUpdateSuccess = () => {
 
 // 编辑令牌
 const handleEdit = (token: Models.CloudToken) => {
+  editSessionVersion += 1
+  editLoading.value = false
   currentEditToken.value = token
   editForm.name = token.name
   showEditModal.value = true
 }
 
+const isCurrentEditSession = (sessionVersion: number) => sessionVersion === editSessionVersion
+
+const handleCloseEditModal = () => {
+  if (editLoading.value) {
+    return
+  }
+
+  editSessionVersion += 1
+  editLoading.value = false
+  showEditModal.value = false
+  currentEditToken.value = null
+}
+
+const handleUpdateEditModalShow = (show: boolean) => {
+  if (show) {
+    showEditModal.value = true
+
+    return
+  }
+
+  if (editLoading.value) {
+    return
+  }
+
+  handleCloseEditModal()
+}
+
 // 确认编辑令牌名称
 const handleConfirmEdit = () => {
-  editFormRef.value?.validate((errors: unknown) => {
-    if (!errors && currentEditToken.value) {
-      editLoading.value = true
+  if (editLoading.value) {
+    return
+  }
 
-      modifyCloudTokenName({
-        id: currentEditToken.value.id,
-        name: editForm.name,
-      })
-        .then((response) => {
-          if (response.code === 200) {
-            message.success('修改令牌名称成功')
-            showEditModal.value = false
-            fetchTokenList()
-          } else {
-            message.error(response.msg || '修改令牌名称失败')
-          }
-        })
-        .catch((error) => {
-          console.error('修改令牌名称失败:', error)
-          message.error('修改令牌名称失败')
-        })
-        .finally(() => {
-          editLoading.value = false
-        })
+  const formRef = editFormRef.value
+  const token = currentEditToken.value
+  const sessionVersion = editSessionVersion
+
+  if (!formRef || !token) {
+    return
+  }
+
+  editLoading.value = true
+
+  formRef.validate((errors: unknown) => {
+    if (!isCurrentEditSession(sessionVersion)) {
+      return
     }
+
+    if (errors) {
+      editLoading.value = false
+
+      return
+    }
+
+    modifyCloudTokenName({
+      id: token.id,
+      name: editForm.name,
+    })
+      .then((response) => {
+        if (!isCurrentEditSession(sessionVersion)) {
+          return
+        }
+
+        if (response.code === 200) {
+          message.success('修改令牌名称成功')
+          handleCloseEditModal()
+          fetchTokenList()
+        } else {
+          message.error(response.msg || '修改令牌名称失败')
+        }
+      })
+      .catch((error) => {
+        if (!isCurrentEditSession(sessionVersion)) {
+          return
+        }
+
+        console.error('修改令牌名称失败:', error)
+        message.error('修改令牌名称失败')
+      })
+      .finally(() => {
+        if (!isCurrentEditSession(sessionVersion)) {
+          return
+        }
+
+        editLoading.value = false
+      })
   })
 }
 
 // 删除令牌
 const handleDelete = (tokenId: number) => {
   deleteCloudToken({ id: tokenId })
-    .then(() => {
-      message.success('删除令牌成功')
-      // 刷新令牌列表
-      fetchTokenList()
+    .then((response) => {
+      if (response.code === 200) {
+        message.success('删除令牌成功')
+        // 刷新令牌列表
+        fetchTokenList()
+      } else {
+        message.error(response.msg || '删除令牌失败')
+      }
     })
     .catch((error) => {
       console.error('删除令牌失败:', error)
@@ -442,8 +529,14 @@ const handleDelete = (tokenId: number) => {
 
 // 初始化
 onMounted(() => {
-  console.log('页面挂载，开始获取数据')
   fetchTokenList()
+})
+
+onUnmounted(() => {
+  tokenListRequestId += 1
+  editSessionVersion += 1
+  loading.value = false
+  editLoading.value = false
 })
 </script>
 

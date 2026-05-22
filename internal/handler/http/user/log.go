@@ -6,6 +6,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/loginlog"
+	"go.uber.org/zap"
 )
 
 func (h *handler) RecordLog(eventType loginlog.Event) httpcontext.HandlerFunc {
@@ -37,6 +38,8 @@ func (h *handler) RecordLog(eventType loginlog.Event) httpcontext.HandlerFunc {
 			TraceId:   ctx.GetContext().ID(),
 		}
 
-		_, _ = h.loginLogService.Create(ctx.GetContext(), log)
+		if _, err := h.loginLogService.Create(ctx.GetContext(), log); err != nil {
+			ctx.GetContext().Error("记录登录日志失败", zap.Error(err), zap.String("event", string(eventType)))
+		}
 	}
 }

@@ -23,12 +23,15 @@ func (h *handler) executeOsTypeSubscribe(ctx context.Context, req *addRequest) (
 	if req.OsType != models.OsTypeSubscribe {
 		return nil, busCodeStorageOsTypeNotMatch
 	}
+
 	if req.SubscribeUser == "" {
 		return nil, busCodeStorageSubscribeUserEmpty
 	}
+
 	if _, err := h.cloudBridgeService.CheckSubscribeUser(ctx, req.SubscribeUser); err != nil {
 		return nil, busCodeStorageQuerySubscribeUserError.WithError(err)
 	}
+
 	return datatypes.JSONMap{
 		consts.FileAdditionKeyUpUserId: req.SubscribeUser,
 	}, nil
@@ -38,13 +41,16 @@ func (h *handler) executeOsTypeSubscribeShare(ctx context.Context, req *addReque
 	if req.OsType != models.OsTypeSubscribeShareFolder {
 		return nil, "", busCodeStorageOsTypeNotMatch
 	}
+
 	if req.SubscribeUser == "" || req.ShareCode == "" {
 		return nil, "", busCodeStorageSubscribeShareIncomplete
 	}
+
 	shareId, isFolder, fileId, err := h.cloudBridgeService.CheckSubscribeShare(ctx, req.SubscribeUser, req.ShareCode)
 	if err != nil {
 		return nil, "", busCodeStorageQuerySubscribeShareError.WithError(err)
 	}
+
 	return datatypes.JSONMap{
 		consts.FileAdditionKeyUpUserId: req.SubscribeUser,
 		consts.FileAdditionKeyShareId:  shareId,
@@ -56,6 +62,7 @@ func (h *handler) executeOsTypeShare(ctx context.Context, req *addRequest) (data
 	if req.OsType != models.OsTypeShareFolder {
 		return nil, "", busCodeStorageOsTypeNotMatch
 	}
+
 	if req.ShareCode == "" {
 		return nil, "", busCodeStorageShareCodeEmpty
 	}
@@ -121,6 +128,7 @@ func (h *handler) executeOsTypeShare(ctx context.Context, req *addRequest) (data
 			zap.Error(err),
 			zap.Any("first_result", result),
 		)
+
 		if formattedCode != pureShareCode {
 			resultRetry, errRetry := h.cloudBridgeService.CheckShare(ctx, pureShareCode, pureAccessCode)
 			if errRetry == nil && resultRetry != nil && resultRetry.ShareId != 0 {
@@ -128,6 +136,7 @@ func (h *handler) executeOsTypeShare(ctx context.Context, req *addRequest) (data
 				err = nil
 			} else {
 				checkUrl := fmt.Sprintf("https://cloud.189.cn/t/%s", pureShareCode)
+
 				resultUrl, errUrl := h.cloudBridgeService.CheckShare(ctx, checkUrl, pureAccessCode)
 				if errUrl == nil && resultUrl != nil && resultUrl.ShareId != 0 {
 					result = resultUrl
@@ -141,9 +150,11 @@ func (h *handler) executeOsTypeShare(ctx context.Context, req *addRequest) (data
 	if err != nil {
 		return nil, "", busCodeStorageQuerySubscribeShareError.WithError(err)
 	}
+
 	if result == nil || result.ShareId == 0 {
 		ctx.Error("所有尝试均失败，无法获取ShareId",
 			zap.String("final_result_struct", fmt.Sprintf("%+v", result)))
+
 		return nil, "", busCodeStorageQuerySubscribeShareError.WithError(fmt.Errorf("无法获取有效的分享ID(ShareId=0)，请确认分享链接是否有效"))
 	}
 
@@ -155,43 +166,53 @@ func (h *handler) executeOsTypeShare(ctx context.Context, req *addRequest) (data
 	}, result.FileId, nil
 }
 
-func (h *handler) executeOsTypePersonal(ctx context.Context, req *addRequest) httpcontext.BusinessError {
+func (h *handler) executeOsTypePersonal(ctx context.Context, req *addRequest, userID int64, isAdmin bool) httpcontext.BusinessError {
 	if req.OsType != models.OsTypePersonFolder {
 		return busCodeStorageOsTypeNotMatch
 	}
+
 	if req.FileId == "" {
 		return busCodeStoragePersonParamsIncomplete
 	}
+
 	if req.CloudToken == 0 {
 		return busCodeStorageCloudTokenEmpty
 	}
-	token, err := h.cloudTokenService.Query(ctx, req.CloudToken)
+
+	token, err := h.cloudTokenService.QueryAccessible(ctx, req.CloudToken, userID, isAdmin)
 	if err != nil {
 		return busCodeStorageCloudTokenNotExist.WithError(err)
 	}
+
 	if _, err = h.cloudBridgeService.CheckPerson(ctx, cloudbridgeSvi.NewAuthToken(token.AccessToken, token.ExpiresIn), req.FileId); err != nil {
 		return busCodeStoragePersonFileQueryError.WithError(err)
 	}
+
 	return nil
 }
 
-func (h *handler) executeOsTypeFamily(ctx context.Context, req *addRequest) (datatypes.JSONMap, httpcontext.BusinessError) {
+func (h *handler) executeOsTypeFamily(ctx context.Context, req *addRequest, userID int64, isAdmin bool) (datatypes.JSONMap, httpcontext.BusinessError) {
 	if req.OsType != models.OsTypeFamilyFolder {
 		return nil, busCodeStorageOsTypeNotMatch
 	}
+
 	if req.FileId == "" || req.FamilyId == "" {
 		return nil, busCodeStorageFamilyParamsIncomplete
 	}
+
 	if req.CloudToken == 0 {
 		return nil, busCodeStorageCloudTokenEmpty
 	}
-	token, err := h.cloudTokenService.Query(ctx, req.CloudToken)
+
+	token, err := h.cloudTokenService.QueryAccessible(ctx, req.CloudToken, userID, isAdmin)
 	if err != nil {
 		return nil, busCodeStorageCloudTokenNotExist.WithError(err)
 	}
+
 	if err = h.cloudBridgeService.CheckFamily(ctx, cloudbridgeSvi.NewAuthToken(token.AccessToken, token.ExpiresIn), req.FamilyId, req.FileId); err != nil {
 		return nil, busCodeStorageFamilyFileQueryError.WithError(err)
 	}
+
 	return datatypes.JSONMap{
 		consts.FileAdditionKeyFamilyId: req.FamilyId,
 	}, nil

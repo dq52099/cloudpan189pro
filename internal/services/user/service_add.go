@@ -25,6 +25,14 @@ type AddResponse struct {
 }
 
 func (s *service) Add(ctx context.Context, req *AddRequest, opts ...AddOptionFunc) (resp *AddResponse, err error) {
+	if req == nil || req.Username == "" {
+		return nil, errInvalidUsername
+	}
+
+	if req.Password == "" {
+		return nil, errInvalidUserPassword
+	}
+
 	u := &models.User{
 		Username: req.Username,
 		Password: utils.MD5(req.Password),

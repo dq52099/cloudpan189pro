@@ -3,11 +3,9 @@ package storage
 import (
 	"encoding/json"
 
-	"github.com/pkg/errors"
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
-	"gorm.io/gorm"
 )
 
 type refreshRequest struct {
@@ -40,14 +38,8 @@ func (h *handler) Refresh() httpcontext.HandlerFunc {
 			return
 		}
 
-		mountPoint, err := h.mountPointService.Query(ctx.GetContext(), req.ID)
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				ctx.Fail(busCodeStorageMountPointNotFound.WithError(err))
-			} else {
-				ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
-			}
-
+		mountPoint, ok := h.queryOwnedMountPoint(ctx, req.ID)
+		if !ok {
 			return
 		}
 

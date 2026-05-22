@@ -7,6 +7,7 @@ import (
 
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	"github.com/xxcheng123/cloudpan189-share/internal/shared"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/media"
 )
 
@@ -31,6 +32,10 @@ var (
 // Init 初始化媒体配置：
 
 func (s *service) Init(ctx context.Context, req *InitRequest) error {
+	if req == nil {
+		return storageDisableAllowedEmpty
+	}
+
 	if req.StoragePath == "" {
 		return storageDisableAllowedEmpty
 	}
@@ -79,6 +84,8 @@ func (s *service) Init(ctx context.Context, req *InitRequest) error {
 
 		return createErr
 	}
+
+	shared.MediaConfig = newCfg
 
 	return nil
 }

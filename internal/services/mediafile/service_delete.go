@@ -17,6 +17,10 @@ import (
 // DeleteStrm 删除单个 STRM 文件及其数据库记录。
 // 磁盘删除失败会记录 warning 并继续删除 DB 记录，避免孤儿 DB 记录阻塞后续流程。
 func (s *service) DeleteStrm(ctx context.Context, fid int64, rootPath string) error {
+	if fid <= 0 {
+		return errInvalidMediaFileFID
+	}
+
 	file, err := s.QueryStrm(ctx, fid)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -26,16 +30,31 @@ func (s *service) DeleteStrm(ctx context.Context, fid int64, rootPath string) er
 		return err
 	}
 
-	// 删除磁盘文件
-	if err := os.Remove(filepath.Join(rootPath, file.Path)); err != nil && !os.IsNotExist(err) {
+	// 删除磁盘文件。历史 DB 记录可能包含异常路径；遇到非法路径时只清理 DB 记录。
+	diskPath, pathErr := mediaFileDiskPath(rootPath, file.Path)
+	if pathErr != nil {
+		ctx.Warn("跳过非法 STRM 文件路径（将继续清理 DB 记录）",
+			zap.String("path", file.Path),
+			zap.Error(pathErr),
+		)
+	} else if err := os.Remove(diskPath); err != nil && !os.IsNotExist(err) {
 		ctx.Warn("删除 STRM 文件失败（将继续清理 DB 记录）",
-			zap.String("path", filepath.Join(rootPath, file.Path)),
+			zap.String("path", diskPath),
 			zap.Error(err),
 		)
 	}
 
 	// 删除记录
-	return s.getDB(ctx).Where("id = ?", file.ID).Delete(new(models.MediaFile)).Error
+	result := s.getDB(ctx).Where("id = ?", file.ID).Delete(new(models.MediaFile))
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return errors.Wrap(gorm.ErrRecordNotFound, "媒体文件记录不存在")
+	}
+
+	return nil
 }
 
 // Clear 清除根路径下所有文件夹并清空对应 DB 记录。
@@ -45,10 +64,14 @@ func (s *service) DeleteStrm(ctx context.Context, fid int64, rootPath string) er
 //   - rootPath 必须与 shared.MediaConfig.StoragePath 一致，防止调用方传入错误的危险路径；
 //   - rootPath 不能是根目录 `/` 或 Windows 盘符根 `C:\`。
 func (s *service) Clear(ctx context.Context, rootPath string) error {
-	if err := validateMediaStorageRoot(rootPath); err != nil {
+	validatedRoot, err := validateMediaStorageRoot(rootPath)
+	if err != nil {
 		ctx.Error("拒绝清理非法媒体根路径", zap.String("path", rootPath), zap.Error(err))
+
 		return err
 	}
+
+	rootPath = validatedRoot
 
 	entries, err := os.ReadDir(rootPath)
 	if err != nil {
@@ -63,6 +86,7 @@ func (s *service) Clear(ctx context.Context, rootPath string) error {
 		target := filepath.Join(rootPath, entry.Name())
 		if err := os.RemoveAll(target); err != nil {
 			ctx.Warn("删除文件失败，已跳过", zap.Error(err), zap.String("path", target))
+
 			failedCount++
 		}
 	}
@@ -83,32 +107,43 @@ func (s *service) Clear(ctx context.Context, rootPath string) error {
 	return nil
 }
 
-// validateMediaStorageRoot 对 Clear 传入的 root 做最小安全校验。
-func validateMediaStorageRoot(rootPath string) error {
+// validateMediaStorageRoot 校验媒体根路径，并返回规范化后的绝对路径。
+func validateMediaStorageRoot(rootPath string) (string, error) {
 	clean := strings.TrimSpace(rootPath)
 	if clean == "" {
-		return errors.New("媒体根路径不能为空")
+		return "", errors.New("媒体根路径不能为空")
 	}
 
 	absPath, err := filepath.Abs(clean)
 	if err != nil {
-		return fmt.Errorf("解析路径失败: %w", err)
+		return "", fmt.Errorf("解析路径失败: %w", err)
 	}
 
 	// 防止 `/` 或 盘符根
 	if absPath == "/" || absPath == `\` || (len(absPath) == 3 && absPath[1] == ':') {
-		return errors.New("拒绝清理系统根目录或盘符根")
+		return "", errors.New("拒绝清理系统根目录或盘符根")
 	}
 
 	// 必须与当前配置的 StoragePath 一致（校准从 http handler 传来的值）
-	if cfg := shared.MediaConfig; cfg != nil && cfg.StoragePath != "" {
-		absCfg, err := filepath.Abs(cfg.StoragePath)
-		if err == nil && absCfg != absPath {
-			return fmt.Errorf("传入路径与媒体配置不一致: got=%s, want=%s", absPath, absCfg)
-		}
+	cfg := shared.MediaConfig
+	if cfg == nil || strings.TrimSpace(cfg.StoragePath) == "" {
+		return "", errors.New("媒体存储路径未配置")
 	}
 
-	return nil
+	absCfg, err := filepath.Abs(strings.TrimSpace(cfg.StoragePath))
+	if err != nil {
+		return "", fmt.Errorf("解析配置路径失败: %w", err)
+	}
+
+	if absCfg == "/" || absCfg == `\` || (len(absCfg) == 3 && absCfg[1] == ':') {
+		return "", errors.New("拒绝使用系统根目录或盘符根作为媒体配置")
+	}
+
+	if absCfg != absPath {
+		return "", fmt.Errorf("传入路径与媒体配置不一致: got=%s, want=%s", absPath, absCfg)
+	}
+
+	return absPath, nil
 }
 
 // ClearAll 清空所有媒体文件的 DB 记录（不清除实际文件）。

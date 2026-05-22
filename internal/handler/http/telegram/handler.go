@@ -43,14 +43,6 @@ func notFound(msg string) httpcontext.BusinessError {
 	}
 }
 
-func serverError(msg string) httpcontext.BusinessError {
-	return &customBusinessError{
-		httpCode:     http.StatusInternalServerError,
-		businessCode: 500,
-		message:      msg,
-	}
-}
-
 type customBusinessError struct {
 	httpCode     int
 	businessCode int
@@ -67,20 +59,24 @@ func (e *customBusinessError) WithError(err error) httpcontext.BusinessError {
 }
 func (e *customBusinessError) WithHTTPCode(code int) httpcontext.BusinessError {
 	e.httpCode = code
+
 	return e
 }
 func (e *customBusinessError) WithMessage(msg string) httpcontext.BusinessError {
 	e.message = msg
+
 	return e
 }
 func (e *customBusinessError) WithBusinessCode(code int) httpcontext.BusinessError {
 	e.businessCode = code
+
 	return e
 }
 
 func (h *Handler) GetSetting() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		var setting models.TelegramSetting
+
 		result := h.db.First(&setting)
 		if result.Error != nil {
 			if errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -89,11 +85,15 @@ func (h *Handler) GetSetting() httpcontext.HandlerFunc {
 					DefaultMountPath: "/转存",
 					APIURL:           "https://api.telegram.org",
 				})
+
 				return
 			}
+
 			c.Fail(invalidParams(result.Error))
+
 			return
 		}
+
 		setting.BotToken = setting.BotTokenEncrypted
 		setting.BotTokenEncrypted = ""
 		c.Success(setting)
@@ -116,13 +116,16 @@ func (h *Handler) UpdateSetting() httpcontext.HandlerFunc {
 		var req UpdateSettingReq
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.Fail(invalidParams(err))
+
 			return
 		}
 
 		var setting models.TelegramSetting
+
 		result := h.db.First(&setting)
-		if result.Error != nil && result.Error.Error() != "record not found" {
+		if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			c.Fail(invalidParams(result.Error))
+
 			return
 		}
 
@@ -138,12 +141,37 @@ func (h *Handler) UpdateSetting() httpcontext.HandlerFunc {
 		if setting.ID == 0 {
 			result = h.db.Create(&setting)
 		} else {
-			result = h.db.Save(&setting)
+			result = h.db.Model(&models.TelegramSetting{}).
+				Where("id = ?", setting.ID).
+				Select(
+					"bot_token_encrypted",
+					"proxy_url",
+					"proxy_type",
+					"api_url",
+					"chat_id",
+					"default_mount_path",
+					"enable_notify",
+					"enable",
+				).
+				Updates(setting)
 		}
 
 		if result.Error != nil {
 			c.Fail(invalidParams(result.Error))
+
 			return
+		}
+
+		if setting.ID != 0 && result.RowsAffected == 0 {
+			if err := h.checkTelegramSettingUpdateResult(result, setting.ID); err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					c.Fail(notFound("Setting not found"))
+				} else {
+					c.Fail(invalidParams(err))
+				}
+
+				return
+			}
 		}
 
 		setting.BotToken = setting.BotTokenEncrypted
@@ -157,11 +185,13 @@ func (h *Handler) TestConnection() httpcontext.HandlerFunc {
 		var setting models.TelegramSetting
 		if err := h.db.First(&setting).Error; err != nil {
 			c.Fail(invalidParams(fmt.Errorf("failed to get settings: %w", err)))
+
 			return
 		}
 
 		if setting.BotToken == "" && setting.BotTokenEncrypted == "" || !setting.Enable {
 			c.Fail(invalidParams(&customBusinessError{httpCode: http.StatusBadRequest, message: "Telegram bot is not enabled or token not configured"}))
+
 			return
 		}
 
@@ -182,6 +212,7 @@ func (h *Handler) TestConnection() httpcontext.HandlerFunc {
 		err := testService.TestConnection()
 		if err != nil {
 			c.Fail(invalidParams(err))
+
 			return
 		}
 
@@ -192,11 +223,14 @@ func (h *Handler) TestConnection() httpcontext.HandlerFunc {
 func (h *Handler) GetUserList() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		var users []models.TelegramUser
+
 		result := h.db.Order("last_seen_at desc").Find(&users)
 		if result.Error != nil {
 			c.Fail(invalidParams(result.Error))
+
 			return
 		}
+
 		c.Success(users)
 	}
 }
@@ -212,27 +246,100 @@ func (h *Handler) UpdateUser() httpcontext.HandlerFunc {
 		var req UpdateUserReq
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.Fail(invalidParams(err))
+
 			return
 		}
 
 		var user models.TelegramUser
+
 		result := h.db.Where("user_id = ?", req.UserID).First(&user)
 		if result.Error != nil {
-			c.Fail(notFound("User not found"))
+			if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+				c.Fail(notFound("User not found"))
+			} else {
+				c.Fail(invalidParams(result.Error))
+			}
+
 			return
 		}
 
 		user.MountPath = req.MountPath
 		user.IsAdmin = req.IsAdmin
 
-		result = h.db.Save(&user)
+		result = h.db.Model(&models.TelegramUser{}).
+			Where("id = ?", user.ID).
+			Select("mount_path", "is_admin").
+			Updates(user)
 		if result.Error != nil {
 			c.Fail(invalidParams(result.Error))
+
 			return
+		}
+
+		if result.RowsAffected == 0 {
+			if err := h.checkTelegramUserUpdateResult(result, user.ID); err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					c.Fail(notFound("User not found"))
+				} else {
+					c.Fail(invalidParams(err))
+				}
+
+				return
+			}
 		}
 
 		c.Success(user)
 	}
+}
+
+func (h *Handler) checkTelegramSettingUpdateResult(result *gorm.DB, id int64) error {
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected != 0 {
+		return nil
+	}
+
+	return h.ensureTelegramSettingExists(id)
+}
+
+func (h *Handler) checkTelegramUserUpdateResult(result *gorm.DB, id int64) error {
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected != 0 {
+		return nil
+	}
+
+	return h.ensureTelegramUserExists(id)
+}
+
+func (h *Handler) ensureTelegramSettingExists(id int64) error {
+	var count int64
+	if err := h.db.Model(&models.TelegramSetting{}).Where("id = ?", id).Count(&count).Error; err != nil {
+		return err
+	}
+
+	if count == 0 {
+		return gorm.ErrRecordNotFound
+	}
+
+	return nil
+}
+
+func (h *Handler) ensureTelegramUserExists(id int64) error {
+	var count int64
+	if err := h.db.Model(&models.TelegramUser{}).Where("id = ?", id).Count(&count).Error; err != nil {
+		return err
+	}
+
+	if count == 0 {
+		return gorm.ErrRecordNotFound
+	}
+
+	return nil
 }
 
 func (h *Handler) SendMessage() httpcontext.HandlerFunc {
@@ -242,17 +349,20 @@ func (h *Handler) SendMessage() httpcontext.HandlerFunc {
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.Fail(invalidParams(err))
+
 			return
 		}
 
 		var setting models.TelegramSetting
 		if err := h.db.First(&setting).Error; err != nil {
 			c.Fail(invalidParams(fmt.Errorf("failed to get settings: %w", err)))
+
 			return
 		}
 
 		if (setting.BotToken == "" && setting.BotTokenEncrypted == "") || !setting.Enable {
 			c.Fail(invalidParams(&customBusinessError{httpCode: http.StatusBadRequest, message: "Telegram bot is not enabled or token not configured"}))
+
 			return
 		}
 
@@ -273,6 +383,7 @@ func (h *Handler) SendMessage() httpcontext.HandlerFunc {
 		err := msgService.SendMessage(req.Message)
 		if err != nil {
 			c.Fail(invalidParams(err))
+
 			return
 		}
 
@@ -292,6 +403,7 @@ func (h *Handler) ProcessShareLink() httpcontext.HandlerFunc {
 		var req ProcessShareLinkReq
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.Fail(invalidParams(err))
+
 			return
 		}
 
@@ -300,6 +412,7 @@ func (h *Handler) ProcessShareLink() httpcontext.HandlerFunc {
 			result, err := h.service.ParseAndMountShareLink(req.ShareURL, req.MountPath, req.AutoMount)
 			if err != nil {
 				c.Fail(invalidParams(err))
+
 				return
 			}
 
@@ -311,6 +424,7 @@ func (h *Handler) ProcessShareLink() httpcontext.HandlerFunc {
 					"shareID":   result.ShareID,
 					"fileID":    result.FileID,
 				})
+
 				return
 			}
 
@@ -323,6 +437,7 @@ func (h *Handler) ProcessShareLink() httpcontext.HandlerFunc {
 		var setting models.TelegramSetting
 		if err := h.db.First(&setting).Error; err != nil {
 			c.Fail(invalidParams(fmt.Errorf("failed to get settings: %w", err)))
+
 			return
 		}
 
@@ -348,6 +463,7 @@ func (h *Handler) ProcessShareLink() httpcontext.HandlerFunc {
 		result, err := msgService.ParseAndMountShareLink(req.ShareURL, req.MountPath, req.AutoMount)
 		if err != nil {
 			c.Fail(invalidParams(err))
+
 			return
 		}
 

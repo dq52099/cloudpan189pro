@@ -144,15 +144,19 @@ func (sc SubscriptionConfig) Value() (driver.Value, error) {
 	if sc == (SubscriptionConfig{}) {
 		return nil, nil
 	}
+
 	return json.Marshal(sc)
 }
 
 func (sc *SubscriptionConfig) Scan(value interface{}) error {
 	if value == nil {
 		*sc = SubscriptionConfig{}
+
 		return nil
 	}
+
 	var bytes []byte
+
 	switch v := value.(type) {
 	case []byte:
 		bytes = v
@@ -161,5 +165,6 @@ func (sc *SubscriptionConfig) Scan(value interface{}) error {
 	default:
 		return errors.New("cannot scan SubscriptionConfig from non-string/[]byte value")
 	}
+
 	return json.Unmarshal(bytes, sc)
 }

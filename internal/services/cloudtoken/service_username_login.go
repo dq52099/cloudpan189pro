@@ -12,6 +12,15 @@ import (
 	"go.uber.org/zap"
 )
 
+var appLogin = func(username, password string) (*cloudpan.AppLoginToken, error) {
+	token, err := cloudpan.AppLogin(username, password)
+	if err != nil {
+		return nil, err
+	}
+
+	return token, nil
+}
+
 // UsernameLoginRequest 用户名登录请求
 type UsernameLoginRequest struct {
 	ID       int64
@@ -19,6 +28,7 @@ type UsernameLoginRequest struct {
 	Password string
 	Name     string
 	UserID   int64 // 创建令牌的用户ID
+	IsAdmin  bool  // 是否管理员
 }
 
 // UsernameLoginResponse 用户名登录响应
@@ -27,27 +37,35 @@ type UsernameLoginResponse struct {
 }
 
 func (s *service) UsernameLogin(ctx context.Context, req *UsernameLoginRequest) (resp *UsernameLoginResponse, err error) {
-	loginResult, loginErr := cloudpan.AppLogin(req.Username, req.Password)
-	if loginErr != nil {
-		ctx.Error("用户名密码登录失败", zap.Error(loginErr), zap.String("username", req.Username))
-
-		return nil, errors.Wrap(loginErr, "登录失败")
+	if req == nil || req.Username == "" || req.Password == "" {
+		return nil, errInvalidUsernameLoginCredentials
 	}
 
 	if req.ID > 0 {
 		// 检测信息
-		var oldToken models.CloudToken
-		if err = s.getDB(ctx).Where("id = ?", req.ID).First(&oldToken).Error; err != nil {
-			ctx.Error("查询云盘令牌失败", zap.Error(err), zap.Int64("id", req.ID))
+		oldToken, queryErr := s.QueryAccessible(ctx, req.ID, req.UserID, req.IsAdmin)
+		if queryErr != nil {
+			return nil, queryErr
+		}
 
-			return nil, errors.Wrap(err, "查询云盘令牌失败")
-		} else if oldToken.LoginType != models.LoginTypePassword {
+		if oldToken.LoginType != models.LoginTypePassword {
 			ctx.Error("云盘令牌类型错误", zap.Int64("id", req.ID))
 
 			return nil, errors.New("云盘令牌类型错误")
 		}
 
+		loginResult, loginErr := appLogin(req.Username, req.Password)
+		if loginErr != nil {
+			ctx.Error("用户名密码登录失败", zap.Error(loginErr), zap.String("username", req.Username))
+
+			return nil, errors.Wrap(loginErr, "登录失败")
+		}
+
 		addition := oldToken.Addition
+		if addition == nil {
+			addition = make(map[string]interface{})
+		}
+
 		addition[models.CloudTokenAdditionAutoLoginResultKey] = fmt.Sprintf("%s, token 刷新成功", time.Now().Format(time.DateTime))
 		addition[models.CloudTokenAdditionAutoLoginTimes] = 0
 
@@ -59,16 +77,36 @@ func (s *service) UsernameLogin(ctx context.Context, req *UsernameLoginRequest) 
 			"addition":     addition,
 		}
 
-		result := s.getDB(ctx).Where("id = ?", oldToken.ID).Updates(updateMap)
+		query := s.getDB(ctx).Where("id = ?", oldToken.ID)
+		if !req.IsAdmin {
+			query = query.Where("user_id = ?", req.UserID)
+		}
+
+		result := query.Updates(updateMap)
 		if result.Error != nil {
 			ctx.Error("更新云盘令牌失败", zap.Error(result.Error), zap.Int64("id", oldToken.ID))
 
 			return nil, errors.Wrap(result.Error, "更新云盘令牌失败")
 		}
 
+		if err := s.checkCloudTokenUpdateResult(ctx, result, oldToken.ID, req.UserID, req.IsAdmin, "令牌不存在"); err != nil {
+			return nil, err
+		}
+
 		return &UsernameLoginResponse{
 			ID: req.ID,
 		}, nil
+	}
+
+	if req.UserID <= 0 {
+		return nil, errInvalidCloudTokenUserID
+	}
+
+	loginResult, loginErr := appLogin(req.Username, req.Password)
+	if loginErr != nil {
+		ctx.Error("用户名密码登录失败", zap.Error(loginErr), zap.String("username", req.Username))
+
+		return nil, errors.Wrap(loginErr, "登录失败")
 	}
 
 	m := &models.CloudToken{

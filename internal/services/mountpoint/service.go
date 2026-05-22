@@ -60,20 +60,47 @@ func NewService(
 
 // UpdateRefreshTime 更新挂载点的刷新时间
 func (s *service) UpdateRefreshTime(ctx context.Context, fileId int64) error {
-	return s.getDB(ctx).Where("file_id = ?", fileId).Update("updated_at", time.Now()).Error
+	if fileId <= 0 {
+		return errInvalidMountPointFileID
+	}
+
+	result := s.getDB(ctx).Where("file_id = ?", fileId).Update("updated_at", time.Now())
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return s.ensureMountPointFileExists(ctx, fileId)
+	}
+
+	return nil
 }
 
 // UpdateLastState 写入挂载点最近一次同步结果。
 // 超过 1024 字符会被截断以适配 last_state 字段的类型。
 func (s *service) UpdateLastState(ctx context.Context, fileId int64, state string) error {
+	if fileId <= 0 {
+		return errInvalidMountPointFileID
+	}
+
 	if state == "" {
 		state = "成功"
 	}
+
 	if len([]rune(state)) > 512 {
 		state = string([]rune(state)[:512]) + "..."
 	}
 
-	return s.getDB(ctx).Where("file_id = ?", fileId).Update("last_state", state).Error
+	result := s.getDB(ctx).Where("file_id = ?", fileId).Update("last_state", state)
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return s.ensureMountPointFileExists(ctx, fileId)
+	}
+
+	return nil
 }
 
 func (s *service) getDB(ctx context.Context) *gorm.DB {
@@ -89,8 +116,16 @@ var (
 
 // 实现 BatchParseText
 func (s *service) BatchParseText(ctx context.Context, req *topic.BatchParseTextRequest) ([]*topic.BatchParseItem, error) {
+	if req == nil {
+		return nil, errInvalidMountPointParseRequest
+	}
+
+	if req.CloudToken <= 0 {
+		return nil, errInvalidMountPointCloudTokenID
+	}
+
 	// 1. 获取 Token 信息 (用于 CheckPerson)
-	tokenInfo, err := s.cloudTokenService.Query(ctx, req.CloudToken)
+	tokenInfo, err := s.cloudTokenService.QueryAccessible(ctx, req.CloudToken, req.UserID, req.IsAdmin)
 	if err != nil {
 		return nil, err
 	}
@@ -98,6 +133,7 @@ func (s *service) BatchParseText(ctx context.Context, req *topic.BatchParseTextR
 	authToken := cloudbridgeSvi.NewAuthToken(tokenInfo.AccessToken, tokenInfo.ExpiresIn)
 
 	var results []*topic.BatchParseItem
+
 	lines := strings.Split(req.Content, "\n")
 
 	for _, line := range lines {
@@ -166,6 +202,7 @@ func (s *service) BatchParseText(ctx context.Context, req *topic.BatchParseTextR
 				}
 			}
 		}
+
 		if isShare {
 			info, err := s.cloudBridgeService.GetShareInfo(ctx, shareCode, accessCode)
 
@@ -182,7 +219,6 @@ func (s *service) BatchParseText(ctx context.Context, req *topic.BatchParseTextR
 				ShareCode:       shareCode,
 				ShareAccessCode: accessCode,
 			})
-
 		} else if isFolder {
 			name, err := s.cloudBridgeService.CheckPerson(ctx, authToken, fileId)
 
@@ -197,6 +233,7 @@ func (s *service) BatchParseText(ctx context.Context, req *topic.BatchParseTextR
 			})
 		} else if isSubscribe {
 			userInfo, err := s.cloudBridgeService.GetSubscribeUserInfo(ctx, subscribeId)
+
 			name := ""
 			if err == nil && userInfo != nil {
 				name = userInfo.Name

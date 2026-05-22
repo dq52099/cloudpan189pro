@@ -5,7 +5,8 @@ echo "=== 开始构建 ==="
 # 1. 构建前端
 echo "[1/3] 构建前端..."
 cd fe
-npm run build
+corepack pnpm@9.15.9 install --frozen-lockfile
+corepack pnpm@9.15.9 build
 cd ..
 
 # 2. 构建后端

@@ -8,16 +8,37 @@ import (
 	"go.uber.org/zap"
 )
 
+var loginQuery = client.LoginQuery
+
 // CheckQrcodeRequest 检查二维码请求
 type CheckQrcodeRequest struct {
-	ID     int64  `json:"id" binding:"omitempty" example:"1"`                                     // 云盘令牌ID，可选
-	UUID   string `json:"uuid" binding:"required" example:"550e8400-e29b-41d4-a716-446655440000"` // 二维码UUID
-	UserID int64  // 创建令牌的用户ID
+	ID      int64  `json:"id" binding:"omitempty" example:"1"`                                     // 云盘令牌ID，可选
+	UUID    string `json:"uuid" binding:"required" example:"550e8400-e29b-41d4-a716-446655440000"` // 二维码UUID
+	UserID  int64  // 创建令牌的用户ID
+	IsAdmin bool   // 是否管理员
 }
 
 // CheckQrcode 检查二维码状态
 func (s *service) CheckQrcode(ctx context.Context, req *CheckQrcodeRequest) (err error) {
-	respData, err := client.LoginQuery(req.UUID)
+	if req == nil {
+		return errInvalidCloudTokenUserID
+	}
+
+	if req.ID < 0 {
+		return errInvalidCloudTokenID
+	}
+
+	if req.ID == 0 && req.UserID <= 0 {
+		return errInvalidCloudTokenUserID
+	}
+
+	if req.ID != 0 {
+		if _, err := s.QueryAccessible(ctx, req.ID, req.UserID, req.IsAdmin); err != nil {
+			return err
+		}
+	}
+
+	respData, err := loginQuery(req.UUID)
 	if err != nil {
 		ctx.Error("登录查询失败", zap.Error(err))
 
@@ -32,10 +53,20 @@ func (s *service) CheckQrcode(ctx context.Context, req *CheckQrcodeRequest) (err
 			"expires_in":   respData.ExpiresIn,
 		}
 
-		if err = s.getDB(ctx).Where("id = ?", req.ID).Updates(updateMap).Error; err != nil {
-			ctx.Error("更新云盘令牌失败", zap.Error(err), zap.Int64("id", req.ID))
+		query := s.getDB(ctx).Where("id = ?", req.ID)
+		if !req.IsAdmin {
+			query = query.Where("user_id = ?", req.UserID)
+		}
 
-			return errors.Wrap(err, "更新云盘令牌失败")
+		result := query.Updates(updateMap)
+		if result.Error != nil {
+			ctx.Error("更新云盘令牌失败", zap.Error(result.Error), zap.Int64("id", req.ID))
+
+			return errors.Wrap(result.Error, "更新云盘令牌失败")
+		}
+
+		if err := s.checkCloudTokenUpdateResult(ctx, result, req.ID, req.UserID, req.IsAdmin, "令牌不存在"); err != nil {
+			return err
 		}
 	} else {
 		// 创建新记录

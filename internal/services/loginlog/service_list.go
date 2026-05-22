@@ -10,6 +10,25 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+const (
+	defaultLoginLogCurrentPage = 1
+	defaultLoginLogPageSize    = 10
+	maxLoginLogPageSize        = 500
+)
+
+var allowedLoginLogSortColumns = map[string]struct{}{
+	"id":         {},
+	"user_id":    {},
+	"username":   {},
+	"addr":       {},
+	"method":     {},
+	"event":      {},
+	"status":     {},
+	"trace_id":   {},
+	"created_at": {},
+	"updated_at": {},
+}
+
 // ListRequest 登录日志列表查询请求
 type ListRequest struct {
 	UserId   int64           `form:"userId"  binding:"omitempty" example:"1"`
@@ -32,11 +51,19 @@ type ListRequest struct {
 
 // List 查询日志
 func (s *service) List(ctx context.Context, req *ListRequest) ([]*models.LoginLog, error) {
+	if req == nil {
+		req = &ListRequest{}
+	}
+
 	query := s.getListQuery(ctx, req)
 
 	// 排序
-	if req != nil && len(req.AscList) > 0 {
+	if len(req.AscList) > 0 {
 		for _, k := range req.AscList {
+			if _, ok := allowedLoginLogSortColumns[k]; !ok {
+				return nil, errInvalidLoginLogSortField
+			}
+
 			query = query.Order(clause.OrderByColumn{Column: clause.Column{Name: k}, Desc: false})
 		}
 	} else {
@@ -44,23 +71,18 @@ func (s *service) List(ctx context.Context, req *ListRequest) ([]*models.LoginLo
 		query = query.Order(clause.OrderByColumn{Column: clause.Column{Name: "id"}, Desc: true})
 	}
 
-	if req != nil {
-		for _, k := range req.DescList {
-			query = query.Order(clause.OrderByColumn{Column: clause.Column{Name: k}, Desc: true})
+	for _, k := range req.DescList {
+		if _, ok := allowedLoginLogSortColumns[k]; !ok {
+			return nil, errInvalidLoginLogSortField
 		}
+
+		query = query.Order(clause.OrderByColumn{Column: clause.Column{Name: k}, Desc: true})
 	}
 
 	// 分页
-	if req != nil && !req.NoPaginate {
-		currentPage := req.CurrentPage
-		if currentPage <= 0 {
-			currentPage = 1
-		}
-		pageSize := req.PageSize
-		if pageSize <= 0 {
-			pageSize = 10
-		}
-		query = query.Offset((currentPage - 1) * pageSize).Limit(pageSize)
+	if !req.NoPaginate {
+		normalizeLoginLogPagination(req)
+		query = query.Offset((req.CurrentPage - 1) * req.PageSize).Limit(req.PageSize)
 	}
 
 	list := make([]*models.LoginLog, 0)
@@ -69,6 +91,20 @@ func (s *service) List(ctx context.Context, req *ListRequest) ([]*models.LoginLo
 	}
 
 	return list, nil
+}
+
+func normalizeLoginLogPagination(req *ListRequest) {
+	if req.CurrentPage <= 0 {
+		req.CurrentPage = defaultLoginLogCurrentPage
+	}
+
+	if req.PageSize <= 0 {
+		req.PageSize = defaultLoginLogPageSize
+	}
+
+	if req.PageSize > maxLoginLogPageSize {
+		req.PageSize = maxLoginLogPageSize
+	}
 }
 
 // Count 统计数量

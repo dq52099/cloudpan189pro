@@ -1,5 +1,12 @@
 <template>
-  <n-modal v-model:show="show" preset="dialog" title="修改入库计划" :mask-closable="false">
+  <n-modal
+    v-model:show="show"
+    preset="dialog"
+    title="修改入库计划"
+    :closable="!submitting"
+    :mask-closable="false"
+    :close-on-esc="!submitting"
+  >
     <div class="edit-plan-modal">
       <n-form
         ref="detailFormRef"
@@ -10,25 +17,25 @@
         class="section"
       >
         <n-form-item label="计划名称" path="name">
-          <n-input v-model:value="form.name" placeholder="例如：入库计划A" />
+          <n-input v-model:value="form.name" placeholder="例如：入库计划A" :disabled="submitting" />
         </n-form-item>
 
         <n-form-item label="挂载父目录" path="parentPath">
-          <n-input v-model:value="form.parentPath" placeholder="/Movies" />
+          <n-input v-model:value="form.parentPath" placeholder="/Movies" :disabled="submitting" />
         </n-form-item>
 
         <n-form-item label="绑定令牌" path="tokenId">
           <n-select
             v-model:value="form.tokenId"
-            :options="cloudTokenOptions"
-            placeholder="可选"
-            clearable
+            :options="cloudTokenOptionsWithUnbound"
+            placeholder="请选择令牌"
             filterable
+            :disabled="submitting"
           />
         </n-form-item>
 
         <n-form-item label="冲突处理策略" path="onConflict">
-          <n-radio-group v-model:value="form.onConflict">
+          <n-radio-group v-model:value="form.onConflict" :disabled="submitting">
             <n-space>
               <n-radio
                 v-for="opt in AUTO_INGEST_ON_CONFLICT_OPTIONS"
@@ -46,13 +53,14 @@
             v-model:value="form.autoIngestInterval"
             :min="AUTO_INGEST_INTERVAL_MIN"
             :max="REFRESH_INTERVAL_MAX"
+            :disabled="submitting"
           />
         </n-form-item>
 
         <n-divider title-placement="left">刷新策略（可选）</n-divider>
 
         <n-form-item label="启用自动刷新" path="refreshStrategy.enableAutoRefresh">
-          <n-switch v-model:value="form.refreshStrategy.enableAutoRefresh" />
+          <n-switch v-model:value="form.refreshStrategy.enableAutoRefresh" :disabled="submitting" />
         </n-form-item>
 
         <template v-if="form.refreshStrategy.enableAutoRefresh">
@@ -61,6 +69,7 @@
               v-model:value="form.refreshStrategy.refreshInterval"
               :min="REFRESH_INTERVAL_MIN"
               :max="REFRESH_INTERVAL_MAX"
+              :disabled="submitting"
             />
           </n-form-item>
           <n-form-item label="持续天数" path="refreshStrategy.autoRefreshDays">
@@ -68,10 +77,14 @@
               v-model:value="form.refreshStrategy.autoRefreshDays"
               :min="AUTO_REFRESH_DAYS_MIN"
               :max="AUTO_REFRESH_DAYS_MAX"
+              :disabled="submitting"
             />
           </n-form-item>
           <n-form-item label="深度刷新" path="refreshStrategy.enableDeepRefresh">
-            <n-switch v-model:value="form.refreshStrategy.enableDeepRefresh" />
+            <n-switch
+              v-model:value="form.refreshStrategy.enableDeepRefresh"
+              :disabled="submitting"
+            />
           </n-form-item>
         </template>
       </n-form>
@@ -79,15 +92,17 @@
 
     <template #action>
       <n-space>
-        <n-button @click="handleCancel">取消</n-button>
-        <n-button type="primary" :loading="submitting" @click="handleSubmit">保存修改</n-button>
+        <n-button :disabled="submitting" @click="handleCancel">取消</n-button>
+        <n-button type="primary" :loading="submitting" :disabled="submitting" @click="handleSubmit">
+          保存修改
+        </n-button>
       </n-space>
     </template>
   </n-modal>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue'
+import { computed, ref, reactive, watch, onUnmounted } from 'vue'
 import {
   NModal,
   NForm,
@@ -132,19 +147,46 @@ const emit = defineEmits<{
   (e: 'saved'): void
 }>()
 
+const cloudTokenOptionsWithUnbound = computed<CloudTokenOption[]>(() => [
+  { label: '未绑定令牌', value: 0 },
+  ...props.cloudTokenOptions,
+])
+
 // v-model:show 与关闭重置
 const show = ref(props.show)
+let isComponentMounted = true
+let operationVersion = 0
+let submitRequestId = 0
+
+const invalidatePendingWork = () => {
+  operationVersion++
+}
+
+const isCurrentOperation = (version: number) => {
+  return isComponentMounted && show.value && operationVersion === version
+}
+
+const isCurrentSubmitRequest = (requestId: number, currentOperation: number) => {
+  return isCurrentOperation(currentOperation) && submitRequestId === requestId
+}
+
 watch(
   () => props.show,
   (v) => (show.value = v)
 )
 watch(show, (v, ov) => {
   emit('update:show', v)
-  if (v) {
+  if (v && !ov) {
+    invalidatePendingWork()
     // 每次打开时，重新从 props.plan 注入，避免因对象引用未变化导致 watch 不触发
     applyPlanToForm(props.plan)
+
+    return
   }
+
   if (!v && ov) {
+    invalidatePendingWork()
+    submitting.value = false
     resetAll()
   }
 })
@@ -155,7 +197,7 @@ const form = reactive<
   Required<
     Pick<UpdatePlanRequest, 'id' | 'name' | 'parentPath' | 'onConflict' | 'autoIngestInterval'>
   > & {
-    tokenId?: number
+    tokenId: number
     refreshStrategy: {
       enableAutoRefresh: boolean
       autoRefreshDays: number
@@ -169,7 +211,7 @@ const form = reactive<
   parentPath: '',
   onConflict: 'abandon',
   autoIngestInterval: 30,
-  tokenId: undefined,
+  tokenId: 0,
   refreshStrategy: {
     enableAutoRefresh: false,
     autoRefreshDays: 7,
@@ -185,7 +227,7 @@ const applyPlanToForm = (p: Models.AutoIngestPlan | null | undefined) => {
   form.parentPath = p.parentPath || ''
   form.onConflict = (p.onConflict as 'rename' | 'abandon') || 'rename'
   form.autoIngestInterval = p.autoIngestInterval ?? 30
-  form.tokenId = p.tokenId || undefined
+  form.tokenId = p.tokenId ?? 0
   form.refreshStrategy.enableAutoRefresh = !!p.refreshStrategy?.enableAutoRefresh
   form.refreshStrategy.autoRefreshDays = p.refreshStrategy?.autoRefreshDays ?? 7
   form.refreshStrategy.refreshInterval = p.refreshStrategy?.refreshInterval ?? 30
@@ -195,7 +237,14 @@ const applyPlanToForm = (p: Models.AutoIngestPlan | null | undefined) => {
 // 同步 props.plan 到表单（首次加载 & 对象更换时）
 watch(
   () => props.plan,
-  (p) => applyPlanToForm(p),
+  (p) => {
+    if (!show.value) {
+      return
+    }
+
+    invalidatePendingWork()
+    applyPlanToForm(p)
+  },
   { immediate: true }
 )
 
@@ -232,23 +281,42 @@ const detailRules: FormRules = {
 const submitting = ref(false)
 
 const handleCancel = () => {
+  if (submitting.value) {
+    return
+  }
+
   resetAll()
   show.value = false
 }
 
 const handleSubmit = () => {
+  if (submitting.value) {
+    return
+  }
+
   if (!form.id) {
     message.error('计划ID缺失')
     return
   }
 
-  detailFormRef.value?.validate((errors) => {
-    if (errors) {
-      message.error('请检查表单输入')
+  const validateOperation = operationVersion
+  submitting.value = true
+
+  if (!detailFormRef.value) {
+    submitting.value = false
+    return
+  }
+
+  detailFormRef.value.validate((errors) => {
+    if (!isCurrentOperation(validateOperation)) {
       return
     }
 
-    submitting.value = true
+    if (errors) {
+      message.error('请检查表单输入')
+      submitting.value = false
+      return
+    }
 
     const payload: UpdatePlanRequest = {
       id: form.id,
@@ -256,7 +324,7 @@ const handleSubmit = () => {
       parentPath: form.parentPath || undefined,
       autoIngestInterval: form.autoIngestInterval || undefined,
       onConflict: form.onConflict || undefined,
-      tokenId: form.tokenId || undefined,
+      tokenId: form.tokenId,
       refreshStrategy: form.refreshStrategy.enableAutoRefresh
         ? {
             enableAutoRefresh: form.refreshStrategy.enableAutoRefresh,
@@ -272,39 +340,58 @@ const handleSubmit = () => {
           },
     }
 
+    const currentOperation = validateOperation
+    const currentRequestId = ++submitRequestId
+
     updateAutoIngestPlan(payload)
       .then((res: ApiResponse) => {
+        if (!isCurrentSubmitRequest(currentRequestId, currentOperation)) {
+          return
+        }
+
         if (res.code === 200) {
           message.success('修改成功')
-          emit('saved')
           resetAll()
           show.value = false
+          emit('saved')
         } else {
           message.error(res.msg || '修改失败')
         }
       })
       .catch((err: unknown) => {
+        if (!isCurrentSubmitRequest(currentRequestId, currentOperation)) {
+          return
+        }
+
         console.error('修改失败', err)
         message.error('修改失败')
       })
       .finally(() => {
-        submitting.value = false
+        if (isCurrentSubmitRequest(currentRequestId, currentOperation)) {
+          submitting.value = false
+        }
       })
   })
 }
 
 const resetAll = () => {
-  // 保留 id，其余恢复到默认（下次打开由 props.plan 再次填充）
+  // 下次打开由 props.plan 再次填充
+  form.id = 0
   form.name = ''
   form.parentPath = ''
   form.onConflict = 'abandon'
   form.autoIngestInterval = 30
-  form.tokenId = undefined
+  form.tokenId = 0
   form.refreshStrategy.enableAutoRefresh = false
   form.refreshStrategy.autoRefreshDays = 7
   form.refreshStrategy.refreshInterval = 30
   form.refreshStrategy.enableDeepRefresh = false
 }
+
+onUnmounted(() => {
+  isComponentMounted = false
+  invalidatePendingWork()
+})
 </script>
 
 <style scoped>

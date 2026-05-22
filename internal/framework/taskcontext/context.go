@@ -29,7 +29,7 @@ func newContext(stdContext stdContext.Context, data []byte, logger *zap.Logger) 
 	var traceId string
 
 	if _traceId := stdContext.Value(traceHeaderKey); _traceId != nil {
-		traceId = _traceId.(string)
+		traceId, _ = _traceId.(string)
 	}
 
 	return &Context{

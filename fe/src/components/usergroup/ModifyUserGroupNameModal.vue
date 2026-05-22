@@ -1,5 +1,12 @@
 <template>
-  <n-modal v-model:show="showModal" preset="dialog" title="修改用户组名称">
+  <n-modal
+    v-model:show="showModal"
+    preset="dialog"
+    title="修改用户组名称"
+    :closable="!loading"
+    :mask-closable="!loading"
+    :close-on-esc="!loading"
+  >
     <n-form
       ref="formRef"
       :model="formData"
@@ -14,21 +21,24 @@
           placeholder="请输入用户组名称"
           maxlength="255"
           show-count
+          :disabled="loading"
         />
       </n-form-item>
     </n-form>
 
     <template #action>
       <n-space>
-        <n-button @click="handleCancel">取消</n-button>
-        <n-button type="primary" :loading="loading" @click="handleSubmit">确定</n-button>
+        <n-button :disabled="loading" @click="handleCancel">取消</n-button>
+        <n-button type="primary" :loading="loading" :disabled="loading" @click="handleSubmit">
+          确定
+        </n-button>
       </n-space>
     </template>
   </n-modal>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue'
+import { ref, reactive, watch, onUnmounted } from 'vue'
 import {
   NModal,
   NForm,
@@ -71,6 +81,8 @@ const formData = reactive({
   name: '',
 })
 
+let operationVersion = 0
+
 // 表单验证规则
 const rules = {
   name: [
@@ -85,55 +97,100 @@ watch(
   (newVal) => {
     showModal.value = newVal
     if (newVal && props.userGroupInfo) {
+      operationVersion++
       // 填充表单数据
       formData.name = props.userGroupInfo.name
       formRef.value?.restoreValidation()
+
+      return
+    }
+
+    if (!newVal) {
+      invalidatePendingWork()
     }
   }
 )
 
 // 监听 showModal 变化
 watch(showModal, (newVal) => {
+  if (!newVal && loading.value) {
+    showModal.value = true
+
+    return
+  }
+
   emit('update:show', newVal)
 })
 
 // 取消
 const handleCancel = () => {
+  if (loading.value) return
+
   showModal.value = false
 }
 
+const isCurrentOperation = (version: number) => showModal.value && operationVersion === version
+
+const invalidatePendingWork = () => {
+  operationVersion++
+  loading.value = false
+}
+
 // 提交
-const handleSubmit = () => {
-  if (!props.userGroupInfo) {
+const handleSubmit = async () => {
+  if (loading.value || !formRef.value) return
+
+  const userGroupInfo = props.userGroupInfo
+  if (!userGroupInfo) {
     message.error('用户组信息不存在')
     return
   }
 
-  formRef.value?.validate((errors) => {
-    if (!errors) {
-      loading.value = true
+  const currentOperation = operationVersion
+  loading.value = true
 
-      modifyUserGroupName({
-        id: props.userGroupInfo!.id,
-        name: formData.name,
-      })
-        .then((response) => {
-          if (response.code === 200) {
-            message.success('修改用户组名称成功')
-            showModal.value = false
-            emit('success')
-          } else {
-            message.error(response.msg || '修改用户组名称失败')
-          }
-        })
-        .catch((error) => {
-          console.error('修改用户组名称失败:', error)
-          message.error('修改用户组名称失败')
-        })
-        .finally(() => {
-          loading.value = false
-        })
+  try {
+    await formRef.value.validate()
+
+    if (!isCurrentOperation(currentOperation)) {
+      return
     }
-  })
+
+    const response = await modifyUserGroupName({
+      id: userGroupInfo.id,
+      name: formData.name,
+    })
+
+    if (!isCurrentOperation(currentOperation)) {
+      return
+    }
+
+    if (response.code === 200) {
+      message.success('修改用户组名称成功')
+      showModal.value = false
+      emit('success')
+    } else {
+      message.error(response.msg || '修改用户组名称失败')
+    }
+  } catch (error) {
+    if (!isCurrentOperation(currentOperation)) {
+      return
+    }
+
+    if (Array.isArray(error)) {
+      return
+    }
+
+    console.error('修改用户组名称失败:', error)
+    message.error('修改用户组名称失败')
+  } finally {
+    if (isCurrentOperation(currentOperation)) {
+      loading.value = false
+    }
+  }
 }
+
+onUnmounted(() => {
+  invalidatePendingWork()
+})
 </script>

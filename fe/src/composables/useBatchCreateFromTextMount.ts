@@ -1,52 +1,71 @@
 import { h } from 'vue'
 import { useModal } from 'naive-ui'
-import { BatchCreateFromTextModal } from '@/components/storage'
+import { BatchCreateFromTextModal, type MountItem } from '@/components/storage'
 import { useMountPointBind } from '@/composables/useMountPointBind'
+import type { BatchParseItem } from '@/api/storage'
 
 export function useBatchCreateFromTextMount() {
-    const modal = useModal()
-    const mountPointBind = useMountPointBind()
+  const modal = useModal()
+  const mountPointBind = useMountPointBind()
 
-    const show = (): Promise<{ success: boolean }> => {
-        return new Promise((resolve) => {
-            const modalInstance = modal.create({
-                title: '批量文本导入',
-                preset: 'dialog',
-                style: { width: '700px' },
-                content: () =>
-                    h(BatchCreateFromTextModal, {
-                        onParsed: async (payload: { items: any[], token: number }) => {
-                            modalInstance.destroy()
+  const show = (): Promise<{ success: boolean }> => {
+    return new Promise((resolve) => {
+      let settled = false
+      let modalInstance: ReturnType<typeof modal.create>
 
-                            const mountItems = payload.items.map(item => ({
-                                name: item.name,
-                                osType: item.osType,
-                                subscribeUser: item.subscribeUser,
-                                shareCode: item.shareCode,
-                                shareAccessCode: item.shareAccessCode,
-                                fileId: item.fileId,
-                                cloudToken: payload.token,
-                                disableSwitchCloudToken: false
-                            }))
+      const settle = (payload: { success: boolean }) => {
+        if (settled) return
+        settled = true
+        resolve(payload)
+      }
 
-                            const result = await mountPointBind.show(mountItems, { defaultCloudToken: payload.token })
+      const closeWithCancel = () => {
+        if (settled) return
+        settle({ success: false })
+        modalInstance.destroy()
+      }
 
-                            if (result && result.length > 0) {
-                                resolve({ success: true })
-                            } else {
-                                resolve({ success: false })
-                            }
-                        },
-                        onCancel: () => {
-                            resolve({ success: false })
-                            modalInstance.destroy()
-                        },
-                    }),
-                closable: true,
-                maskClosable: false,
-            })
-        })
-    }
+      modalInstance = modal.create({
+        title: '批量文本导入',
+        preset: 'dialog',
+        style: { width: '700px' },
+        content: () =>
+          h(BatchCreateFromTextModal, {
+            onParsed: async (payload: { items: BatchParseItem[]; token: number }) => {
+              modalInstance.destroy()
 
-    return { show }
+              const mountItems: MountItem[] = payload.items.map((item) => ({
+                name: item.name,
+                osType: item.osType,
+                subscribeUser: item.subscribeUser,
+                shareCode: item.shareCode,
+                shareAccessCode: item.shareAccessCode,
+                fileId: item.fileId,
+                cloudToken: payload.token,
+                disableSwitchCloudToken: false,
+              }))
+
+              const result = await mountPointBind.show(mountItems, {
+                defaultCloudToken: payload.token,
+              })
+
+              if (result && result.length > 0) {
+                settle({ success: true })
+              } else {
+                settle({ success: false })
+              }
+            },
+            onCancel: () => {
+              closeWithCancel()
+            },
+          }),
+        closable: false,
+        maskClosable: false,
+        closeOnEsc: false,
+        onClose: closeWithCancel,
+      })
+    })
+  }
+
+  return { show }
 }

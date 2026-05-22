@@ -111,6 +111,7 @@ func (h *handler) walkFile(ctx context.Context, rootId int64, walkFunc walkFunc)
 			return err
 		}
 	}
+
 	time.Sleep(5 * time.Millisecond)
 	ctx.Debug(
 		"开始处理文件",
@@ -131,6 +132,7 @@ func (h *handler) walkFile(ctx context.Context, rootId int64, walkFunc walkFunc)
 		if threadCount == 1 || len(nextFiles) <= 1 {
 			for _, nextFile := range nextFiles {
 				time.Sleep(2 * time.Millisecond)
+
 				if err = h.walkFile(ctx, nextFile.ID, walkFunc); err != nil {
 					return err
 				}

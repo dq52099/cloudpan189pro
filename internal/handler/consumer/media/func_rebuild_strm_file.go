@@ -35,6 +35,7 @@ const rebuildConcurrency = 4
 type rebuildProgress struct {
 	totalFolders     int32
 	processedFolders int32
+	failedFolders    int32
 	totalFiles       int32
 	successFiles     int32
 	failedFiles      int32
@@ -50,6 +51,49 @@ func safeRate(success, total int32) float64 {
 	return float64(success) / float64(total) * 100
 }
 
+func mergeRebuildProgress(total, part *rebuildProgress) {
+	atomic.AddInt32(&total.failedFolders, atomic.LoadInt32(&part.failedFolders))
+	atomic.AddInt32(&total.totalFiles, atomic.LoadInt32(&part.totalFiles))
+	atomic.AddInt32(&total.successFiles, atomic.LoadInt32(&part.successFiles))
+	atomic.AddInt32(&total.failedFiles, atomic.LoadInt32(&part.failedFiles))
+	atomic.AddInt32(&total.skippedFiles, atomic.LoadInt32(&part.skippedFiles))
+}
+
+func rebuildHasFailures(progress *rebuildProgress) bool {
+	return atomic.LoadInt32(&progress.failedFolders) > 0 ||
+		atomic.LoadInt32(&progress.failedFiles) > 0
+}
+
+func finishRebuildTaskLog(ctx context.Context, logger *zap.Logger, service filetasklogSvi.Service, tracker *filetasklogSvi.Tracker, progress *rebuildProgress) error {
+	if tracker == nil {
+		return nil
+	}
+
+	summary := summariseProgress(progress)
+	opts := []utils.Field{
+		tracker.WithCost(),
+		utils.WithField("result", summary),
+	}
+
+	if rebuildHasFailures(progress) {
+		if err := service.Failed(ctx, tracker, opts...); err != nil {
+			logger.Warn("标记任务失败失败", zap.Error(err))
+
+			return err
+		}
+
+		return nil
+	}
+
+	if err := service.Completed(ctx, tracker, opts...); err != nil {
+		logger.Warn("标记任务完成失败", zap.Error(err))
+
+		return err
+	}
+
+	return nil
+}
+
 // RebuildStrmFile 全量重建 STRM：遍历所有挂载点。
 // 支持并发执行，每个挂载点是一个独立 unit，最多 rebuildConcurrency 个同时跑。
 func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
@@ -58,6 +102,7 @@ func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
 
 		if shared.MediaConfig == nil || !shared.MediaConfig.Enable {
 			logger.Warn("媒体功能未启用，跳过strm重建")
+
 			return nil
 		}
 
@@ -65,14 +110,17 @@ func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
 
 		mountpoints, err := h.mountpointService.List(ctx.GetContext(), &mountpoint.ListRequest{
 			NoPaginate: true,
+			IsAdmin:    true,
 		})
 		if err != nil {
 			logger.Error("查询挂载点失败", zap.Error(err))
+
 			return err
 		}
 
 		if len(mountpoints) == 0 {
 			logger.Warn("没有挂载点，跳过strm重建")
+
 			return nil
 		}
 
@@ -103,6 +151,7 @@ func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
 
 		for _, mp := range mountpoints {
 			sem <- struct{}{}
+
 			wg.Add(1)
 
 			go func(mp *models.MountPoint) {
@@ -117,10 +166,16 @@ func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
 					len(mountpoints),
 				))
 
-				h.walkBuildStrm(ctx.GetContext(), mp.FileId, car.NewSubCar(mp.FullPath), 0, progress)
+				mountProgress := new(rebuildProgress)
+				h.walkBuildStrm(ctx.GetContext(), mp.FileId, car.NewSubCar(mp.FullPath), 0, mountProgress)
+				mergeRebuildProgress(progress, mountProgress)
 
 				if tracker != nil {
-					_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithCompletedOneCounter())
+					if rebuildHasFailures(mountProgress) {
+						_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithFailedCounter(1))
+					} else {
+						_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithCompletedOneCounter())
+					}
 				}
 			}(mp)
 		}
@@ -130,17 +185,7 @@ func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
 		summary := summariseProgress(progress)
 		logger.Info("[strm生成] strm重建完成: " + summary)
 
-		if tracker != nil {
-			if err := h.fileTaskLogService.Completed(
-				ctx.GetContext(), tracker,
-				tracker.WithCost(),
-				utils.WithField("result", summary),
-			); err != nil {
-				logger.Warn("标记任务完成失败", zap.Error(err))
-			}
-		}
-
-		return nil
+		return finishRebuildTaskLog(ctx.GetContext(), logger, h.fileTaskLogService, tracker, progress)
 	}
 }
 
@@ -151,12 +196,14 @@ func (h *handler) RebuildStrmFileByMountPoint() taskcontext.HandlerFunc {
 
 		if shared.MediaConfig == nil || !shared.MediaConfig.Enable {
 			logger.Warn("媒体功能未启用，跳过strm重建")
+
 			return nil
 		}
 
 		req := new(topic.MediaRebuildStrmFileByMountPointRequest)
 		if err := ctx.Unmarshal(req); err != nil {
 			logger.Error("解析STRM重建任务失败", zap.Error(err))
+
 			return err
 		}
 
@@ -188,13 +235,14 @@ func (h *handler) RebuildStrmFileByMountPoint() taskcontext.HandlerFunc {
 		logger.Info("[strm生成] strm重建完成: " + summary)
 
 		if tracker != nil {
-			_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithCompletedOneCounter())
-			if err := h.fileTaskLogService.Completed(
-				ctx.GetContext(), tracker,
-				tracker.WithCost(),
-				utils.WithField("result", summary),
-			); err != nil {
-				logger.Warn("标记任务完成失败", zap.Error(err))
+			if rebuildHasFailures(progress) {
+				_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithFailedCounter(1))
+			} else {
+				_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithCompletedOneCounter())
+			}
+
+			if err := finishRebuildTaskLog(ctx.GetContext(), logger, h.fileTaskLogService, tracker, progress); err != nil {
+				return err
 			}
 		}
 
@@ -208,6 +256,8 @@ func (h *handler) RebuildStrmFileByMountPoint() taskcontext.HandlerFunc {
 func (h *handler) walkBuildStrm(ctx context.Context, fid int64, car media.WriterCar, depth int, progress *rebuildProgress) {
 	if depth >= maxRecursionDepth {
 		ctx.Warn("达到最大递归深度，停止处理", zap.Int("depth", depth), zap.Int64("parent_id", fid))
+		atomic.AddInt32(&progress.failedFolders, 1)
+
 		return
 	}
 
@@ -216,12 +266,15 @@ func (h *handler) walkBuildStrm(ctx context.Context, fid int64, car media.Writer
 	})
 	if err != nil {
 		ctx.Error("查询子文件失败", zap.Error(err), zap.Int64("parent_id", fid))
+		atomic.AddInt32(&progress.failedFolders, 1)
+
 		return
 	}
 
 	for _, file := range files {
 		if file.IsDir {
 			h.walkBuildStrm(ctx, file.ID, car.NewSubCar(file.Name), depth+1, progress)
+
 			continue
 		}
 
@@ -231,6 +284,7 @@ func (h *handler) walkBuildStrm(ctx context.Context, fid int64, car media.Writer
 		extName := path.Ext(file.Name)
 		if len(shared.MediaConfig.IncludedSuffixes) > 0 && !slices.Contains(shared.MediaConfig.IncludedSuffixes, extName) {
 			atomic.AddInt32(&progress.skippedFiles, 1)
+
 			continue
 		}
 
@@ -240,6 +294,7 @@ func (h *handler) walkBuildStrm(ctx context.Context, fid int64, car media.Writer
 		if err != nil {
 			ctx.Error("重建strm - 获取文件签名失败", zap.Int64("file_id", file.ID), zap.Error(err))
 			atomic.AddInt32(&progress.failedFiles, 1)
+
 			continue
 		}
 
@@ -251,10 +306,12 @@ func (h *handler) walkBuildStrm(ctx context.Context, fid int64, car media.Writer
 		}
 
 		carWithFilename := car.NewSubCar(filename)
+
 		id, err := h.mediaFileService.WriteStrm(ctx, carWithFilename, file.ID, shared.JoinDownloadURL(file.ID, values))
 		if err != nil {
 			ctx.Error("重建strm - 创建 strm 文件失败", zap.String("file", file.Name), zap.Int64("file_id", file.ID), zap.Error(err))
 			atomic.AddInt32(&progress.failedFiles, 1)
+
 			continue
 		}
 
@@ -274,9 +331,10 @@ func summariseProgress(p *rebuildProgress) string {
 	failed := atomic.LoadInt32(&p.failedFiles)
 	skipped := atomic.LoadInt32(&p.skippedFiles)
 	folders := atomic.LoadInt32(&p.totalFolders)
+	failedFolders := atomic.LoadInt32(&p.failedFolders)
 
 	return fmt.Sprintf(
-		"挂载点 %d 个 / 媒体文件 %d 个（成功 %d, 跳过 %d, 失败 %d, 成功率 %.1f%%）",
-		folders, total, success, skipped, failed, safeRate(success, total),
+		"挂载点 %d 个 / 媒体文件 %d 个（成功 %d, 跳过 %d, 失败 %d, 目录失败 %d, 成功率 %.1f%%）",
+		folders, total, success, skipped, failed, failedFolders, safeRate(success, total),
 	)
 }

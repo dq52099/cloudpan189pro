@@ -1,12 +1,35 @@
 package virtualfile
 
 import (
+	"github.com/samber/lo"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+const (
+	maxVirtualFilePageSize = 500
+)
+
+var allowedVirtualFileSortColumns = map[string]struct{}{
+	"id":          {},
+	"parent_id":   {},
+	"top_id":      {},
+	"link_id":     {},
+	"name":        {},
+	"is_dir":      {},
+	"is_top":      {},
+	"size":        {},
+	"rev":         {},
+	"os_type":     {},
+	"cloud_id":    {},
+	"create_date": {},
+	"modify_date": {},
+	"created_at":  {},
+	"updated_at":  {},
+}
 
 type ListRequest struct {
 	ParentId *int64 `form:"parentId" binding:"omitempty"`
@@ -43,17 +66,35 @@ func (r *ListRequest) WithIsTop(isTops ...bool) *ListRequest {
 }
 
 func (s *service) List(ctx context.Context, req *ListRequest) ([]*models.VirtualFile, error) {
-	query := s.getListQuery(ctx, req)
+	if req == nil {
+		req = &ListRequest{}
+	}
+
+	query, err := s.getListQuery(ctx, req)
+	if err != nil {
+		ctx.Error("构建文件列表查询失败", zap.Error(err))
+
+		return nil, err
+	}
 
 	for _, k := range req.AscList {
+		if _, ok := allowedVirtualFileSortColumns[k]; !ok {
+			return nil, errInvalidVirtualFileSortField
+		}
+
 		query = query.Order(clause.OrderByColumn{Column: clause.Column{Name: k}, Desc: false})
 	}
 
 	for _, k := range req.DescList {
-		query = query.Order(clause.OrderByColumn{Column: clause.Column{Name: k}})
+		if _, ok := allowedVirtualFileSortColumns[k]; !ok {
+			return nil, errInvalidVirtualFileSortField
+		}
+
+		query = query.Order(clause.OrderByColumn{Column: clause.Column{Name: k}, Desc: true})
 	}
 
-	if req.CurrentPage > 0 && req.PageSize > 0 {
+	if shouldPaginateVirtualFileList(req) {
+		normalizeVirtualFilePagination(req)
 		query = query.Offset((req.CurrentPage - 1) * req.PageSize).Limit(req.PageSize)
 	}
 
@@ -63,14 +104,25 @@ func (s *service) List(ctx context.Context, req *ListRequest) ([]*models.Virtual
 }
 
 func (s *service) Count(ctx context.Context, req *ListRequest) (count int64, err error) {
-	if err = s.getListQuery(ctx, req).Count(&count).Error; err != nil {
+	if req == nil {
+		req = &ListRequest{}
+	}
+
+	query, err := s.getListQuery(ctx, req)
+	if err != nil {
+		ctx.Error("构建文件数量查询失败", zap.Error(err))
+
+		return 0, err
+	}
+
+	if err = query.Count(&count).Error; err != nil {
 		ctx.Error("查询文件数量失败", zap.Error(err))
 	}
 
 	return count, err
 }
 
-func (s *service) getListQuery(ctx context.Context, req *ListRequest) *gorm.DB {
+func (s *service) getListQuery(ctx context.Context, req *ListRequest) (*gorm.DB, error) {
 	query := s.getDB(ctx)
 
 	if req.ParentId != nil {
@@ -98,12 +150,54 @@ func (s *service) getListQuery(ctx context.Context, req *ListRequest) *gorm.DB {
 	}
 
 	if len(req.ExcludeIdList) > 0 {
-		query = query.Where("id not in (?)", req.ExcludeIdList)
+		excludeIds, err := normalizeVirtualFileIDs(req.ExcludeIdList)
+		if err != nil {
+			return nil, err
+		}
+
+		query = query.Where("id not in (?)", excludeIds)
 	}
 
-	if len(req.TopIdList) > 0 {
-		query = query.Where("top_id in (?)", req.TopIdList)
+	if req.TopIdList != nil {
+		topIds, err := normalizeVirtualFileIDs(req.TopIdList)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(topIds) == 0 {
+			query = query.Where("1 = 0")
+		} else {
+			query = query.Where("top_id in (?)", topIds)
+		}
 	}
 
-	return query
+	return query, nil
+}
+
+func shouldPaginateVirtualFileList(req *ListRequest) bool {
+	return req.CurrentPage > 0 || req.PageSize > 0
+}
+
+func normalizeVirtualFilePagination(req *ListRequest) {
+	if req.CurrentPage <= 0 {
+		req.CurrentPage = 1
+	}
+
+	if req.PageSize <= 0 {
+		req.PageSize = maxVirtualFilePageSize
+	}
+
+	if req.PageSize > maxVirtualFilePageSize {
+		req.PageSize = maxVirtualFilePageSize
+	}
+}
+
+func normalizeVirtualFileIDs(ids []int64) ([]int64, error) {
+	for _, id := range ids {
+		if id <= 0 {
+			return nil, errInvalidVirtualFileID
+		}
+	}
+
+	return lo.Uniq(ids), nil
 }

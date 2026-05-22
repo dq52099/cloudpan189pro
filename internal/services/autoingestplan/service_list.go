@@ -8,6 +8,12 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+const (
+	defaultAutoIngestPlanCurrentPage = 1
+	defaultAutoIngestPlanPageSize    = 10
+	maxAutoIngestPlanPageSize        = 500
+)
+
 // ListRequest 自动挂载计划列表查询请求（与列表实现写在同一文件）
 type ListRequest struct {
 	Name        string `form:"name" binding:"omitempty"`
@@ -20,13 +26,20 @@ type ListRequest struct {
 
 // List 列出自动挂载计划
 func (s *service) List(ctx context.Context, req *ListRequest) ([]*models.AutoIngestPlan, error) {
-	query := s.getListQuery(ctx, req)
+	if req == nil {
+		req = &ListRequest{}
+	}
+
+	query, err := s.getListQuery(ctx, req)
+	if err != nil {
+		return nil, err
+	}
 
 	// 默认按 id 倒序
 	query = query.Order(clause.OrderByColumn{Column: clause.Column{Name: "id"}, Desc: true})
 
-	// 分页（仅在传入正数页码与页大小时生效）
-	if req != nil && !req.NoPaginate && req.CurrentPage > 0 && req.PageSize > 0 {
+	if !req.NoPaginate {
+		normalizeAutoIngestPlanPagination(req)
 		query = query.Offset((req.CurrentPage - 1) * req.PageSize).Limit(req.PageSize)
 	}
 
@@ -42,8 +55,17 @@ func (s *service) List(ctx context.Context, req *ListRequest) ([]*models.AutoIng
 
 // Count 统计自动挂载计划数量
 func (s *service) Count(ctx context.Context, req *ListRequest) (int64, error) {
+	if req == nil {
+		req = &ListRequest{}
+	}
+
+	query, err := s.getListQuery(ctx, req)
+	if err != nil {
+		return 0, err
+	}
+
 	var count int64
-	if err := s.getListQuery(ctx, req).Count(&count).Error; err != nil {
+	if err := query.Count(&count).Error; err != nil {
 		ctx.Error("统计自动挂载计划数量失败", zap.Error(err))
 
 		return 0, err
@@ -52,11 +74,11 @@ func (s *service) Count(ctx context.Context, req *ListRequest) (int64, error) {
 	return count, nil
 }
 
-func (s *service) getListQuery(ctx context.Context, req *ListRequest) *gorm.DB {
+func (s *service) getListQuery(ctx context.Context, req *ListRequest) (*gorm.DB, error) {
 	query := s.getDB(ctx)
 
 	if req == nil {
-		return query
+		return query, nil
 	}
 
 	if req.Name != "" {
@@ -64,9 +86,27 @@ func (s *service) getListQuery(ctx context.Context, req *ListRequest) *gorm.DB {
 	}
 
 	// 非管理员只能查看自己的计划
-	if !req.IsAdmin && req.UserID > 0 {
+	if !req.IsAdmin {
+		if req.UserID <= 0 {
+			return nil, errInvalidAutoIngestPlanUserID
+		}
+
 		query = query.Where("user_id = ?", req.UserID)
 	}
 
-	return query
+	return query, nil
+}
+
+func normalizeAutoIngestPlanPagination(req *ListRequest) {
+	if req.CurrentPage <= 0 {
+		req.CurrentPage = defaultAutoIngestPlanCurrentPage
+	}
+
+	if req.PageSize <= 0 {
+		req.PageSize = defaultAutoIngestPlanPageSize
+	}
+
+	if req.PageSize > maxAutoIngestPlanPageSize {
+		req.PageSize = maxAutoIngestPlanPageSize
+	}
 }

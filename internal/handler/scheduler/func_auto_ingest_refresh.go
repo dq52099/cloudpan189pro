@@ -94,6 +94,7 @@ func (s *AutoIngestRefreshScheduler) doJob() bool {
 	if !s.firstRunSkipped {
 		s.firstRunSkipped = true
 		ctx.Info("自动入库执行器启动，已跳过首次执行", zap.Duration("delay", s.startupDelay))
+
 		select {
 		case <-ctx.Done():
 			return false

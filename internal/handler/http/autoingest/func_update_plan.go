@@ -62,6 +62,10 @@ func (h *handler) UpdatePlan() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !ensurePlanAccess(ctx, plan) {
+			return
+		}
+
 		// 仅收集允许的字段
 		fields := make([]utils.Field, 0, 10)
 

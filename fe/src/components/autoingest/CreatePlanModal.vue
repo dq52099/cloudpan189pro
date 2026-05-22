@@ -1,5 +1,12 @@
 <template>
-  <n-modal v-model:show="show" preset="dialog" title="新建入库计划" :mask-closable="false">
+  <n-modal
+    v-model:show="show"
+    preset="dialog"
+    title="新建入库计划"
+    :closable="!submitting"
+    :mask-closable="false"
+    :close-on-esc="!submitting"
+  >
     <div class="create-plan-modal">
       <!-- 第1段：入库类型与订阅号解析 -->
       <n-form
@@ -15,6 +22,7 @@
             v-model:value="typeForm.sourceType"
             :options="AUTO_INGEST_SOURCE_TYPE_OPTIONS"
             placeholder="请选择入库类型"
+            :disabled="parsing || submitting"
             clearable
           />
         </n-form-item>
@@ -24,7 +32,7 @@
             <div class="row">
               <n-input
                 v-model:value="subscribeUserIdInput"
-                :disabled="parsedLocked && !!parsedSubscribeUserId"
+                :disabled="parsing || submitting || (parsedLocked && !!parsedSubscribeUserId)"
                 placeholder="请输入订阅号ID"
                 style="flex: 1; min-width: 160px"
               />
@@ -34,6 +42,7 @@
                 type="primary"
                 size="small"
                 :loading="parsing"
+                :disabled="parsing || submitting"
                 @click="handleParseSubscribe"
               >
                 <template #icon>
@@ -48,6 +57,7 @@
                 size="small"
                 type="warning"
                 secondary
+                :disabled="submitting"
                 @click="handleEnableEditSubscribe"
               >
                 <template #icon>
@@ -82,11 +92,19 @@
         class="section"
       >
         <n-form-item label="计划名称" path="name">
-          <n-input v-model:value="detailForm.name" placeholder="例如：入库计划A" />
+          <n-input
+            v-model:value="detailForm.name"
+            placeholder="例如：入库计划A"
+            :disabled="submitting"
+          />
         </n-form-item>
 
         <n-form-item label="挂载父目录" path="parentPath">
-          <n-input v-model:value="detailForm.parentPath" placeholder="/Movies" />
+          <n-input
+            v-model:value="detailForm.parentPath"
+            placeholder="/Movies"
+            :disabled="submitting"
+          />
         </n-form-item>
 
         <n-form-item label="绑定令牌" path="cloudToken">
@@ -96,11 +114,12 @@
             placeholder="可选"
             clearable
             filterable
+            :disabled="submitting"
           />
         </n-form-item>
 
         <n-form-item label="冲突处理策略" path="onConflict">
-          <n-radio-group v-model:value="detailForm.onConflict">
+          <n-radio-group v-model:value="detailForm.onConflict" :disabled="submitting">
             <n-space>
               <n-radio
                 v-for="opt in AUTO_INGEST_ON_CONFLICT_OPTIONS"
@@ -118,12 +137,13 @@
             v-model:value="detailForm.autoIngestInterval"
             :min="AUTO_INGEST_INTERVAL_MIN"
             :max="REFRESH_INTERVAL_MAX"
+            :disabled="submitting"
           />
         </n-form-item>
 
         <n-form-item label="一键添加历史" path="oneClickAddHistory" :show-feedback="false">
           <div class="row">
-            <n-switch v-model:value="detailForm.oneClickAddHistory" />
+            <n-switch v-model:value="detailForm.oneClickAddHistory" :disabled="submitting" />
             <span
               v-if="detailForm.oneClickAddHistory && parsedShareTotal !== undefined"
               class="hint-inline"
@@ -136,7 +156,10 @@
         <n-divider title-placement="left">刷新策略（可选）</n-divider>
 
         <n-form-item label="启用自动刷新" path="refreshStrategy.enableAutoRefresh">
-          <n-switch v-model:value="detailForm.refreshStrategy.enableAutoRefresh" />
+          <n-switch
+            v-model:value="detailForm.refreshStrategy.enableAutoRefresh"
+            :disabled="submitting"
+          />
         </n-form-item>
 
         <template v-if="detailForm.refreshStrategy.enableAutoRefresh">
@@ -145,6 +168,7 @@
               v-model:value="detailForm.refreshStrategy.refreshInterval"
               :min="REFRESH_INTERVAL_MIN"
               :max="REFRESH_INTERVAL_MAX"
+              :disabled="submitting"
             />
           </n-form-item>
           <n-form-item label="持续天数" path="refreshStrategy.autoRefreshDays">
@@ -152,10 +176,14 @@
               v-model:value="detailForm.refreshStrategy.autoRefreshDays"
               :min="AUTO_REFRESH_DAYS_MIN"
               :max="AUTO_REFRESH_DAYS_MAX"
+              :disabled="submitting"
             />
           </n-form-item>
           <n-form-item label="深度刷新" path="refreshStrategy.enableDeepRefresh">
-            <n-switch v-model:value="detailForm.refreshStrategy.enableDeepRefresh" />
+            <n-switch
+              v-model:value="detailForm.refreshStrategy.enableDeepRefresh"
+              :disabled="submitting"
+            />
           </n-form-item>
         </template>
       </n-form>
@@ -163,15 +191,17 @@
 
     <template #action>
       <n-space>
-        <n-button @click="handleCancel">取消</n-button>
-        <n-button type="primary" :loading="submitting" @click="handleSubmit">确认创建</n-button>
+        <n-button :disabled="submitting" @click="handleCancel">取消</n-button>
+        <n-button type="primary" :loading="submitting" :disabled="submitting" @click="handleSubmit">
+          确认创建
+        </n-button>
       </n-space>
     </template>
   </n-modal>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import {
   NModal,
   NForm,
@@ -203,7 +233,11 @@ import {
 } from '@/constants/autoIngest'
 import { SearchOutline, CreateOutline } from '@vicons/ionicons5'
 import { getSubscribeUser, type GetSubscribeUserResponse } from '@/api/storage/advance'
-import { createSubscribePlan, type CreateSubscribePlanRequest } from '@/api/autoingest'
+import {
+  createSubscribePlan,
+  type CreateSubscribePlanRequest,
+  type CreateSubscribePlanResponse,
+} from '@/api/autoingest'
 import { type ApiResponse } from '@/utils/api'
 
 const message = useMessage()
@@ -219,14 +253,46 @@ const emit = defineEmits<{
 }>()
 
 const show = ref(props.show)
+
+let isComponentMounted = true
+let operationVersion = 0
+let parseRequestId = 0
+let submitRequestId = 0
+
+const isCurrentOperation = (version: number) => {
+  return isComponentMounted && show.value && operationVersion === version
+}
+
+const invalidatePendingWork = () => {
+  operationVersion++
+}
+
+const isCurrentParseRequest = (requestId: number, currentOperation: number) => {
+  return isCurrentOperation(currentOperation) && parseRequestId === requestId
+}
+
+const isCurrentSubmitRequest = (requestId: number, currentOperation: number) => {
+  return isCurrentOperation(currentOperation) && submitRequestId === requestId
+}
+
 watch(
   () => props.show,
   (v) => (show.value = v)
 )
 watch(show, (v, ov) => {
   emit('update:show', v)
+  if (v && !ov) {
+    invalidatePendingWork()
+    applyDefaultCloudToken()
+
+    return
+  }
+
   // 当用户通过右上角关闭或父组件收起时，自动重置表单，避免再次打开保留上次内容
   if (!v && ov) {
+    invalidatePendingWork()
+    parsing.value = false
+    submitting.value = false
     resetAll()
   }
 })
@@ -245,6 +311,13 @@ const parsedUserName = ref<string | undefined>(undefined)
 const parsedShareTotal = ref<number | undefined>(undefined)
 const parsedLocked = ref<boolean>(false)
 const parsing = ref<boolean>(false)
+
+const clearParsedSubscribe = () => {
+  parsedSubscribeUserId.value = undefined
+  parsedUserName.value = undefined
+  parsedShareTotal.value = undefined
+  parsedLocked.value = false
+}
 
 const typeRules: FormRules = {
   sourceType: [{ required: true, message: '请选择入库类型', trigger: 'change' }],
@@ -276,14 +349,37 @@ const detailForm = reactive<
   },
 })
 
+function applyDefaultCloudToken() {
+  if (!show.value || detailForm.cloudToken || props.cloudTokenOptions.length === 0) {
+    return
+  }
+
+  detailForm.cloudToken = props.cloudTokenOptions[0].value
+}
+
 watch(
   () => props.cloudTokenOptions,
-  (options) => {
-    if (options && options.length > 0 && !detailForm.cloudToken) {
-      detailForm.cloudToken = options[0].value
-    }
+  () => {
+    applyDefaultCloudToken()
   },
   { immediate: true }
+)
+
+watch(subscribeUserIdInput, (value) => {
+  if (parsedLocked.value || !parsedSubscribeUserId.value || value === parsedSubscribeUserId.value) {
+    return
+  }
+
+  clearParsedSubscribe()
+})
+
+watch(
+  () => typeForm.sourceType,
+  (sourceType) => {
+    if (sourceType !== 'subscribe') {
+      clearParsedSubscribe()
+    }
+  }
 )
 
 const detailRules: FormRules = {
@@ -317,19 +413,39 @@ const detailRules: FormRules = {
 
 // 解析逻辑
 const handleParseSubscribe = () => {
+  if (parsing.value || submitting.value) {
+    return
+  }
+
   if (!subscribeUserIdInput.value) {
     message.error('请输入订阅号ID')
     return
   }
+
+  if (!show.value) {
+    return
+  }
+
+  const currentOperation = operationVersion
+  const currentRequestId = ++parseRequestId
+  const subscribeUserId = subscribeUserIdInput.value
   parsing.value = true
   getSubscribeUser({
-    subscribeUser: subscribeUserIdInput.value,
+    subscribeUser: subscribeUserId,
     currentPage: 1,
     pageSize: 1,
   })
     .then((res: ApiResponse<GetSubscribeUserResponse>) => {
-      if (res.data) {
-        parsedSubscribeUserId.value = subscribeUserIdInput.value
+      if (!isCurrentParseRequest(currentRequestId, currentOperation)) {
+        return
+      }
+
+      if (typeForm.sourceType !== 'subscribe' || subscribeUserIdInput.value !== subscribeUserId) {
+        return
+      }
+
+      if (res.code === 200 && res.data) {
+        parsedSubscribeUserId.value = subscribeUserId
         parsedUserName.value = res.data.name
         parsedShareTotal.value = res.data.total
         parsedLocked.value = true
@@ -347,11 +463,17 @@ const handleParseSubscribe = () => {
       }
     })
     .catch((err: unknown) => {
+      if (!isCurrentParseRequest(currentRequestId, currentOperation)) {
+        return
+      }
+
       console.error('解析订阅号失败:', err)
       message.error('解析失败')
     })
     .finally(() => {
-      parsing.value = false
+      if (isCurrentParseRequest(currentRequestId, currentOperation)) {
+        parsing.value = false
+      }
     })
 }
 
@@ -362,6 +484,10 @@ const handleEnableEditSubscribe = () => {
 
 // 取消
 const handleCancel = () => {
+  if (submitting.value) {
+    return
+  }
+
   // 关闭前重置，避免下次打开保留上次内容
   resetAll()
   show.value = false
@@ -370,6 +496,10 @@ const handleCancel = () => {
 // 提交
 const submitting = ref(false)
 const handleSubmit = () => {
+  if (submitting.value) {
+    return
+  }
+
   // 校验类型（以及若为订阅必须先解析成功）
   if (!typeForm.sourceType) {
     message.error('请选择入库类型')
@@ -386,14 +516,33 @@ const handleSubmit = () => {
     return
   }
 
+  const validateOperation = operationVersion
+  submitting.value = true
+
   // 校验详细表单
-  detailFormRef.value?.validate((errors) => {
-    if (errors) {
-      message.error('请检查表单输入')
+  if (!detailFormRef.value) {
+    submitting.value = false
+    return
+  }
+
+  detailFormRef.value.validate((errors) => {
+    if (!isCurrentOperation(validateOperation)) {
       return
     }
 
-    submitting.value = true
+    if (errors) {
+      message.error('请检查表单输入')
+      submitting.value = false
+      return
+    }
+
+    if (!show.value) {
+      submitting.value = false
+      return
+    }
+
+    const currentOperation = validateOperation
+    const currentRequestId = ++submitRequestId
 
     if (typeForm.sourceType === 'subscribe') {
       const payload: CreateSubscribePlanRequest = {
@@ -401,18 +550,33 @@ const handleSubmit = () => {
         upUserId: parsedSubscribeUserId.value as string, // 使用已解析的订阅号ID
       }
       createSubscribePlan(payload)
-        .then(() => {
+        .then((res: ApiResponse<CreateSubscribePlanResponse>) => {
+          if (!isCurrentSubmitRequest(currentRequestId, currentOperation)) {
+            return
+          }
+
+          if (res.code !== 200) {
+            message.error(res.msg || '创建失败')
+
+            return
+          }
           message.success('创建成功')
-          emit('created')
           resetAll()
           show.value = false
+          emit('created')
         })
         .catch((err: unknown) => {
+          if (!isCurrentSubmitRequest(currentRequestId, currentOperation)) {
+            return
+          }
+
           console.error('创建入库计划失败:', err)
           message.error('创建失败')
         })
         .finally(() => {
-          submitting.value = false
+          if (isCurrentSubmitRequest(currentRequestId, currentOperation)) {
+            submitting.value = false
+          }
         })
       return
     }
@@ -423,15 +587,13 @@ const handleSubmit = () => {
 
 // 重置
 const resetAll = () => {
-  typeForm.sourceType = undefined
+  typeForm.sourceType = 'subscribe'
   subscribeUserIdInput.value = ''
-  parsedSubscribeUserId.value = undefined
-  parsedUserName.value = undefined
-  parsedShareTotal.value = undefined
-  parsedLocked.value = false
+  clearParsedSubscribe()
 
   detailForm.name = ''
   detailForm.parentPath = ''
+  detailForm.upUserId = ''
   detailForm.cloudToken = undefined
   detailForm.onConflict = 'abandon'
   detailForm.autoIngestInterval = 30
@@ -441,6 +603,11 @@ const resetAll = () => {
   detailForm.refreshStrategy.refreshInterval = 30
   detailForm.refreshStrategy.enableDeepRefresh = false
 }
+
+onUnmounted(() => {
+  isComponentMounted = false
+  invalidatePendingWork()
+})
 </script>
 
 <style scoped>

@@ -4,7 +4,6 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
-	"github.com/xxcheng123/cloudpan189-share/internal/shared"
 	"go.uber.org/zap"
 )
 
@@ -106,19 +105,6 @@ func (h *handler) ModifyAddition() httpcontext.HandlerFunc {
 			ctx.Fail(codeModifyAdditionFailed.WithError(err))
 
 			return
-		}
-
-		// 同步内存态
-		shared.SettingAddition = models.SettingAddition{
-			LocalProxy:                merged.LocalProxy,
-			MultipleStream:            merged.MultipleStream,
-			MultipleStreamThreadCount: merged.MultipleStreamThreadCount,
-			MultipleStreamChunkSize:   merged.MultipleStreamChunkSize,
-			TaskThreadCount:           merged.TaskThreadCount,
-			WorkerCount:               merged.WorkerCount,
-			EnableStorageAutoRefresh:  merged.EnableStorageAutoRefresh,
-			WebDAVUserStrmOnly:        merged.WebDAVUserStrmOnly,
-			WebDAVAllowedSuffixes:     append([]string(nil), merged.WebDAVAllowedSuffixes...),
 		}
 
 		ctx.Success()

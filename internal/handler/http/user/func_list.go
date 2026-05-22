@@ -71,6 +71,10 @@ func (h *handler) List() httpcontext.HandlerFunc {
 
 		groupIds := make([]int64, 0, len(userList))
 		for _, user := range userList {
+			if user.GroupID == 0 {
+				continue
+			}
+
 			groupIds = append(groupIds, user.GroupID)
 		}
 

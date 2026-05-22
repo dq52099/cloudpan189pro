@@ -103,9 +103,15 @@ func (s *service) fetchRealDownloadLink(ctx context.Context, link string) (strin
 
 func (s *service) loadOrFetch(ctx context.Context, cacheKey string, fn func() (string, error)) (string, error) {
 	if v, ok := shared.ShareCache.Get(cacheKey); ok {
-		ctx.Debug("从缓存中获取个人文件下载地址", zap.String("file_id", cacheKey))
+		link, ok := v.(string)
+		if ok {
+			ctx.Debug("从缓存中获取个人文件下载地址", zap.String("file_id", cacheKey))
 
-		return v.(string), nil
+			return link, nil
+		}
+
+		shared.ShareCache.Delete(cacheKey)
+		ctx.Warn("下载链接缓存类型异常，已删除", zap.String("cache_key", cacheKey), zap.String("type", fmt.Sprintf("%T", v)))
 	}
 
 	v, err := fn()

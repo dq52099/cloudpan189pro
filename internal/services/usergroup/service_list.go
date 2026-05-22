@@ -7,6 +7,12 @@ import (
 	"gorm.io/gorm"
 )
 
+const (
+	defaultUserGroupCurrentPage = 1
+	defaultUserGroupPageSize    = 10
+	maxUserGroupPageSize        = 500
+)
+
 type ListRequest struct {
 	CurrentPage int    `binding:"omitempty,min=1" form:"currentPage,omitempty,default=1" example:"1"` // 当前页码，默认为1
 	PageSize    int    `binding:"omitempty,min=1" form:"pageSize,omitempty,default=10" example:"10"`  // 每页大小，默认为10
@@ -15,18 +21,15 @@ type ListRequest struct {
 }
 
 func (s *service) List(ctx context.Context, req *ListRequest) (list []*models.UserGroup, err error) {
+	if req == nil {
+		req = &ListRequest{}
+	}
+
 	query := s.getListQuery(ctx, req).Order("created_at DESC")
 
 	// 应用分页
 	if !req.NoPaginate {
-		if req.CurrentPage <= 0 {
-			req.CurrentPage = 1
-		}
-
-		if req.PageSize <= 0 {
-			req.PageSize = 10
-		}
-
+		normalizeUserGroupPagination(req)
 		query = query.Offset((req.CurrentPage - 1) * req.PageSize).Limit(req.PageSize)
 	}
 
@@ -42,6 +45,10 @@ func (s *service) List(ctx context.Context, req *ListRequest) (list []*models.Us
 }
 
 func (s *service) Count(ctx context.Context, req *ListRequest) (count int64, err error) {
+	if req == nil {
+		req = &ListRequest{}
+	}
+
 	if err = s.getListQuery(ctx, req).Count(&count).Error; err != nil {
 		ctx.Error("查询用户组数量失败", zap.Error(err))
 
@@ -58,4 +65,18 @@ func (s *service) getListQuery(ctx context.Context, req *ListRequest) *gorm.DB {
 	}
 
 	return query
+}
+
+func normalizeUserGroupPagination(req *ListRequest) {
+	if req.CurrentPage <= 0 {
+		req.CurrentPage = defaultUserGroupCurrentPage
+	}
+
+	if req.PageSize <= 0 {
+		req.PageSize = defaultUserGroupPageSize
+	}
+
+	if req.PageSize > maxUserGroupPageSize {
+		req.PageSize = maxUserGroupPageSize
+	}
 }

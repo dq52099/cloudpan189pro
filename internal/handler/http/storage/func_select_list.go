@@ -61,8 +61,16 @@ func (h *handler) SelectList() httpcontext.HandlerFunc {
 		userGroupId := ctx.GetInt64(consts.CtxKeyUserGroupId)
 
 		var groupFileIds []int64
+
 		if userGroupId > 0 {
-			groupFileIds, _ = h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
+			var err error
+
+			groupFileIds, err = h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
+			if err != nil {
+				ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
+
+				return
+			}
 		}
 
 		mpReq := &mountpointSvi.ListRequest{
@@ -101,8 +109,16 @@ func (h *handler) SelectList() httpcontext.HandlerFunc {
 		}
 
 		userTokenMap := make(map[int64]int64)
+
 		if len(mountPointIDs) > 0 {
-			userTokenMap, _ = h.userMountPointTokenService.GetUserTokens(ctx.GetContext(), userID, mountPointIDs)
+			var err error
+
+			userTokenMap, err = h.userMountPointTokenService.GetUserTokens(ctx.GetContext(), userID, mountPointIDs)
+			if err != nil {
+				ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
+
+				return
+			}
 		}
 
 		for _, mp := range list {

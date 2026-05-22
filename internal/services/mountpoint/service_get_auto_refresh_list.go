@@ -19,7 +19,7 @@ func (s *service) GetAutoRefreshList(ctx context.Context, req *GetAutoRefreshLis
 
 	query := s.getDB(ctx).Where("enable_auto_refresh = ?", true)
 
-	if req.TokenId != nil {
+	if req != nil && req.TokenId != nil {
 		query = query.Where("token_id = ?", *req.TokenId)
 	}
 
@@ -32,11 +32,13 @@ func (s *service) GetAutoRefreshList(ctx context.Context, req *GetAutoRefreshLis
 
 	if err := query.Find(&list).Error; err != nil {
 		ctx.Error("查询需要自动刷新的挂载点列表失败", zap.Error(err))
+
 		return nil, err
 	}
 
 	// 过滤掉已过期的挂载点
 	filtered := make([]*models.MountPoint, 0)
+
 	for _, mp := range list {
 		if mp.AutoRefreshDays > 0 {
 			expireDate := mp.AutoRefreshBeginAt.AddDate(0, 0, mp.AutoRefreshDays)

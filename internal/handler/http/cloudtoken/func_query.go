@@ -1,10 +1,13 @@
 package cloudtoken
 
 import (
+	"errors"
 	"strconv"
 
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	"gorm.io/gorm"
 )
 
 // CloudToken 云盘令牌模型类型别名
@@ -36,8 +39,19 @@ func (h *handler) Query() httpcontext.HandlerFunc {
 			return
 		}
 
-		cloudToken, err := h.cloudTokenService.Query(ctx.GetContext(), id)
+		cloudToken, err := h.cloudTokenService.QueryAccessible(
+			ctx.GetContext(),
+			id,
+			ctx.GetInt64(consts.CtxKeyUserId),
+			ctx.GetBool(consts.CtxKeyIsAdmin),
+		)
 		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(codeTokenNotFound.WithError(err))
+
+				return
+			}
+
 			ctx.Fail(codeQueryFailed.WithError(err))
 
 			return

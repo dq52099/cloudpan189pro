@@ -16,9 +16,17 @@ type UpdateHook func(ctx context.Context, result *gorm.DB, id int64, opts []util
 func (s *service) Update(ctx context.Context, id int64, opts []utils.Field, hooks ...UpdateHook) error {
 	ctx.Debug("更新文件", zap.Int64("file_id", id), zap.Int("field_count", len(opts)))
 
+	if id <= 0 {
+		return errInvalidVirtualFileID
+	}
+
 	updates := make(map[string]interface{})
 	for _, opt := range opts {
 		updates[opt.Key] = opt.Value
+	}
+
+	if len(updates) == 0 {
+		return errEmptyVirtualFileUpdateFields
 	}
 
 	result := s.withLock(ctx, func(db *gorm.DB) *gorm.DB {
@@ -29,16 +37,30 @@ func (s *service) Update(ctx context.Context, id int64, opts []utils.Field, hook
 		hook(ctx, result, id, opts)
 	}
 
-	return result.Error
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return s.ensureVirtualFileExists(ctx, id)
+	}
+
+	return nil
 }
 
 func (s *service) ModifyAddition(ctx context.Context, id int64, key string, value any) error {
 	ctx.Debug("修改文件附加信息", zap.Int64("file_id", id), zap.String("key", key))
 
-	return s.withLock(ctx, func(db *gorm.DB) *gorm.DB {
+	if id <= 0 {
+		return errInvalidVirtualFileID
+	}
+
+	result := s.withLock(ctx, func(db *gorm.DB) *gorm.DB {
 		path := "$." + key
+
 		var expr interface{}
-		switch db.Dialector.Name() {
+
+		switch db.Name() {
 		case "postgres":
 			expr = gorm.Expr("jsonb_set(addition, ?, ?::jsonb)", path, value)
 		default:
@@ -46,7 +68,16 @@ func (s *service) ModifyAddition(ctx context.Context, id int64, key string, valu
 		}
 
 		return db.Where("id = ?", id).Update("addition", expr)
-	}).Error
+	})
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return s.ensureVirtualFileExists(ctx, id)
+	}
+
+	return nil
 }
 
 func (s *service) BatchUpdatePlus(ctx context.Context, values []utils.Field, exps []clause.Expression) error {
@@ -57,14 +88,56 @@ func (s *service) BatchUpdatePlus(ctx context.Context, values []utils.Field, exp
 		updates[field.Key] = field.Value
 	}
 
+	if len(updates) == 0 {
+		return errEmptyVirtualFileUpdateFields
+	}
+
+	if len(exps) == 0 {
+		return errEmptyVirtualFileUpdateConditions
+	}
+
+	for _, exp := range exps {
+		if exp == nil {
+			return errEmptyVirtualFileUpdateConditions
+		}
+	}
+
+	result := s.withLock(ctx, func(db *gorm.DB) *gorm.DB {
+		query := db
+		for _, exp := range exps {
+			query = query.Where(exp)
+		}
+
+		return query.Updates(updates)
+	})
+
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return s.ensureBatchUpdatePlusTargetExists(ctx, exps)
+	}
+
+	return nil
+}
+
+func (s *service) ensureBatchUpdatePlusTargetExists(ctx context.Context, exps []clause.Expression) error {
 	query := s.getDB(ctx)
 	for _, exp := range exps {
 		query = query.Where(exp)
 	}
 
-	result := query.Updates(updates)
+	var count int64
+	if err := query.Limit(1).Count(&count).Error; err != nil {
+		return err
+	}
 
-	return result.Error
+	if count == 0 {
+		return gorm.ErrRecordNotFound
+	}
+
+	return nil
 }
 
 func (s *service) BatchUpdate(ctx context.Context, filesToUpdate map[int64][]utils.Field) error {
@@ -80,8 +153,14 @@ func (s *service) BatchUpdate(ctx context.Context, filesToUpdate map[int64][]uti
 		ID     int64
 		Fields []utils.Field
 	}
+
 	items := make([]updateItem, 0, total)
+
 	for id, fields := range filesToUpdate {
+		if id <= 0 {
+			return errInvalidVirtualFileID
+		}
+
 		items = append(items, updateItem{ID: id, Fields: fields})
 	}
 
@@ -98,25 +177,45 @@ func (s *service) BatchUpdate(ctx context.Context, filesToUpdate map[int64][]uti
 
 		// 3. 执行小事务
 		var err error
-		s.withLock(ctx, func(db *gorm.DB) *gorm.DB {
+
+		result := s.withLock(ctx, func(db *gorm.DB) *gorm.DB {
 			err = db.Transaction(func(tx *gorm.DB) error {
 				for _, item := range batchItems {
 					updates := make(map[string]interface{})
 					for _, opt := range item.Fields {
 						updates[opt.Key] = opt.Value
 					}
+
+					if len(updates) == 0 {
+						return errEmptyVirtualFileUpdateFields
+					}
+
 					// 执行单条更新
-					if txErr := tx.Model(&models.VirtualFile{}).Where("id = ?", item.ID).Updates(updates).Error; txErr != nil {
-						return txErr
+					result := tx.Model(&models.VirtualFile{}).Where("id = ?", item.ID).Updates(updates)
+					if result.Error != nil {
+						return result.Error
+					}
+
+					if result.RowsAffected == 0 {
+						return ensureVirtualFileExistsWithDB(tx, item.ID)
 					}
 				}
+
 				return nil
 			})
+
 			return db
 		})
 
+		if result.Error != nil {
+			ctx.Error("批量更新分片失败", zap.Int("start_index", i), zap.Error(result.Error))
+
+			return result.Error
+		}
+
 		if err != nil {
 			ctx.Error("批量更新分片失败", zap.Int("start_index", i), zap.Error(err))
+
 			return err
 		}
 

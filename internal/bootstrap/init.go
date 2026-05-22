@@ -35,15 +35,23 @@ func ensurePostgresDB(c *configs.Config) error {
 	}
 
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM pg_database WHERE datname = ?", c.Postgres.DBName).Scan(&count)
-	if count == 0 {
-		// 使用引号包裹标识符防止SQL注入，PostgreSQL不支持参数化DDL
-		db.Exec(fmt.Sprintf("CREATE DATABASE \"%s\"", strings.ReplaceAll(c.Postgres.DBName, "\"", "\"\"")))
+	if err := db.Raw("SELECT COUNT(*) FROM pg_database WHERE datname = ?", c.Postgres.DBName).Scan(&count).Error; err != nil {
+		return errors.Wrap(err, "failed to check postgres database")
 	}
 
-	sqlDB, _ := db.DB()
-	sqlDB.Close()
-	return nil
+	if count == 0 {
+		// 使用引号包裹标识符防止SQL注入，PostgreSQL不支持参数化DDL
+		if err := db.Exec(fmt.Sprintf("CREATE DATABASE \"%s\"", strings.ReplaceAll(c.Postgres.DBName, "\"", "\"\""))).Error; err != nil {
+			return errors.Wrap(err, "failed to create postgres database")
+		}
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		return errors.Wrap(err, "failed to get postgres sql db")
+	}
+
+	return errors.Wrap(sqlDB.Close(), "failed to close postgres sql db")
 }
 
 func ensureMySQLDB(c *configs.Config) error {
@@ -60,15 +68,23 @@ func ensureMySQLDB(c *configs.Config) error {
 	}
 
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?", c.MySQL.DBName).Scan(&count)
-	if count == 0 {
-		// 使用反引号包裹标识符防止SQL注入
-		db.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", strings.ReplaceAll(c.MySQL.DBName, "`", "``")))
+	if err := db.Raw("SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?", c.MySQL.DBName).Scan(&count).Error; err != nil {
+		return errors.Wrap(err, "failed to check mysql database")
 	}
 
-	sqlDB, _ := db.DB()
-	sqlDB.Close()
-	return nil
+	if count == 0 {
+		// 使用反引号包裹标识符防止SQL注入
+		if err := db.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", strings.ReplaceAll(c.MySQL.DBName, "`", "``"))).Error; err != nil {
+			return errors.Wrap(err, "failed to create mysql database")
+		}
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		return errors.Wrap(err, "failed to get mysql sql db")
+	}
+
+	return errors.Wrap(sqlDB.Close(), "failed to close mysql sql db")
 }
 
 func useSQLiteDB(c *configs.Config) (db *gorm.DB, err error) {
@@ -78,10 +94,12 @@ func useSQLiteDB(c *configs.Config) (db *gorm.DB, err error) {
 	}
 
 	dsn := fmt.Sprintf("file:%s?_pragma=encoding_utf8", c.DBFile)
+
 	db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to open SQLite database")
 	}
+
 	db.Exec("PRAGMA journal_mode = WAL;")
 	db.Exec("PRAGMA synchronous = NORMAL;")
 	db.Exec("PRAGMA busy_timeout = 5000;")
@@ -214,6 +232,7 @@ func initTaskEngine(logger *zap.Logger, cfg *configs.TaskEngineConfig) taskengin
 				},
 			})
 		}
+
 		if cfg.BufferSize > 0 {
 			opts = append(opts, taskengine.EngineOption{
 				Options: []taskengine.OptionFunc{
@@ -221,6 +240,7 @@ func initTaskEngine(logger *zap.Logger, cfg *configs.TaskEngineConfig) taskengin
 				},
 			})
 		}
+
 		if cfg.ProcessTimeout > 0 {
 			opts = append(opts, taskengine.EngineOption{
 				Options: []taskengine.OptionFunc{
@@ -228,6 +248,7 @@ func initTaskEngine(logger *zap.Logger, cfg *configs.TaskEngineConfig) taskengin
 				},
 			})
 		}
+
 		if cfg.MaxRetry >= 0 {
 			opts = append(opts, taskengine.EngineOption{
 				Options: []taskengine.OptionFunc{

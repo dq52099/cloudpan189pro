@@ -41,8 +41,10 @@ func (h *handler) RetryPlan() httpcontext.HandlerFunc {
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				ctx.Fail(codePlanNotFound.WithError(err))
+
 				return
 			}
+
 			ctx.Fail(codePlanQueryFailed.WithError(err))
 
 			return
@@ -51,6 +53,10 @@ func (h *handler) RetryPlan() httpcontext.HandlerFunc {
 		if plan == nil || plan.ID == 0 {
 			ctx.Fail(codePlanNotFound)
 
+			return
+		}
+
+		if !ensurePlanAccess(ctx, plan) {
 			return
 		}
 

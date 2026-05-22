@@ -13,6 +13,11 @@ func (s *service) WithError(ctx context.Context, key LogKey, err error) (retErr 
 		return nil
 	}
 
+	id, keyErr := validateLogKey(key)
+	if keyErr != nil {
+		return keyErr
+	}
+
 	db := s.getDB(ctx)
 	errorMsg := err.Error()
 
@@ -32,11 +37,12 @@ func (s *service) WithError(ctx context.Context, key LogKey, err error) (retErr 
 		concatExpr = gorm.Expr("COALESCE(error_msg, '') || ?", "\n"+errorMsg)
 	}
 
-	if retErr = db.Model(new(models.FileTaskLog)).
-		Where("id = ?", key.GetID()).
+	result := db.Model(new(models.FileTaskLog)).
+		Where("id = ?", id).
 		Updates(map[string]interface{}{
 			"error_msg": concatExpr,
-		}).Error; retErr != nil {
+		})
+	if retErr = checkTaskLogUpdateResult(ctx, result, id, "文件任务日志不存在"); retErr != nil {
 		ctx.Error("添加文件任务错误信息失败",
 			zap.Error(retErr),
 			zap.String("db_type", db.Name()),
@@ -65,7 +71,14 @@ func (s *service) WithErrorAndFail(ctx context.Context, key LogKey, err error) e
 
 // ClearError 清空错误信息
 func (s *service) ClearError(ctx context.Context, key LogKey) error {
-	return s.getDB(ctx).
-		Where("id = ?", key.GetID()).
-		Update("error_msg", "").Error
+	id, err := validateLogKey(key)
+	if err != nil {
+		return err
+	}
+
+	result := s.getDB(ctx).
+		Where("id = ?", id).
+		Update("error_msg", "")
+
+	return checkTaskLogUpdateResult(ctx, result, id, "文件任务日志不存在")
 }

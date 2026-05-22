@@ -19,6 +19,7 @@ type Service interface {
 	Running(ctx context.Context, key LogKey, opts ...utils.Field) error
 	Completed(ctx context.Context, key LogKey, opts ...utils.Field) error
 	Failed(ctx context.Context, key LogKey, opts ...utils.Field) error
+	CompleteIfProgressDone(ctx context.Context, key LogKey, opts ...utils.Field) error
 
 	// CompletedWithProgress 完成任务并记录 processed/total 进度
 	CompletedWithProgress(ctx context.Context, key LogKey, processed, total int) error
@@ -27,6 +28,7 @@ type Service interface {
 
 	List(ctx context.Context, req *ListRequest) ([]*models.FileTaskLog, error)
 	Count(ctx context.Context, req *ListRequest) (int64, error)
+	ListLatestFileIDsByStatus(ctx context.Context, status string) ([]int64, error)
 	FindStaleTasksByDuration(ctx context.Context, duration time.Duration) ([]*models.FileTaskLog, error)
 	// FindByFileID 根据文件ID查询相关任务
 	FindByFileID(ctx context.Context, fileID int64) ([]*models.FileTaskLog, error)
@@ -37,8 +39,8 @@ type Service interface {
 	// ClearError 清空错误信息字段
 	ClearError(ctx context.Context, key LogKey) error
 
-	Clear(ctx context.Context) error
-	ClearByDuration(ctx context.Context, duration string) error
+	Clear(ctx context.Context) (int64, error)
+	ClearByDuration(ctx context.Context, duration string) (int64, error)
 }
 
 type service struct {
@@ -64,3 +66,23 @@ type LogID int64
 
 func (l LogID) GetID() int64  { return int64(l) }
 func NewLogID(id int64) LogID { return LogID(id) }
+
+func validateLogKey(key LogKey) (id int64, err error) {
+	if key == nil {
+		return 0, errInvalidFileTaskLogID
+	}
+
+	defer func() {
+		if recover() != nil {
+			id = 0
+			err = errInvalidFileTaskLogID
+		}
+	}()
+
+	id = key.GetID()
+	if id <= 0 {
+		return 0, errInvalidFileTaskLogID
+	}
+
+	return id, nil
+}

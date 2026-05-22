@@ -1,6 +1,7 @@
 package file
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
@@ -57,10 +58,6 @@ func (h *handler) ClearFile() taskcontext.HandlerFunc {
 
 		_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklog.WithTotalCounter(1))
 
-		defer func() {
-			_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklog.WithCompletedOneCounter())
-		}()
-
 		if shared.MediaConfig != nil && shared.MediaConfig.Enable && shared.MediaConfig.AutoClean {
 			defer func() {
 				_ = h.mediaFileService.ClearEmptyDir(ctx.GetContext(), shared.MediaConfig.StoragePath)
@@ -68,9 +65,18 @@ func (h *handler) ClearFile() taskcontext.HandlerFunc {
 		}
 
 		if err = h.clearMountFiles(ctx.GetContext(), vf.ID); err != nil {
-			_ = h.fileTaskLogService.Failed(ctx.GetContext(), tracker, tracker.WithCost(), utils.WithField("result", err))
+			_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklog.WithFailedCounter(1))
+			if statusErr := h.fileTaskLogService.Failed(ctx.GetContext(), tracker, tracker.WithCost(), utils.WithField("result", err.Error())); statusErr != nil {
+				logger.Error("更新文件任务日志失败", zap.Int64("file_id", req.FileId), zap.Error(statusErr))
+
+				return errors.Join(err, statusErr)
+			}
+
+			return err
 		} else if err := h.fileTaskLogService.Completed(ctx.GetContext(), tracker, tracker.WithCost()); err != nil {
 			logger.Error("更新文件任务日志失败", zap.Int64("file_id", req.FileId), zap.Error(err))
+
+			return err
 		}
 
 		return err

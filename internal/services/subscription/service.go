@@ -3,7 +3,9 @@ package subscription
 import (
 	stdContext "context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -20,6 +22,8 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
+
+const maxPanSearchResponseSize = 5 << 20
 
 // ShareInfo 订阅模块需要的分享元数据最小子集。
 type ShareInfo struct {
@@ -156,36 +160,42 @@ func NewService(db *gorm.DB, logger *zap.Logger, config *SubscriptionConfig) Ser
 func (s *service) SetTelegramService(svc TelegramService) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.telegramService = svc
 }
 
 func (s *service) SetTMDBService(svc TMDBService) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.tmdbService = svc
 }
 
 func (s *service) SetDoubanService(svc DoubanService) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.doubanService = svc
 }
 
 func (s *service) SetOpenAIService(svc OpenAIService) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.openaiService = svc
 }
 
 func (s *service) SetMountService(svc MountService) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.mountService = svc
 }
 
 func (s *service) SetShareInfoFetcher(svc ShareInfoFetcher) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.shareInfoFetcher = svc
 }
 
@@ -201,6 +211,7 @@ func (s *service) RunSubscriptionJob() error {
 	s.logger.Info("Starting subscription job...")
 
 	var subscriptions []models.Subscription
+
 	result := s.db.Where("enable = ?", true).Find(&subscriptions)
 	if result.Error != nil {
 		return result.Error
@@ -212,6 +223,7 @@ func (s *service) RunSubscriptionJob() error {
 	}
 
 	s.logger.Info("Subscription job completed")
+
 	return nil
 }
 
@@ -242,11 +254,14 @@ func (s *service) processSubscription(sub *models.Subscription) {
 			if keyword == "" {
 				continue
 			}
+
 			results, err := s.SearchPan(keyword)
 			if err != nil {
 				s.logger.Error("Search failed", zap.String("keyword", keyword), zap.Error(err))
+
 				continue
 			}
+
 			for _, r := range results {
 				s.processSearchResult(sub, r)
 			}
@@ -254,8 +269,9 @@ func (s *service) processSubscription(sub *models.Subscription) {
 
 		// 更新订阅状态（原实现未更新，导致下次运行时看不出进度）
 		now := time.Now()
+
 		sub.LastRunAt = &now
-		if err := s.db.Save(sub).Error; err != nil {
+		if err := s.updateSubscriptionRunProgress(sub); err != nil {
 			s.logger.Error("更新订阅状态失败", zap.Int64("sub_id", sub.ID), zap.Error(err))
 		}
 
@@ -272,13 +288,22 @@ func (s *service) processSubscription(sub *models.Subscription) {
 
 		// 检查今天是否已处理
 		var exists models.DailyHotHistory
+
 		now := time.Now()
 		todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 		todayEnd := todayStart.AddDate(0, 0, 1)
+
 		err := s.db.Where("source = ? AND content_id = ? AND processed_at >= ? AND processed_at < ?",
 			item.Source, contentID, todayStart, todayEnd).First(&exists).Error
 		if err == nil {
 			s.logger.Debug("Already processed today", zap.String("title", item.Title))
+
+			continue
+		}
+
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			s.logger.Error("查询每日热门历史失败", zap.String("title", item.Title), zap.Error(err))
+
 			continue
 		}
 
@@ -291,12 +316,15 @@ func (s *service) processSubscription(sub *models.Subscription) {
 			ProcessedAt: time.Now(),
 		}).Error; err != nil {
 			s.logger.Error("记录每日热门历史失败", zap.String("title", item.Title), zap.Error(err))
+
+			continue
 		}
 
 		// 搜索并挂载
 		results, err := s.SearchPan(item.Title + " " + item.Year)
 		if err != nil {
 			s.logger.Error("Search failed", zap.Error(err))
+
 			continue
 		}
 
@@ -312,8 +340,9 @@ func (s *service) processSubscription(sub *models.Subscription) {
 
 	// 更新订阅状态
 	sub.LastRunAt = new(time.Time)
+
 	*sub.LastRunAt = time.Now()
-	if err := s.db.Save(sub).Error; err != nil {
+	if err := s.updateSubscriptionRunProgress(sub); err != nil {
 		s.logger.Error("更新订阅状态失败", zap.Int64("sub_id", sub.ID), zap.Error(err))
 	}
 }
@@ -323,12 +352,14 @@ func (s *service) getTMDbMovies() []HotResource {
 
 	if s.tmdbService == nil {
 		s.logger.Warn("TMDB service not set, skip fetch")
+
 		return nil
 	}
 
 	movies, err := s.tmdbService.GetPopularMovies(1)
 	if err != nil {
 		s.logger.Error("获取 TMDB 热门电影失败", zap.Error(err))
+
 		return nil
 	}
 
@@ -357,12 +388,14 @@ func (s *service) getTMDbTVs() []HotResource {
 
 	if s.tmdbService == nil {
 		s.logger.Warn("TMDB service not set, skip fetch")
+
 		return nil
 	}
 
 	tvs, err := s.tmdbService.GetPopularTVs(1)
 	if err != nil {
 		s.logger.Error("获取 TMDB 热门剧集失败", zap.Error(err))
+
 		return nil
 	}
 
@@ -391,12 +424,14 @@ func (s *service) getDoubanMovies() []HotResource {
 
 	if s.doubanService == nil {
 		s.logger.Warn("Douban service not set, skip fetch")
+
 		return nil
 	}
 
 	subjects, err := s.doubanService.GetPopularMovies()
 	if err != nil {
 		s.logger.Error("获取豆瓣热门电影失败", zap.Error(err))
+
 		return nil
 	}
 
@@ -429,23 +464,27 @@ func (s *service) processSearchResult(sub *models.Subscription, result SearchRes
 	matchResult, err := s.MatchAndMount(sub, result, title, "", string(sub.Category))
 	if err != nil {
 		s.logger.Error("Match and mount failed", zap.Error(err))
+
 		return
 	}
 
 	if matchResult.Success {
 		sub.SuccessCount++
 		sub.LastMatchAt = new(time.Time)
+
 		*sub.LastMatchAt = time.Now()
-		if err := s.db.Save(sub).Error; err != nil {
+		if err := s.updateSubscriptionMatchProgress(sub); err != nil {
 			s.logger.Error("更新订阅匹配状态失败", zap.Int64("sub_id", sub.ID), zap.Error(err))
 		}
 
 		// 发送通知
 		if s.telegramService != nil {
-			s.telegramService.SendNotification(
+			if err := s.telegramService.SendNotification(
 				"资源已挂载",
 				fmt.Sprintf("%s\n\nSTRM 路径：%s\n分享链接：%s", title, matchResult.STrmPath, matchResult.ShareURL),
-			)
+			); err != nil {
+				s.logger.Warn("发送订阅挂载通知失败", zap.Error(err))
+			}
 		}
 	}
 }
@@ -459,6 +498,7 @@ func (s *service) processAutoUpgrade(sub *models.Subscription, item HotResource)
 	keyword, err := s.openaiService.GenerateUpgradeKeyword(item.Title, item.Category)
 	if err != nil {
 		s.logger.Error("Generate upgrade keyword failed", zap.Error(err))
+
 		return
 	}
 
@@ -466,6 +506,7 @@ func (s *service) processAutoUpgrade(sub *models.Subscription, item HotResource)
 	results, err := s.SearchPan(keyword)
 	if err != nil {
 		s.logger.Error("Search upgrade resource failed", zap.Error(err))
+
 		return
 	}
 
@@ -501,6 +542,7 @@ func (s *service) GetDailyHotMovies() ([]HotResource, error) {
 				if len(movie.ReleaseDate) >= 4 {
 					year = movie.ReleaseDate[:4]
 				}
+
 				results = append(results, HotResource{
 					Title:    movie.Title,
 					Year:     year,
@@ -543,6 +585,7 @@ func (s *service) GetDailyHotTVs() ([]HotResource, error) {
 				if len(tv.FirstAirDate) >= 4 {
 					year = tv.FirstAirDate[:4]
 				}
+
 				results = append(results, HotResource{
 					Title:    tv.Name,
 					Year:     year,
@@ -572,6 +615,7 @@ func (s *service) searchPanWithContext(ctx stdContext.Context, keyword string) (
 	if !strings.Contains(searchURL, "/api/search") {
 		searchURL = strings.TrimRight(searchURL, "/") + "/api/search"
 	}
+
 	searchURL = fmt.Sprintf("%s?kw=%s&cloud_types=tianyi", searchURL, url.QueryEscape(keyword))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
@@ -586,7 +630,9 @@ func (s *service) searchPanWithContext(ctx stdContext.Context, keyword string) (
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("盘搜接口返回状态: %d", resp.StatusCode)
@@ -609,7 +655,17 @@ func (s *service) searchPanWithContext(ctx stdContext.Context, keyword string) (
 	}
 
 	var result panSearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxPanSearchResponseSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("读取盘搜响应失败: %w", err)
+	}
+
+	if len(bodyBytes) > maxPanSearchResponseSize {
+		return nil, fmt.Errorf("盘搜返回体过大，已拒绝")
+	}
+
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
 		return nil, fmt.Errorf("解析盘搜响应失败: %w", err)
 	}
 
@@ -618,6 +674,7 @@ func (s *service) searchPanWithContext(ctx stdContext.Context, keyword string) (
 	}
 
 	results := make([]SearchResult, 0)
+
 	if tianyiData, ok := result.Data.MergedByType["tianyi"]; ok {
 		for _, item := range tianyiData {
 			results = append(results, SearchResult{
@@ -677,6 +734,7 @@ func (s *service) MatchAndMount(sub *models.Subscription, result SearchResult, t
 
 	recordFailure := func(msg string, err error) (*MatchResult, error) {
 		history.Status = models.MatchStatusFailed
+
 		history.ErrorMessage = msg
 		if err != nil {
 			history.ErrorMessage = fmt.Sprintf("%s: %v", msg, err)
@@ -706,6 +764,7 @@ func (s *service) MatchAndMount(sub *models.Subscription, result SearchResult, t
 	if len(matches) < 2 {
 		return recordFailure("无法从分享链接中提取分享码", nil)
 	}
+
 	shareCode := matches[1]
 
 	// 获取分享元数据
@@ -753,27 +812,105 @@ func (s *service) MatchAndMount(sub *models.Subscription, result SearchResult, t
 
 func (s *service) GetSubscriptions() ([]models.Subscription, error) {
 	var subs []models.Subscription
+
 	result := s.db.Order("created_at desc").Find(&subs)
+
 	return subs, result.Error
 }
 
 func (s *service) CreateSubscription(sub *models.Subscription) error {
 	sub.CreatedAt = time.Now()
 	sub.UpdatedAt = time.Now()
+
 	return s.db.Create(sub).Error
+}
+
+func (s *service) updateSubscriptionRunProgress(sub *models.Subscription) error {
+	result := s.db.Model(&models.Subscription{}).
+		Where("id = ?", sub.ID).
+		Updates(map[string]interface{}{
+			"last_run_at": sub.LastRunAt,
+			"updated_at":  time.Now(),
+		})
+
+	return s.checkSubscriptionUpdateResult(result, sub.ID)
+}
+
+func (s *service) updateSubscriptionMatchProgress(sub *models.Subscription) error {
+	result := s.db.Model(&models.Subscription{}).
+		Where("id = ?", sub.ID).
+		Updates(map[string]interface{}{
+			"success_count": sub.SuccessCount,
+			"last_match_at": sub.LastMatchAt,
+			"updated_at":    time.Now(),
+		})
+
+	return s.checkSubscriptionUpdateResult(result, sub.ID)
 }
 
 func (s *service) UpdateSubscription(sub *models.Subscription) error {
 	sub.UpdatedAt = time.Now()
-	return s.db.Save(sub).Error
+
+	result := s.db.Model(&models.Subscription{}).
+		Where("id = ?", sub.ID).
+		Select(
+			"name",
+			"source",
+			"category",
+			"keywords",
+			"list_type",
+			"mount_path",
+			"enable",
+			"enable_auto_upgrade",
+			"match_count",
+			"success_count",
+			"last_run_at",
+			"last_match_at",
+			"updated_at",
+		).
+		Updates(sub)
+
+	return s.checkSubscriptionUpdateResult(result, sub.ID)
+}
+
+func (s *service) checkSubscriptionUpdateResult(result *gorm.DB, id int64) error {
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected != 0 {
+		return nil
+	}
+
+	var count int64
+	if err := s.db.Model(&models.Subscription{}).Where("id = ?", id).Count(&count).Error; err != nil {
+		return err
+	}
+
+	if count == 0 {
+		return gorm.ErrRecordNotFound
+	}
+
+	return nil
 }
 
 func (s *service) DeleteSubscription(id int64) error {
-	return s.db.Delete(&models.Subscription{}, id).Error
+	result := s.db.Delete(&models.Subscription{}, id)
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+
+	return nil
 }
 
 func (s *service) GetMatchHistory(subscriptionID int64) ([]models.MatchHistory, error) {
 	var history []models.MatchHistory
+
 	result := s.db.Where("subscription_id = ?", subscriptionID).Order("created_at desc").Find(&history)
+
 	return history, result.Error
 }

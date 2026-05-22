@@ -78,14 +78,17 @@ func (s *service) GetSubscribeUserShareResource(ctx context.Context, userId stri
 	list := make([]*ShareResourceInfo, 0)
 
 	for _, item := range resp.Data.FileList {
-		var shareTime time.Time
-		var err error
+		var (
+			shareTime time.Time
+			err       error
+		)
 		for _, format := range []string{time.RFC3339, "2006-01-02T15:04:05Z", time.DateTime, "2006-01-02 15:04:05"} {
 			shareTime, err = time.Parse(format, item.ShareDate)
 			if err == nil {
 				break
 			}
 		}
+
 		if shareTime.IsZero() {
 			ctx.Info("ShareDate解析失败", zap.String("shareDate", item.ShareDate), zap.String("name", item.Name))
 		}
@@ -109,6 +112,7 @@ func (s *service) GetSubscribeUserShareResource(ctx context.Context, userId stri
 func (s *service) GetSubscribeUserShareResourceAll(ctx context.Context, userId string) ([]*ShareResourceInfo, int64, error) {
 	pageSize := int64(100)
 	allList := make([]*ShareResourceInfo, 0)
+
 	var totalCount int64
 
 	ctx.Info("开始获取订阅号全部分享", zap.String("user_id", userId), zap.Int64("page_size", pageSize))
@@ -117,6 +121,7 @@ func (s *service) GetSubscribeUserShareResourceAll(ctx context.Context, userId s
 		resp, err := s.getClient(ctx).GetUpResourceShare(ctx, userId, pageNum, pageSize, func(req *client.GetUpResourceShareRequest) {})
 		if err != nil {
 			ctx.Error("获取订阅号下级分享失败", zap.String("user_id", userId), zap.Int64("page_num", pageNum), zap.Error(err))
+
 			return nil, 0, err
 		}
 
@@ -124,6 +129,7 @@ func (s *service) GetSubscribeUserShareResourceAll(ctx context.Context, userId s
 
 		if resp == nil || resp.Data == nil {
 			ctx.Error("获取订阅号下级分享返回数据为空", zap.String("user_id", userId), zap.Int64("page_num", pageNum))
+
 			return allList, totalCount, nil
 		}
 
@@ -136,14 +142,17 @@ func (s *service) GetSubscribeUserShareResourceAll(ctx context.Context, userId s
 		// 如果当前页为空，退出循环
 		if len(resp.Data.FileList) == 0 {
 			ctx.Info("获取订阅号下级分享当前页为空", zap.String("user_id", userId), zap.Int64("page_num", pageNum))
+
 			break
 		}
 
 		ctx.Info("获取订阅号分享分页数据", zap.String("user_id", userId), zap.Int64("page_num", pageNum), zap.Int("current_page_count", len(resp.Data.FileList)))
 
 		for _, item := range resp.Data.FileList {
-			var shareTime time.Time
-			var err error
+			var (
+				shareTime time.Time
+				err       error
+			)
 			for _, format := range []string{time.RFC3339, "2006-01-02T15:04:05Z", time.DateTime, "2006-01-02 15:04:05"} {
 				shareTime, err = time.Parse(format, item.ShareDate)
 				if err == nil {

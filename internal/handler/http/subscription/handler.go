@@ -1,6 +1,7 @@
 package subscription
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
@@ -24,6 +26,12 @@ import (
 )
 
 var shareCodeRegex = regexp.MustCompile(`/t/([a-zA-Z0-9]+)`)
+
+const (
+	defaultPanSearchURL          = "https://so.252035.xyz/api/search"
+	defaultSubscriptionMountPath = "/热门订阅"
+	maxPanSearchResponseSize     = 5 << 20
+)
 
 type Handler struct {
 	db                   *gorm.DB
@@ -49,6 +57,7 @@ func NewHandler(db *gorm.DB, tmdbSvc tmdb.Service, doubanSvc douban.Service, sto
 	logger.Info("Creating subscription handler", zap.Any("storageSvc", storageSvc != nil))
 
 	var tmdbAPIKey string
+
 	if tmdbSvc != nil {
 		cfg := tmdbSvc.GetConfig()
 		if cfg != nil {
@@ -57,10 +66,13 @@ func NewHandler(db *gorm.DB, tmdbSvc tmdb.Service, doubanSvc douban.Service, sto
 	}
 
 	var setting Setting
-	if err := db.Where("name = ?", "subscription_config").First(&setting).Error; err == nil && setting.Value.TMDBAPIKey != "" {
+	if err := db.Where("name = ?", "subscription_config").First(&setting).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		logger.Warn("读取订阅配置失败，将使用默认配置", zap.Error(err))
+	} else if setting.Value.TMDBAPIKey != "" {
 		if tmdbSvc != nil {
 			tmdbSvc.SetAPIKey(setting.Value.TMDBAPIKey)
 		}
+
 		tmdbAPIKey = setting.Value.TMDBAPIKey
 	}
 
@@ -99,18 +111,22 @@ func (e *customBusinessError) GetError() error    { return e.cause }
 func (e *customBusinessError) Error() string      { return e.message }
 func (e *customBusinessError) WithError(err error) httpcontext.BusinessError {
 	e.cause = err
+
 	return e
 }
 func (e *customBusinessError) WithHTTPCode(code int) httpcontext.BusinessError {
 	e.httpCode = code
+
 	return e
 }
 func (e *customBusinessError) WithMessage(msg string) httpcontext.BusinessError {
 	e.message = msg
+
 	return e
 }
 func (e *customBusinessError) WithBusinessCode(code int) httpcontext.BusinessError {
 	e.businessCode = code
+
 	return e
 }
 
@@ -276,14 +292,17 @@ func (h *Handler) GetTMDbMovies() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		if h.tmdb == nil {
 			c.Fail(invalidParams(fmt.Errorf("TMDB 服务未初始化，请检查配置")))
+
 			return
 		}
 
 		category := c.DefaultQuery("category", "movie_popular")
 		h.logger.Info("[热门数据加载] 正在获取TMDB热门数据", zap.String("category", category))
 
-		var items interface{}
-		var err error
+		var (
+			items interface{}
+			err   error
+		)
 
 		catInfo, ok := tmdbCategoryGenreMap[category]
 		if !ok {
@@ -303,16 +322,19 @@ func (h *Handler) GetTMDbMovies() httpcontext.HandlerFunc {
 		if err != nil {
 			h.logger.Error("failed to get TMDB movies", zap.Error(err))
 			c.Fail(invalidParams(fmt.Errorf("获取TMDB热门电影失败: %w", err)))
+
 			return
 		}
 
 		movies := make([]HotMovieItem, 0)
+
 		if movieList, ok := items.([]tmdb.Movie); ok {
 			for _, m := range movieList {
 				year := ""
 				if len(m.ReleaseDate) >= 4 {
 					year = m.ReleaseDate[:4]
 				}
+
 				movies = append(movies, HotMovieItem{
 					ID:            m.ID,
 					Title:         m.Title,
@@ -332,6 +354,7 @@ func (h *Handler) GetTMDbMovies() httpcontext.HandlerFunc {
 				if len(m.FirstAirDate) >= 4 {
 					year = m.FirstAirDate[:4]
 				}
+
 				movies = append(movies, HotMovieItem{
 					ID:            m.ID,
 					Title:         m.Name,
@@ -360,6 +383,7 @@ func (h *Handler) GetTMDbTVs() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		if h.tmdb == nil {
 			c.Fail(invalidParams(fmt.Errorf("TMDB 服务未初始化，请检查配置")))
+
 			return
 		}
 
@@ -370,6 +394,7 @@ func (h *Handler) GetTMDbTVs() httpcontext.HandlerFunc {
 		if err != nil {
 			h.logger.Error("failed to get TMDB TVs", zap.Error(err))
 			c.Fail(invalidParams(fmt.Errorf("获取TMDB热门电视剧失败: %w", err)))
+
 			return
 		}
 
@@ -379,6 +404,7 @@ func (h *Handler) GetTMDbTVs() httpcontext.HandlerFunc {
 			if len(m.FirstAirDate) >= 4 {
 				year = m.FirstAirDate[:4]
 			}
+
 			movies = append(movies, HotMovieItem{
 				ID:            m.ID,
 				Title:         m.Name,
@@ -406,6 +432,7 @@ func (h *Handler) GetDoubanMovies() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		if h.douban == nil {
 			c.Fail(invalidParams(fmt.Errorf("豆瓣服务未初始化，请检查配置")))
+
 			return
 		}
 
@@ -416,6 +443,7 @@ func (h *Handler) GetDoubanMovies() httpcontext.HandlerFunc {
 		if err != nil {
 			h.logger.Error("failed to get Douban movies", zap.Error(err))
 			c.Fail(invalidParams(fmt.Errorf("获取豆瓣热门电影失败: %w", err)))
+
 			return
 		}
 
@@ -470,45 +498,17 @@ func (s Setting) TableName() string {
 func (h *Handler) GetConfig() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		var setting Setting
+
 		result := h.db.Where("name = ?", "subscription_config").First(&setting)
 		if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			c.Fail(invalidParams(result.Error))
+
 			return
 		}
 
 		if setting.ID == 0 {
-			setting = Setting{
-				Name: "subscription_config",
-				Value: models.SubscriptionConfig{
-					Enabled:          true,
-					CronExpression:   "0 2 * * *",
-					PanSearchURL:     "https://so.252035.xyz/api/search",
-					EnableTMDB:       true,
-					EnableDouban:     true,
-					DefaultMountPath: "/热门订阅",
-					AutoMount:        false,
-					TMDBAPIKey:       h.tmdbAPIKey,
-					OpenAIBaseURL:    "https://api.openai.com",
-					OpenAIModel:      "gpt-4o-mini",
-				},
-			}
-			h.db.Create(&setting)
-			config := SubscriptionConfig{
-				EnableTMDB:       setting.Value.EnableTMDB,
-				EnableDouban:     setting.Value.EnableDouban,
-				PanSearchURL:     setting.Value.PanSearchURL,
-				DefaultMountPath: setting.Value.DefaultMountPath,
-				AutoMount:        setting.Value.AutoMount,
-				CronExpression:   setting.Value.CronExpression,
-				TMDBAPIKey:       setting.Value.TMDBAPIKey,
-				OpenAIAPIKey:     setting.Value.OpenAIAPIKey,
-				OpenAIBaseURL:    setting.Value.OpenAIBaseURL,
-				OpenAIModel:      setting.Value.OpenAIModel,
-			}
-			if config.TMDBAPIKey == "" {
-				config.TMDBAPIKey = h.tmdbAPIKey
-			}
-			c.Success(config)
+			c.Success(h.defaultSubscriptionConfig())
+
 			return
 		}
 
@@ -527,8 +527,62 @@ func (h *Handler) GetConfig() httpcontext.HandlerFunc {
 		if config.TMDBAPIKey == "" {
 			config.TMDBAPIKey = h.tmdbAPIKey
 		}
+
 		c.Success(config)
 	}
+}
+
+func (h *Handler) defaultSubscriptionConfig() SubscriptionConfig {
+	return SubscriptionConfig{
+		EnableTMDB:       true,
+		EnableDouban:     true,
+		PanSearchURL:     defaultPanSearchURL,
+		DefaultMountPath: defaultSubscriptionMountPath,
+		AutoMount:        false,
+		CronExpression:   "0 2 * * *",
+		TMDBAPIKey:       h.tmdbAPIKey,
+		OpenAIBaseURL:    "https://api.openai.com",
+		OpenAIModel:      "gpt-4o-mini",
+	}
+}
+
+func (h *Handler) loadSubscriptionConfigValue() (models.SubscriptionConfig, error) {
+	var setting Setting
+	if err := h.db.Where("name = ?", "subscription_config").First(&setting).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return models.SubscriptionConfig{}, nil
+		}
+
+		return models.SubscriptionConfig{}, err
+	}
+
+	return setting.Value, nil
+}
+
+func (h *Handler) panSearchURLFromConfig() (string, error) {
+	config, err := h.loadSubscriptionConfigValue()
+	if err != nil {
+		return "", err
+	}
+
+	if config.PanSearchURL != "" {
+		return config.PanSearchURL, nil
+	}
+
+	return defaultPanSearchURL, nil
+}
+
+func (h *Handler) defaultMountPathFromConfig() (string, error) {
+	config, err := h.loadSubscriptionConfigValue()
+	if err != nil {
+		return "", err
+	}
+
+	if config.DefaultMountPath != "" {
+		return config.DefaultMountPath, nil
+	}
+
+	return defaultSubscriptionMountPath, nil
 }
 
 type UpdateConfigReq struct {
@@ -549,13 +603,16 @@ func (h *Handler) UpdateConfig() httpcontext.HandlerFunc {
 		var req UpdateConfigReq
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.Fail(invalidParams(err))
+
 			return
 		}
 
 		var setting Setting
+
 		result := h.db.Where("name = ?", "subscription_config").First(&setting)
 		if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			c.Fail(invalidParams(result.Error))
+
 			return
 		}
 
@@ -576,12 +633,27 @@ func (h *Handler) UpdateConfig() httpcontext.HandlerFunc {
 		if setting.ID == 0 {
 			result = h.db.Create(&setting)
 		} else {
-			result = h.db.Save(&setting)
+			result = h.db.Model(&Setting{}).
+				Where("id = ?", setting.ID).
+				Update("value", setting.Value)
 		}
 
 		if result.Error != nil {
 			c.Fail(invalidParams(result.Error))
+
 			return
+		}
+
+		if setting.ID != 0 && result.RowsAffected == 0 {
+			if err := h.checkSubscriptionSettingUpdateResult(result, setting.ID); err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					c.Fail(invalidParams(gorm.ErrRecordNotFound))
+				} else {
+					c.Fail(invalidParams(err))
+				}
+
+				return
+			}
 		}
 
 		if req.TMDBAPIKey != "" && h.tmdb != nil {
@@ -592,6 +664,27 @@ func (h *Handler) UpdateConfig() httpcontext.HandlerFunc {
 
 		c.Success(req)
 	}
+}
+
+func (h *Handler) checkSubscriptionSettingUpdateResult(result *gorm.DB, id int64) error {
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected != 0 {
+		return nil
+	}
+
+	var count int64
+	if err := h.db.Model(&Setting{}).Where("id = ?", id).Count(&count).Error; err != nil {
+		return err
+	}
+
+	if count == 0 {
+		return gorm.ErrRecordNotFound
+	}
+
+	return nil
 }
 
 type SearchResult struct {
@@ -610,21 +703,22 @@ func (h *Handler) SearchPan() httpcontext.HandlerFunc {
 		keyword := c.Query("keyword")
 		if keyword == "" {
 			c.Fail(invalidParams(fmt.Errorf("关键词不能为空")))
+
 			return
 		}
 
-		panSearchURL := "https://so.252035.xyz/api/search"
-		var setting Setting
-		if err := h.db.Where("name = ?", "subscription_config").First(&setting).Error; err == nil {
-			if setting.Value.PanSearchURL != "" {
-				panSearchURL = setting.Value.PanSearchURL
-			}
+		panSearchURL, err := h.panSearchURLFromConfig()
+		if err != nil {
+			c.Fail(invalidParams(fmt.Errorf("读取订阅配置失败: %w", err)))
+
+			return
 		}
 
 		searchURL := panSearchURL
 		if !strings.Contains(panSearchURL, "/api/search") {
 			searchURL = strings.TrimRight(panSearchURL, "/") + "/api/search"
 		}
+
 		searchURL = fmt.Sprintf("%s?kw=%s&cloud_types=tianyi", searchURL, url.QueryEscape(keyword))
 
 		h.logger.Info("Searching pan", zap.String("url", searchURL))
@@ -632,6 +726,7 @@ func (h *Handler) SearchPan() httpcontext.HandlerFunc {
 		req, err := http.NewRequestWithContext(c.Request.Context(), "GET", searchURL, nil)
 		if err != nil {
 			c.Fail(invalidParams(fmt.Errorf("请求失败: %w", err)))
+
 			return
 		}
 
@@ -642,6 +737,7 @@ func (h *Handler) SearchPan() httpcontext.HandlerFunc {
 
 		// 使用代理（如果配置了）
 		client := h.httpClient
+
 		proxyURL := os.Getenv("TG_PROXY")
 		if proxyURL != "" {
 			if proxyURL_, err := url.Parse(proxyURL); err == nil {
@@ -656,25 +752,30 @@ func (h *Handler) SearchPan() httpcontext.HandlerFunc {
 		resp, err := client.Do(req)
 		if err != nil {
 			h.logger.Error("Pan search request failed", zap.Error(err))
-			if strings.Contains(err.Error(), "context canceled") {
+
+			if isPanSearchTimeoutError(err) {
 				c.Fail(invalidParams(fmt.Errorf("请求超时，请稍后重试")))
 			} else {
 				c.Fail(invalidParams(fmt.Errorf("搜索服务不可用: %v", err)))
 			}
+
 			return
 		}
-		defer resp.Body.Close()
+		defer func() {
+			_ = resp.Body.Close()
+		}()
 
-		// 限制响应体最大 5MB，避免异常大返回耗尽内存
-		const maxResponseSize = 5 << 20
-		bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))
+		bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxPanSearchResponseSize+1))
 		if err != nil {
 			h.logger.Error("Failed to read response body", zap.Error(err))
 			c.Fail(invalidParams(fmt.Errorf("读取响应失败: %v", err)))
+
 			return
 		}
-		if len(bodyBytes) > maxResponseSize {
+
+		if len(bodyBytes) > maxPanSearchResponseSize {
 			c.Fail(invalidParams(fmt.Errorf("盘搜返回体过大，已拒绝")))
+
 			return
 		}
 
@@ -683,6 +784,7 @@ func (h *Handler) SearchPan() httpcontext.HandlerFunc {
 		if resp.StatusCode != http.StatusOK {
 			h.logger.Warn("Pan search returned non-OK status", zap.Int("status", resp.StatusCode), zap.String("url", searchURL))
 			c.Fail(invalidParams(fmt.Errorf("搜索接口返回状态: %d，请检查盘搜 API 地址是否正确", resp.StatusCode)))
+
 			return
 		}
 
@@ -706,26 +808,32 @@ func (h *Handler) SearchPan() httpcontext.HandlerFunc {
 		if err := json.Unmarshal(bodyBytes, &result); err != nil {
 			h.logger.Error("Failed to parse pan search response", zap.Error(err))
 			c.Fail(invalidParams(fmt.Errorf("解析响应失败: %w", err)))
+
 			return
 		}
 
 		if result.Code != 0 {
 			c.Fail(invalidParams(fmt.Errorf("%s", result.Message)))
+
 			return
 		}
 
 		var results []SearchResult
+
 		if tianyiData, ok := result.Data.MergedByType["tianyi"]; ok {
 			for _, item := range tianyiData {
 				matches := shareCodeRegex.FindStringSubmatch(item.URL)
+
 				shareCode := ""
 				if len(matches) > 1 {
 					shareCode = matches[1]
 				}
+
 				cover := ""
 				if len(item.Images) > 0 {
 					cover = item.Images[0]
 				}
+
 				results = append(results, SearchResult{
 					ShareURL:   item.URL,
 					ShareCode:  shareCode,
@@ -753,6 +861,7 @@ func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.Fail(invalidParams(err))
+
 			return
 		}
 
@@ -766,16 +875,15 @@ func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 
 		if shareCode == "" {
 			c.Fail(invalidParams(fmt.Errorf("无法从分享链接中提取分享码")))
+
 			return
 		}
 
-		defaultMountPath := "/热门订阅"
-		// 从 settings 中读取用户自定义默认挂载路径
-		var cfgSetting Setting
-		if err := h.db.Where("name = ?", "subscription_config").First(&cfgSetting).Error; err == nil {
-			if cfgSetting.Value.DefaultMountPath != "" {
-				defaultMountPath = cfgSetting.Value.DefaultMountPath
-			}
+		defaultMountPath, err := h.defaultMountPathFromConfig()
+		if err != nil {
+			c.Fail(invalidParams(fmt.Errorf("读取订阅配置失败: %w", err)))
+
+			return
 		}
 
 		mountPath := req.MountPath
@@ -785,19 +893,35 @@ func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 
 		if h.storageFacadeService == nil {
 			c.Fail(invalidParams(fmt.Errorf("storage service is nil, please restart the application")))
+
 			return
 		}
 
 		ctx := c.GetContext()
+		userID := c.GetInt64(consts.CtxKeyUserId)
+		isAdmin := c.GetBool(consts.CtxKeyIsAdmin)
+
+		var existingMountPoint models.MountPoint
+		if err := h.db.Where("full_path = ?", mountPath).First(&existingMountPoint).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			c.Fail(invalidParams(fmt.Errorf("查询挂载路径失败: %v", err)))
+
+			return
+		} else if err == nil && !isAdmin && (userID <= 0 || existingMountPoint.CreatorUserID != userID) {
+			c.Unauthorized("路径已被其他用户挂载")
+
+			return
+		}
 
 		if h.cloudBridgeService == nil {
 			c.Fail(invalidParams(fmt.Errorf("cloud bridge service is nil, please restart the application")))
+
 			return
 		}
 
 		shareInfo, err := h.cloudBridgeService.GetShareInfo(ctx, shareCode, "")
 		if err != nil {
 			c.Fail(invalidParams(fmt.Errorf("获取分享信息失败: %v", err)))
+
 			return
 		}
 
@@ -807,13 +931,17 @@ func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 			CloudToken:    0,
 			FileId:        shareInfo.ID,
 			AllowExisting: true,
+			CreatorUserID: userID,
 		}
+
 		id, err := h.storageFacadeService.CreateStorage(ctx, storageReq)
 		if err != nil {
 			h.logger.Error("Failed to create storage", zap.Error(err), zap.String("path", mountPath))
 			c.Fail(invalidParams(fmt.Errorf("创建挂载点失败: %v", err)))
+
 			return
 		}
+
 		c.Success(gin.H{
 			"message":   "挂载成功",
 			"mountPath": mountPath,
@@ -830,21 +958,22 @@ func (h *Handler) SearchPanWithAI() httpcontext.HandlerFunc {
 		keyword := c.Query("keyword")
 		if keyword == "" {
 			c.Fail(invalidParams(fmt.Errorf("关键词不能为空")))
+
 			return
 		}
 
-		panSearchURL := "https://so.252035.xyz/api/search"
-		var setting Setting
-		if err := h.db.Where("name = ?", "subscription_config").First(&setting).Error; err == nil {
-			if setting.Value.PanSearchURL != "" {
-				panSearchURL = setting.Value.PanSearchURL
-			}
+		panSearchURL, err := h.panSearchURLFromConfig()
+		if err != nil {
+			c.Fail(invalidParams(fmt.Errorf("读取订阅配置失败: %w", err)))
+
+			return
 		}
 
 		searchURL := panSearchURL
 		if !strings.Contains(panSearchURL, "/api/search") {
 			searchURL = strings.TrimRight(panSearchURL, "/") + "/api/search"
 		}
+
 		searchURL = fmt.Sprintf("%s?kw=%s&cloud_types=tianyi", searchURL, url.QueryEscape(keyword))
 
 		h.logger.Info("Searching pan with AI", zap.String("url", searchURL))
@@ -852,6 +981,7 @@ func (h *Handler) SearchPanWithAI() httpcontext.HandlerFunc {
 		req, err := http.NewRequestWithContext(c.Request.Context(), "GET", searchURL, nil)
 		if err != nil {
 			c.Fail(invalidParams(fmt.Errorf("请求失败: %w", err)))
+
 			return
 		}
 
@@ -863,18 +993,23 @@ func (h *Handler) SearchPanWithAI() httpcontext.HandlerFunc {
 		resp, err := h.httpClient.Do(req)
 		if err != nil {
 			h.logger.Error("Pan search request failed", zap.Error(err))
-			if strings.Contains(err.Error(), "context canceled") {
+
+			if isPanSearchTimeoutError(err) {
 				c.Fail(invalidParams(fmt.Errorf("请求超时，请稍后重试")))
 			} else {
 				c.Fail(invalidParams(fmt.Errorf("搜索服务不可用: %v", err)))
 			}
+
 			return
 		}
-		defer resp.Body.Close()
+		defer func() {
+			_ = resp.Body.Close()
+		}()
 
 		if resp.StatusCode != http.StatusOK {
 			h.logger.Warn("Pan search returned non-OK status", zap.Int("status", resp.StatusCode))
 			c.Fail(invalidParams(fmt.Errorf("搜索接口返回状态: %d", resp.StatusCode)))
+
 			return
 		}
 
@@ -894,35 +1029,56 @@ func (h *Handler) SearchPanWithAI() httpcontext.HandlerFunc {
 			} `json:"data"`
 		}
 
+		bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxPanSearchResponseSize+1))
+		if err != nil {
+			h.logger.Error("Failed to read response body", zap.Error(err))
+			c.Fail(invalidParams(fmt.Errorf("读取响应失败: %v", err)))
+
+			return
+		}
+
+		if len(bodyBytes) > maxPanSearchResponseSize {
+			c.Fail(invalidParams(fmt.Errorf("盘搜返回体过大，已拒绝")))
+
+			return
+		}
+
 		var searchResult PanSearchResponseV2
-		if err := json.NewDecoder(resp.Body).Decode(&searchResult); err != nil {
+		if err := json.Unmarshal(bodyBytes, &searchResult); err != nil {
 			h.logger.Error("Failed to parse pan search response", zap.Error(err))
 			c.Fail(invalidParams(fmt.Errorf("解析响应失败: %w", err)))
+
 			return
 		}
 
 		if searchResult.Code != 0 {
 			c.Fail(invalidParams(fmt.Errorf("%s", searchResult.Message)))
+
 			return
 		}
 
 		if h.openaiSvc == nil {
 			c.Fail(invalidParams(fmt.Errorf("AI服务未配置")))
+
 			return
 		}
 
 		var results []SearchResult
+
 		if tianyiData, ok := searchResult.Data.MergedByType["tianyi"]; ok {
 			for _, item := range tianyiData {
 				matches := shareCodeRegex.FindStringSubmatch(item.URL)
+
 				shareCode := ""
 				if len(matches) > 1 {
 					shareCode = matches[1]
 				}
+
 				cover := ""
 				if len(item.Images) > 0 {
 					cover = item.Images[0]
 				}
+
 				results = append(results, SearchResult{
 					ShareURL:   item.URL,
 					ShareCode:  shareCode,
@@ -940,18 +1096,21 @@ func (h *Handler) SearchPanWithAI() httpcontext.HandlerFunc {
 				"message": "未找到相关资源",
 				"result":  nil,
 			})
+
 			return
 		}
 
 		bestKeyword, err := h.openaiSvc.GenerateUpgradeKeyword(keyword, "movie")
 		if err != nil {
 			h.logger.Warn("Failed to generate AI keyword", zap.Error(err))
+
 			bestKeyword = keyword
 		}
 
 		h.logger.Info("AI recommended keyword", zap.String("keyword", bestKeyword))
 
 		var bestResult *SearchResult
+
 		bestScore := 0
 
 		for i := range results {
@@ -967,9 +1126,11 @@ func (h *Handler) SearchPanWithAI() httpcontext.HandlerFunc {
 			if strings.Contains(name, "4k") {
 				score += 20
 			}
+
 			if strings.Contains(name, "2160p") {
 				score += 20
 			}
+
 			if strings.Contains(name, "1080p") {
 				score += 15
 			}
@@ -977,9 +1138,11 @@ func (h *Handler) SearchPanWithAI() httpcontext.HandlerFunc {
 			if strings.Contains(name, "杜比") || strings.Contains(name, "dolby") {
 				score += 10
 			}
+
 			if strings.Contains(name, "纯净") || strings.Contains(name, "无广") {
 				score += 10
 			}
+
 			if strings.Contains(name, "全集") || strings.Contains(name, "完结") {
 				score += 10
 			}
@@ -1002,4 +1165,8 @@ func (h *Handler) SearchPanWithAI() httpcontext.HandlerFunc {
 			"allResults":    results,
 		})
 	}
+}
+
+func isPanSearchTimeoutError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }

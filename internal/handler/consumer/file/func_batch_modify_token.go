@@ -1,9 +1,9 @@
 package file
 
 import (
+	"errors"
 	"fmt"
 
-	"github.com/pkg/errors"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/taskcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	filetasklogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/filetasklog"
@@ -18,14 +18,27 @@ func (h *handler) HandleBatchModifyToken() taskcontext.HandlerFunc {
 			return err
 		}
 
+		requestIDs, err := normalizeFileTaskIDs(req.IDs)
+		if err != nil {
+			ctx.GetContext().Warn("批量修改令牌任务 ID 非法", zap.Int64s("ids", req.IDs), zap.Error(err))
+
+			return err
+		}
+
+		if len(requestIDs) == 0 {
+			ctx.GetContext().Info("批量修改令牌任务为空，跳过")
+
+			return nil
+		}
+
 		taskName := "批量修改令牌"
-		taskDesc := fmt.Sprintf("批量修改 %d 个挂载点的令牌，新令牌ID: %d", len(req.IDs), req.TokenID)
+		taskDesc := fmt.Sprintf("批量修改 %d 个挂载点的令牌，新令牌ID: %d", len(requestIDs), req.TokenID)
 
 		tracker, logErr := h.fileTaskLogService.Create(
 			ctx.GetContext(),
 			taskName,
 			taskDesc,
-			filetasklogSvi.WithFile(req.IDs[0]),
+			filetasklogSvi.WithFile(requestIDs[0]),
 			filetasklogSvi.WithDesc(fmt.Sprintf("用户ID: %d, 管理员: %t", req.UserID, req.IsAdmin)),
 		)
 		if logErr != nil {
@@ -36,20 +49,39 @@ func (h *handler) HandleBatchModifyToken() taskcontext.HandlerFunc {
 
 		successCount := 0
 		failCount := 0
+		unchangedCount := 0
 
 		var groupFileIDs []int64
+
 		if !req.IsAdmin && req.UserGroupID > 0 {
-			groupFileIDs, _ = h.group2FileService.GetBindFiles(ctx.GetContext(), req.UserGroupID)
+			var err error
+
+			groupFileIDs, err = h.group2FileService.GetBindFiles(ctx.GetContext(), req.UserGroupID)
+			if err != nil {
+				if statusErr := h.fileTaskLogService.Failed(ctx.GetContext(), tracker, tracker.WithCost(), utils.WithField("result", err.Error())); statusErr != nil {
+					ctx.GetContext().Error("更新批量修改令牌任务失败状态失败", zap.Error(statusErr))
+
+					return errors.Join(err, statusErr)
+				}
+
+				return err
+			}
 		}
 
-		for _, id := range req.IDs {
+		for _, id := range requestIDs {
 			_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithTotalCounter(1))
 
 			mp, err := h.mountPointService.Query(ctx.GetContext(), id)
 			if err != nil {
 				failCount++
-				_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithCompletedOneCounter())
+				_ = h.fileTaskLogService.FlushCount(
+					ctx.GetContext(),
+					tracker,
+					filetasklogSvi.WithCompletedOneCounter(),
+					filetasklogSvi.WithFailedCounter(1),
+				)
 				ctx.GetContext().Warn("查询挂载点失败，跳过", zap.Int64("id", id), zap.Error(err))
+
 				continue
 			}
 
@@ -59,27 +91,68 @@ func (h *handler) HandleBatchModifyToken() taskcontext.HandlerFunc {
 					for _, fid := range groupFileIDs {
 						if fid == mp.FileId {
 							hasAccess = true
+
 							break
 						}
 					}
 				}
+
+				if !hasAccess && h.userMountPointTokenService != nil {
+					tokenID, err := h.userMountPointTokenService.GetTokenID(ctx.GetContext(), req.UserID, mp.ID)
+					if err != nil {
+						failCount++
+						_ = h.fileTaskLogService.FlushCount(
+							ctx.GetContext(),
+							tracker,
+							filetasklogSvi.WithCompletedOneCounter(),
+							filetasklogSvi.WithFailedCounter(1),
+						)
+						ctx.GetContext().Warn("查询用户挂载点令牌绑定失败，跳过", zap.Int64("id", id), zap.Int64("user_id", req.UserID), zap.Error(err))
+
+						continue
+					}
+
+					hasAccess = tokenID > 0
+				}
+
 				if !hasAccess {
 					failCount++
-					_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithCompletedOneCounter())
+					_ = h.fileTaskLogService.FlushCount(
+						ctx.GetContext(),
+						tracker,
+						filetasklogSvi.WithCompletedOneCounter(),
+						filetasklogSvi.WithFailedCounter(1),
+					)
 					ctx.GetContext().Warn("挂载点无权限修改，跳过", zap.Int64("id", id), zap.Int64("user_id", req.UserID))
+
 					continue
 				}
 			}
 
 			if req.TokenID == 0 {
-				err = h.userMountPointTokenService.UnbindToken(ctx.GetContext(), req.UserID, mp.ID)
+				var deleted bool
+
+				deleted, err = h.userMountPointTokenService.UnbindTokenWithResult(ctx.GetContext(), req.UserID, mp.ID)
+				if err == nil && !deleted {
+					unchangedCount++
+					_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithCompletedOneCounter())
+
+					continue
+				}
 			} else {
 				err = h.userMountPointTokenService.BindToken(ctx.GetContext(), req.UserID, mp.ID, req.TokenID)
 			}
+
 			if err != nil {
 				failCount++
-				_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithCompletedOneCounter())
+				_ = h.fileTaskLogService.FlushCount(
+					ctx.GetContext(),
+					tracker,
+					filetasklogSvi.WithCompletedOneCounter(),
+					filetasklogSvi.WithFailedCounter(1),
+				)
 				ctx.GetContext().Warn("修改挂载点令牌失败，跳过", zap.Int64("id", id), zap.Error(err))
+
 				continue
 			}
 
@@ -88,16 +161,37 @@ func (h *handler) HandleBatchModifyToken() taskcontext.HandlerFunc {
 		}
 
 		if failCount > 0 {
-			err := errors.Errorf("批量修改令牌完成，成功 %d 个，失败 %d 个", successCount, failCount)
-			_ = h.fileTaskLogService.Failed(ctx.GetContext(), tracker, tracker.WithCost(), utils.WithField("result", err.Error()))
-			return err
+			err := errors.New(formatBatchModifyTokenResult(successCount, unchangedCount, failCount))
+			if statusErr := h.fileTaskLogService.Failed(ctx.GetContext(), tracker, tracker.WithCost(), utils.WithField("result", err.Error())); statusErr != nil {
+				ctx.GetContext().Error("更新批量修改令牌任务失败状态失败", zap.Error(statusErr))
+
+				return statusErr
+			}
+
+			return nil
 		}
 
 		return h.fileTaskLogService.Completed(
 			ctx.GetContext(),
 			tracker,
 			tracker.WithCost(),
-			utils.WithField("result", fmt.Sprintf("批量修改令牌完成，成功 %d 个", successCount)),
+			utils.WithField("result", formatBatchModifyTokenResult(successCount, unchangedCount, failCount)),
 		)
 	}
+}
+
+func formatBatchModifyTokenResult(successCount, unchangedCount, failCount int) string {
+	if failCount > 0 {
+		if unchangedCount > 0 {
+			return fmt.Sprintf("批量修改令牌完成，成功 %d 个，已无绑定 %d 个，失败 %d 个", successCount, unchangedCount, failCount)
+		}
+
+		return fmt.Sprintf("批量修改令牌完成，成功 %d 个，失败 %d 个", successCount, failCount)
+	}
+
+	if unchangedCount > 0 {
+		return fmt.Sprintf("批量修改令牌完成，成功 %d 个，已无绑定 %d 个", successCount, unchangedCount)
+	}
+
+	return fmt.Sprintf("批量修改令牌完成，成功 %d 个", successCount)
 }

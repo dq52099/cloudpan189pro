@@ -37,7 +37,7 @@
         <n-button @click="handleReset">重置</n-button>
       </div>
       <div class="header-right">
-        <n-button @click="handleRefresh">
+        <n-button :loading="state.loading" @click="handleRefresh">
           <template #icon>
             <n-icon>
               <RefreshOutline />
@@ -45,6 +45,16 @@
           </template>
           刷新
         </n-button>
+        <n-dropdown trigger="click" :options="clearLogOptions" @select="handleClearLogs">
+          <n-button type="error" ghost :loading="state.clearing">
+            <template #icon>
+              <n-icon>
+                <TrashOutline />
+              </n-icon>
+            </template>
+            清理日志
+          </n-button>
+        </n-dropdown>
       </div>
     </div>
 
@@ -63,7 +73,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, h, onMounted } from 'vue'
+import { reactive, h, onMounted, onUnmounted } from 'vue'
 import {
   NDataTable,
   NInput,
@@ -73,7 +83,10 @@ import {
   NTag,
   NText,
   useMessage,
+  useDialog,
+  NDropdown,
   type DataTableColumns,
+  type DropdownOption,
   type PaginationProps,
   NDatePicker,
 } from 'naive-ui'
@@ -87,8 +100,9 @@ import {
   CheckmarkCircleOutline,
   CloseCircleOutline,
   RefreshCircleOutline,
+  TrashOutline,
 } from '@vicons/ionicons5'
-import { getLoginLogList, type LoginLogListQuery } from '@/api/loginlog'
+import { getLoginLogList, clearLoginLogs, type LoginLogListQuery } from '@/api/loginlog'
 import { formatDate } from '@/utils/format'
 import {
   LOGIN_EVENT_OPTIONS,
@@ -99,9 +113,15 @@ import {
 } from '@/constants/loginLog'
 
 const message = useMessage()
+const dialog = useDialog()
+
+let isComponentMounted = false
+let loginLogListRequestId = 0
+let clearLoginLogRequestId = 0
 
 const state = reactive({
   loading: false,
+  clearing: false,
   tableData: [] as Models.LoginLog[],
   username: '',
   addr: '',
@@ -113,6 +133,14 @@ const state = reactive({
 // 选项
 const eventOptions = LOGIN_EVENT_OPTIONS
 const statusOptions = LOGIN_STATUS_OPTIONS
+const clearLogOptions: DropdownOption[] = [
+  { label: '清空全部', key: 'all' },
+  { label: '保留最近 7 天', key: '7d' },
+  { label: '保留最近 30 天', key: '30d' },
+  { label: '保留最近 90 天', key: '90d' },
+  { label: '保留最近 180 天', key: '180d' },
+  { label: '保留最近 365 天', key: '365d' },
+]
 
 // 分页
 const paginationReactive = reactive<PaginationProps>({
@@ -241,6 +269,12 @@ const columns: DataTableColumns<Models.LoginLog> = [
 
 // 拉取列表
 const fetchList = () => {
+  if (!isComponentMounted) {
+    return
+  }
+
+  const requestId = ++loginLogListRequestId
+
   state.loading = true
   const params: LoginLogListQuery = {
     currentPage: paginationReactive.page ?? 1,
@@ -257,17 +291,31 @@ const fetchList = () => {
 
   getLoginLogList(params)
     .then((res) => {
-      if (res.data) {
+      if (!isComponentMounted || requestId !== loginLogListRequestId) {
+        return
+      }
+
+      if (res.code === 200 && res.data) {
         state.tableData = res.data.data || []
         paginationReactive.itemCount = res.data.total || 0
+
+        return
       }
+
+      message.error(res.msg || '获取登录日志失败')
     })
     .catch((err) => {
+      if (!isComponentMounted || requestId !== loginLogListRequestId) {
+        return
+      }
+
       console.error(err)
       message.error(err?.message || '获取登录日志失败')
     })
     .finally(() => {
-      state.loading = false
+      if (isComponentMounted && requestId === loginLogListRequestId) {
+        state.loading = false
+      }
     })
 }
 
@@ -286,9 +334,70 @@ const handleReset = () => {
 }
 const handleRefresh = () => fetchList()
 
+const handleClearLogs = (key: string | number) => {
+  if (state.clearing) {
+    return
+  }
+
+  const duration = key === 'all' ? undefined : String(key)
+  const selectedLabel =
+    clearLogOptions.find((option) => option.key === key)?.label?.toString() || '清理日志'
+
+  dialog.warning({
+    title: selectedLabel,
+    content: duration
+      ? `确定要删除 ${selectedLabel.replace('保留', '')}以外的登录日志吗？此操作不可撤销。`
+      : '确定要清空所有登录日志吗？此操作不可撤销。',
+    positiveText: '确认清理',
+    negativeText: '取消',
+    onPositiveClick: () => {
+      if (state.clearing) {
+        return
+      }
+
+      const requestId = ++clearLoginLogRequestId
+
+      state.clearing = true
+      clearLoginLogs(duration ? { duration } : undefined)
+        .then((res) => {
+          if (!isComponentMounted || requestId !== clearLoginLogRequestId) {
+            return
+          }
+
+          if (res.code === 200) {
+            message.success(`登录日志已清理${res.data ? `，删除 ${res.data} 条` : ''}`)
+            paginationReactive.page = 1
+            fetchList()
+          } else {
+            message.error(res.msg || '清空失败')
+          }
+        })
+        .catch((err) => {
+          if (!isComponentMounted || requestId !== clearLoginLogRequestId) {
+            return
+          }
+
+          message.error(err instanceof Error ? err.message : '清空失败')
+        })
+        .finally(() => {
+          if (isComponentMounted && requestId === clearLoginLogRequestId) {
+            state.clearing = false
+          }
+        })
+    },
+  })
+}
+
 // 仅在组件挂载时发起请求，配合 Tabs 的 v-if 保证按需加载
 onMounted(() => {
+  isComponentMounted = true
   fetchList()
+})
+
+onUnmounted(() => {
+  isComponentMounted = false
+  loginLogListRequestId += 1
+  clearLoginLogRequestId += 1
 })
 </script>
 
@@ -309,6 +418,12 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.header-right {
+  display: flex;
+  gap: 8px;
   align-items: center;
 }
 

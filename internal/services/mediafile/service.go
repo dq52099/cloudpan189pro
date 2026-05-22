@@ -50,31 +50,32 @@ func mediaRoot() string {
 	if cfg == nil {
 		return ""
 	}
+
 	return cfg.StoragePath
 }
 
-// DeleteStrmByFullPath 根据磁盘绝对路径删除 STRM 文件及其 DB 记录。
-//
-// 行为：
-//   - 总是先尝试删除磁盘文件（不存在时静默跳过）；
-//   - 如果 fullPath 位于 rootPath 之下，计算相对路径并按精确 path 删除 DB 记录；
-//   - 否则仅删除磁盘文件，不动 DB，避免误删。
-//
-// rootPath 可以为空，表示调用方不清楚根路径，此时只删磁盘。
+// DeleteStrmByFullPath 根据磁盘绝对路径删除媒体根目录内的 STRM 文件及其 DB 记录。
 func (s *service) DeleteStrmByFullPath(ctx context.Context, fullPath string) error {
-	// 清理磁盘文件
-	if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-
-	// 若能从 shared.MediaConfig 推断出 rootPath，则尝试清理 DB 记录
 	relPath := deriveRelativeMediaPath(fullPath)
 	if relPath == "" {
 		return nil
 	}
 
-	if err := s.getDB(ctx).Where("path = ?", relPath).Delete(new(models.MediaFile)).Error; err != nil {
+	root := mediaRoot()
+
+	diskPath, err := mediaFileDiskPath(root, relPath)
+	if err != nil {
+		return err
+	}
+
+	if err = os.Remove(diskPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	if err := s.getDB(ctx).Where("path IN ?", mediaFilePathCandidates(relPath)).Delete(new(models.MediaFile)).Error; err != nil {
 		ctx.Warn("清理 STRM DB 记录失败（磁盘已删除）", zap.String("path", fullPath), zap.Error(err))
+
+		return err
 	}
 
 	return nil
@@ -93,6 +94,7 @@ func deriveRelativeMediaPath(fullPath string) string {
 	if err != nil {
 		return ""
 	}
+
 	absFull, err := filepath.Abs(fullPath)
 	if err != nil {
 		return ""
@@ -106,8 +108,8 @@ func deriveRelativeMediaPath(fullPath string) string {
 	// DB 里 path 使用 slash 风格
 	rel = filepath.ToSlash(rel)
 
-	// rel 必须是下级路径；`..` 出现说明 fullPath 不在 root 之下
-	if strings.HasPrefix(rel, "..") {
+	// rel 必须是下级路径；只有 `..` 或 `../...` 表示 fullPath 不在 root 之下。
+	if rel == ".." || strings.HasPrefix(rel, "../") {
 		return ""
 	}
 

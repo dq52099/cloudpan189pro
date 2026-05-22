@@ -84,6 +84,7 @@ func (h *handler) FileLogList() httpcontext.HandlerFunc {
 				if endTime == nil {
 					endTime = &now
 				}
+
 				durationMs := endTime.UnixMilli() - item.BeginAt.UnixMilli()
 				if durationMs > 0 {
 					item.Duration = durationMs

@@ -33,7 +33,7 @@ export const useUserStore = defineStore('user', () => {
 
   const refresh = () => {
     return getUserInfo().then((res) => {
-      if (res.data) {
+      if (res.code === 200 && res.data) {
         store(res.data)
       }
 
@@ -42,7 +42,8 @@ export const useUserStore = defineStore('user', () => {
   }
 
   const clear = () => {
-    store(initUser())
+    localStg.remove('user')
+    Object.assign(user, initUser())
   }
 
   const get = () => user

@@ -59,28 +59,39 @@ func (h *handler) Search() httpcontext.HandlerFunc {
 			return
 		}
 
-		var allowTopIds []int64
+		userID := ctx.GetInt64(consts.CtxKeyUserId)
+		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
+		userGroupId := ctx.GetInt64(consts.CtxKeyUserGroupId)
 
-		if userGroupId := ctx.GetInt64(consts.CtxKeyUserGroupId); userGroupId != 0 {
-			topIds, err := h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
+		var groupFileIds []int64
+
+		if userGroupId > 0 {
+			groupFileIDs, err := h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
 			if err != nil {
 				ctx.Fail(busCodeQueryTopIdError.WithError(err))
 
 				return
 			}
 
-			if len(topIds) == 0 {
-				ctx.Success(&searchResponse{
-					Total:       0,
-					CurrentPage: req.CurrentPage,
-					PageSize:    req.PageSize,
-					Data:        make([]*searchDTO, 0),
-				})
+			groupFileIds = groupFileIDs
+		}
 
-				return
-			}
+		allowTopIds, err := h.mountPointService.GetAccessibleMountPointIDs(ctx.GetContext(), userID, isAdmin, groupFileIds)
+		if err != nil {
+			ctx.Fail(busCodeQueryTopIdError.WithError(err))
 
-			allowTopIds = topIds
+			return
+		}
+
+		if len(allowTopIds) == 0 {
+			ctx.Success(&searchResponse{
+				Total:       0,
+				CurrentPage: req.CurrentPage,
+				PageSize:    req.PageSize,
+				Data:        make([]*searchDTO, 0),
+			})
+
+			return
 		}
 
 		listReq := &virtualfileSvi.ListRequest{

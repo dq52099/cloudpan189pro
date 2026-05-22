@@ -5,6 +5,7 @@ import (
 	stdCtx "context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -15,6 +16,8 @@ import (
 
 	"go.uber.org/zap"
 )
+
+const maxTelegramResponseSize = 5 << 20
 
 var (
 	shareLinkRegex  = regexp.MustCompile(`cloud\.189\.cn\/t\/([a-zA-Z0-9]+)`)
@@ -29,6 +32,19 @@ func resolveBackendURL() string {
 	}
 
 	return "http://127.0.0.1:12395"
+}
+
+func decodeLimitedJSONResponse(body io.Reader, target interface{}) error {
+	data, err := io.ReadAll(io.LimitReader(body, maxTelegramResponseSize+1))
+	if err != nil {
+		return err
+	}
+
+	if len(data) > maxTelegramResponseSize {
+		return fmt.Errorf("telegram 响应体过大，已拒绝")
+	}
+
+	return json.Unmarshal(data, target)
 }
 
 type Service interface {
@@ -162,8 +178,12 @@ func NewService(botToken, chatID, proxyURL, proxyType, apiURL string, logger *za
 	if proxyURL == "" {
 		proxyURL = os.Getenv("TG_PROXY")
 	}
-	if proxyURL != "" && s.proxyType == "" {
-		proxyType = os.Getenv("TG_PROXY_TYPE")
+
+	if proxyURL != "" {
+		if proxyType == "" {
+			proxyType = os.Getenv("TG_PROXY_TYPE")
+		}
+
 		if proxyType == "" {
 			if strings.HasPrefix(proxyURL, "socks5://") {
 				proxyType = "socks5"
@@ -171,6 +191,7 @@ func NewService(botToken, chatID, proxyURL, proxyType, apiURL string, logger *za
 				proxyType = "http"
 			}
 		}
+
 		s.proxyURL = proxyURL
 		s.proxyType = proxyType
 		s.setupProxy()
@@ -197,8 +218,10 @@ func (s *service) setupProxy() {
 		proxyURL, err := url.Parse(s.proxyURL)
 		if err != nil {
 			s.logger.Warn("Failed to parse proxy URL", zap.String("proxy", s.proxyURL), zap.Error(err))
+
 			return
 		}
+
 		proxyFunc = http.ProxyURL(proxyURL)
 	}
 
@@ -214,6 +237,7 @@ func (s *service) getSocks5Proxy() func(*http.Request) (*url.URL, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		return u, nil
 	}
 }
@@ -221,24 +245,28 @@ func (s *service) getSocks5Proxy() func(*http.Request) (*url.URL, error) {
 func (s *service) IsEnabled() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
 	return s.enabled
 }
 
 func (s *service) GetProxyURL() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
 	return s.proxyURL
 }
 
 func (s *service) GetBotToken() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
 	return s.botToken
 }
 
 func (s *service) GetClient() *http.Client {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
 	return s.client
 }
 
@@ -246,6 +274,7 @@ func (s *service) buildURL(method string) string {
 	if s.apiURL == "" {
 		s.apiURL = "https://api.telegram.org"
 	}
+
 	return fmt.Sprintf("%s/bot%s/%s", s.apiURL, s.botToken, method)
 }
 
@@ -260,10 +289,13 @@ func (s *service) SetMountDependencies(fetcher ShareInfoFetcher, mounter Storage
 
 func (s *service) SendMessage(msg string) error {
 	s.mu.RLock()
+
 	if !s.enabled || s.botToken == "" {
 		s.mu.RUnlock()
+
 		return nil
 	}
+
 	chatID := s.chatID
 	s.mu.RUnlock()
 
@@ -282,15 +314,18 @@ func (s *service) SendMessage(msg string) error {
 
 func (s *service) doRequestWithRetry(method string, body interface{}, maxRetries int) error {
 	var lastErr error
+
 	for i := 0; i < maxRetries; i++ {
 		err := s.doRequest(method, body)
 		if err == nil {
 			return nil
 		}
+
 		lastErr = err
 		s.logger.Warn("Telegram request failed, retrying", zap.Int("retry", i+1), zap.Error(err))
 		time.Sleep(time.Duration(i+1) * time.Second)
 	}
+
 	return lastErr
 }
 
@@ -317,20 +352,23 @@ func (s *service) doRequestWithData(method string, body interface{}) (map[string
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("telegram API returned status: %d", resp.StatusCode)
 	}
 
 	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeLimitedJSONResponse(resp.Body, &result); err != nil {
 		return nil, err
 	}
 
 	okVal, ok := result["ok"].(bool)
 	if !ok || !okVal {
 		description, _ := result["description"].(string)
+
 		return nil, fmt.Errorf("telegram API error: %s", description)
 	}
 
@@ -339,6 +377,7 @@ func (s *service) doRequestWithData(method string, body interface{}) (map[string
 
 func (s *service) SendNotification(title, content string) error {
 	message := fmt.Sprintf("<b>%s</b>\n\n%s", title, content)
+
 	return s.SendMessage(message)
 }
 
@@ -348,6 +387,7 @@ func (s *service) StartBot() error {
 	}
 
 	s.logger.Info("Starting Telegram bot polling...")
+
 	s.wg.Add(1)
 	go s.polling()
 
@@ -391,12 +431,14 @@ func (s *service) fetchUpdates() {
 	jsonBody, err := json.Marshal(params)
 	if err != nil {
 		s.logger.Error("Failed to marshal params", zap.Error(err))
+
 		return
 	}
 
 	req, err := http.NewRequestWithContext(s.ctx, "POST", s.buildURL("getUpdates"), bytes.NewReader(jsonBody))
 	if err != nil {
 		s.logger.Error("Failed to create request", zap.Error(err))
+
 		return
 	}
 
@@ -405,24 +447,30 @@ func (s *service) fetchUpdates() {
 	resp, err := s.client.Do(req)
 	if err != nil {
 		s.logger.Error("Failed to fetch updates", zap.Error(err))
+
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		s.logger.Error("Telegram API returned non-OK status", zap.Int("status", resp.StatusCode))
+
 		return
 	}
 
 	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeLimitedJSONResponse(resp.Body, &result); err != nil {
 		s.logger.Error("Failed to decode response", zap.Error(err))
+
 		return
 	}
 
 	ok, _ := result["ok"].(bool)
 	if !ok {
 		s.logger.Error("Telegram API returned error", zap.Any("result", result))
+
 		return
 	}
 
@@ -523,50 +571,63 @@ func (s *service) handleShareLink(link string, chatID, userID int64) {
 		matches = shareLinkRegex2.FindStringSubmatch(link)
 		if len(matches) < 2 {
 			s.sendMessageToChat(chatID, "无法识别分享链接，请检查链接格式")
+
 			return
 		}
 	}
+
 	shareCode := matches[1]
 
 	// 若已注入分享/挂载依赖，则直接调用内部服务，避免 HTTP 自调
 	if s.shareFetcher != nil && s.mounter != nil {
 		s.handleShareLinkDirect(shareCode, chatID)
+
 		return
 	}
 
 	// 兼容模式：通过本地 HTTP 调用（保留原有行为）
 	apiURL := fmt.Sprintf("%s/api/storage/advance/share_info?shareCode=%s", s.backendURL, shareCode)
+
 	req, err := http.NewRequestWithContext(s.ctx, "GET", apiURL, nil)
 	if err != nil {
 		s.sendMessageToChat(chatID, fmt.Sprintf("解析失败: %v", err))
+
 		return
 	}
 
 	resp, err := s.client.Do(req)
 	if err != nil {
 		s.sendMessageToChat(chatID, fmt.Sprintf("解析失败: %v", err))
+
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeLimitedJSONResponse(resp.Body, &result); err != nil {
 		s.sendMessageToChat(chatID, fmt.Sprintf("解析失败: %v", err))
+
 		return
 	}
 
 	data, ok := result["data"].(map[string]interface{})
 	if !ok {
 		s.sendMessageToChat(chatID, "无法获取分享信息")
+
 		return
 	}
 
 	name, _ := data["name"].(string)
+
 	shareIDFloat, ok := data["shareId"].(float64)
 	if !ok {
 		s.sendMessageToChat(chatID, "无法获取ShareID")
+
 		return
 	}
+
 	shareID := int64(shareIDFloat)
 	fileID, _ := data["id"].(string)
 
@@ -588,60 +649,57 @@ func (s *service) handleShareLink(link string, chatID, userID int64) {
 			},
 		},
 	}
+
 	batchAddJSON, err := json.Marshal(batchAddReq)
 	if err != nil {
 		s.sendMessageToChat(chatID, fmt.Sprintf("创建挂载点失败: %v", err))
+
 		return
 	}
+
 	apiURL = s.backendURL
 	batchAddURL := apiURL + "/api/storage/batch_add"
+
 	req, err = http.NewRequestWithContext(s.ctx, "POST", batchAddURL, bytes.NewReader(batchAddJSON))
 	if err != nil {
 		s.sendMessageToChat(chatID, fmt.Sprintf("创建挂载点失败: %v", err))
+
 		return
 	}
+
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err = s.client.Do(req)
 	if err != nil {
 		s.sendMessageToChat(chatID, fmt.Sprintf("创建挂载点失败: %v", err))
+
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	var batchResult map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&batchResult); err != nil {
+	if err := decodeLimitedJSONResponse(resp.Body, &batchResult); err != nil {
 		s.sendMessageToChat(chatID, fmt.Sprintf("创建挂载点失败: %v", err))
+
 		return
 	}
 
-	if batchResult["code"] == 200 || batchResult["code"] == 0 {
-		results, _ := batchResult["data"].(map[string]interface{})["results"].([]interface{})
-		if len(results) > 0 {
-			firstResult, _ := results[0].(map[string]interface{})
-			if success, ok := firstResult["success"].(bool); ok && success {
-				mountID, _ := firstResult["id"].(float64)
-				msg := fmt.Sprintf(`✅ <b>挂载成功！</b>
+	if mountID, _, ok := parseBatchAddMountResult(batchResult); ok {
+		msg := fmt.Sprintf(`✅ <b>挂载成功！</b>
 
 📁 本地路径: %s
 🔗 ShareID: %d
 🆔 挂载ID: %d
 
-请通过文件管理器查看，或等待后台扫描完成后使用。`, localPath, shareID, int64(mountID))
-				s.sendMessageToChat(chatID, msg)
-				return
-			}
-		}
+请通过文件管理器查看，或等待后台扫描完成后使用。`, localPath, shareID, mountID)
+		s.sendMessageToChat(chatID, msg)
+
+		return
 	}
 
-	errMsg, _ := batchResult["msg"].(string)
-	if errMsg == "" {
-		if results, ok := batchResult["data"].(map[string]interface{})["results"].([]interface{}); ok && len(results) > 0 {
-			if firstResult, ok := results[0].(map[string]interface{}); ok {
-				errMsg, _ = firstResult["error"].(string)
-			}
-		}
-	}
+	_, errMsg, _ := parseBatchAddMountResult(batchResult)
 	s.sendMessageToChat(chatID, fmt.Sprintf("❌ 创建挂载点失败: %s", errMsg))
 }
 
@@ -650,6 +708,7 @@ func (s *service) handleShareLinkDirect(shareCode string, chatID int64) {
 	info, err := s.shareFetcher.GetShareInfo(s.ctx, shareCode, "")
 	if err != nil {
 		s.sendMessageToChat(chatID, fmt.Sprintf("获取分享信息失败: %v", err))
+
 		return
 	}
 
@@ -675,6 +734,7 @@ func (s *service) handleShareLinkDirect(shareCode string, chatID int64) {
 	})
 	if err != nil {
 		s.sendMessageToChat(chatID, fmt.Sprintf("❌ 创建挂载点失败: %v", err))
+
 		return
 	}
 
@@ -726,6 +786,7 @@ func (s *service) ParseAndMountShareLink(shareURL, mountPath string, autoMount b
 			return &MountResult{Success: false, Message: "无法识别分享链接，请检查链接格式"}, nil
 		}
 	}
+
 	shareCode := matches[1]
 
 	// 优先使用内部服务
@@ -735,6 +796,7 @@ func (s *service) ParseAndMountShareLink(shareURL, mountPath string, autoMount b
 
 	// 兼容模式：通过本地 HTTP 调用
 	apiURL := fmt.Sprintf("%s/api/public/share_info?shareCode=%s", s.backendURL, shareCode)
+
 	req, err := http.NewRequestWithContext(s.ctx, "GET", apiURL, nil)
 	if err != nil {
 		return &MountResult{Success: false, Message: fmt.Sprintf("解析失败: %v", err)}, nil
@@ -744,10 +806,12 @@ func (s *service) ParseAndMountShareLink(shareURL, mountPath string, autoMount b
 	if err != nil {
 		return &MountResult{Success: false, Message: fmt.Sprintf("解析失败: %v", err)}, nil
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeLimitedJSONResponse(resp.Body, &result); err != nil {
 		return &MountResult{Success: false, Message: fmt.Sprintf("解析失败: %v", err)}, nil
 	}
 
@@ -760,11 +824,14 @@ func (s *service) ParseAndMountShareLink(shareURL, mountPath string, autoMount b
 	if !nameOk {
 		name = ""
 	}
+
 	shareIDFloat, ok := data["shareId"].(float64)
 	if !ok {
 		return &MountResult{Success: false, Message: "无法获取ShareID"}, nil
 	}
+
 	shareID := int64(shareIDFloat)
+
 	fileID, fileIDOk := data["id"].(string)
 	if !fileIDOk {
 		fileID = ""
@@ -799,54 +866,117 @@ func (s *service) ParseAndMountShareLink(shareURL, mountPath string, autoMount b
 			},
 		},
 	}
+
 	batchAddJSON, err := json.Marshal(batchAddReq)
 	if err != nil {
 		return &MountResult{Success: false, Message: fmt.Sprintf("创建挂载点失败: %v", err)}, nil
 	}
+
 	apiURL = s.backendURL
 	batchAddURL := apiURL + "/api/storage/batch_add"
+
 	req, err = http.NewRequestWithContext(s.ctx, "POST", batchAddURL, bytes.NewReader(batchAddJSON))
 	if err != nil {
 		return &MountResult{Success: false, Message: fmt.Sprintf("创建挂载点失败: %v", err)}, nil
 	}
+
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err = s.client.Do(req)
 	if err != nil {
 		return &MountResult{Success: false, Message: fmt.Sprintf("创建挂载点失败: %v", err)}, nil
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	var batchResult map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&batchResult); err != nil {
+	if err := decodeLimitedJSONResponse(resp.Body, &batchResult); err != nil {
 		return &MountResult{Success: false, Message: fmt.Sprintf("创建挂载点失败: %v", err)}, nil
 	}
 
-	if batchResult["code"] == 200 || batchResult["code"] == 0 {
-		results, _ := batchResult["data"].(map[string]interface{})["results"].([]interface{})
-		if len(results) > 0 {
-			firstResult, _ := results[0].(map[string]interface{})
+	if _, _, ok := parseBatchAddMountResult(batchResult); ok {
+		return &MountResult{
+			Success:   true,
+			Message:   "挂载成功",
+			MountPath: localPath,
+			ShareID:   shareID,
+			FileID:    fileID,
+		}, nil
+	}
+
+	_, errMsg, _ := parseBatchAddMountResult(batchResult)
+
+	return &MountResult{Success: false, Message: fmt.Sprintf("创建挂载点失败: %s", errMsg)}, nil
+}
+
+func parseBatchAddMountResult(batchResult map[string]interface{}) (int64, string, bool) {
+	results := getBatchAddResults(batchResult)
+	if isSuccessfulBatchCode(batchResult["code"]) && len(results) > 0 {
+		if firstResult, ok := results[0].(map[string]interface{}); ok {
 			if success, ok := firstResult["success"].(bool); ok && success {
-				return &MountResult{
-					Success:   true,
-					Message:   "挂载成功",
-					MountPath: localPath,
-					ShareID:   shareID,
-					FileID:    fileID,
-				}, nil
+				mountID, _ := toInt64(firstResult["id"])
+
+				return mountID, "", true
 			}
 		}
 	}
 
 	errMsg, _ := batchResult["msg"].(string)
-	if errMsg == "" {
-		if results, ok := batchResult["data"].(map[string]interface{})["results"].([]interface{}); ok && len(results) > 0 {
-			if firstResult, ok := results[0].(map[string]interface{}); ok {
-				errMsg, _ = firstResult["error"].(string)
-			}
+	if errMsg == "" && len(results) > 0 {
+		if firstResult, ok := results[0].(map[string]interface{}); ok {
+			errMsg, _ = firstResult["error"].(string)
 		}
 	}
-	return &MountResult{Success: false, Message: fmt.Sprintf("创建挂载点失败: %s", errMsg)}, nil
+
+	if errMsg == "" {
+		errMsg = "响应结构异常"
+	}
+
+	return 0, errMsg, false
+}
+
+func getBatchAddResults(batchResult map[string]interface{}) []interface{} {
+	data, ok := batchResult["data"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	results, ok := data["results"].([]interface{})
+	if !ok {
+		return nil
+	}
+
+	return results
+}
+
+func isSuccessfulBatchCode(v interface{}) bool {
+	code, ok := toInt64(v)
+	if !ok {
+		return false
+	}
+
+	return code == 0 || code == 200
+}
+
+func toInt64(v interface{}) (int64, bool) {
+	switch value := v.(type) {
+	case float64:
+		return int64(value), true
+	case int:
+		return int64(value), true
+	case int64:
+		return value, true
+	case json.Number:
+		n, err := value.Int64()
+		if err != nil {
+			return 0, false
+		}
+
+		return n, true
+	default:
+		return 0, false
+	}
 }
 
 // parseAndMountDirect 使用内部服务完成分享解析与挂载。
@@ -876,6 +1006,7 @@ func (s *service) parseAndMountDirect(shareCode, mountPath string, autoMount boo
 		if name == "" {
 			name = shareCode
 		}
+
 		localPath = fmt.Sprintf("/Telegram/%s", name)
 	}
 

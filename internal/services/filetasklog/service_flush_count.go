@@ -76,11 +76,16 @@ func WithFailedCounter(count int) Counter {
 // FlushCount 刷新计数列（在已有值基础上做原子递增）。
 // 列名通过白名单校验，不受外部 Counter 实现污染影响。
 func (s *service) FlushCount(ctx context.Context, key LogKey, counters ...Counter) (err error) {
-	ctx.Debug("刷新文件任务日志计数", zap.Int64("task_id", key.GetID()))
-
 	if len(counters) == 0 {
 		return nil
 	}
+
+	id, err := validateLogKey(key)
+	if err != nil {
+		return err
+	}
+
+	ctx.Debug("刷新文件任务日志计数", zap.Int64("task_id", id))
 
 	countMp := map[string]int{}
 
@@ -88,6 +93,7 @@ func (s *service) FlushCount(ctx context.Context, key LogKey, counters ...Counte
 		name := ct.Name()
 		if _, ok := allowedCounterColumns[name]; !ok {
 			ctx.Warn("忽略未知的计数列", zap.String("column", name))
+
 			continue
 		}
 
@@ -104,9 +110,10 @@ func (s *service) FlushCount(ctx context.Context, key LogKey, counters ...Counte
 		mp[k] = gorm.Expr(gormColumnExpr(k), v)
 	}
 
-	if err = s.getDB(ctx).
-		Where("id = ?", key.GetID()).
-		Updates(mp).Error; err != nil {
+	result := s.getDB(ctx).
+		Where("id = ?", id).
+		Updates(mp)
+	if err = checkTaskLogUpdateResult(ctx, result, id, "文件任务日志不存在"); err != nil {
 		ctx.Error("刷新文件任务日志计数失败", zap.Error(err))
 	}
 

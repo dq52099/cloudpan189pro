@@ -223,10 +223,12 @@ const router = createRouter({
 })
 
 // 路由守卫
-router.beforeEach((to, _, next) => {
+router.beforeEach(async (to, _, next) => {
   const authStore = useAuthStore()
   const userStore = useUserStore()
   const systemStore = useSystemStore()
+
+  await systemStore.ensureLoaded()
 
   // 检查系统是否已初始化
   if (!systemStore.get().initialized && to.name !== 'Init') {
@@ -247,6 +249,20 @@ router.beforeEach((to, _, next) => {
       // 未登录，跳转到登录页
       next('/@login')
       return
+    }
+
+    if (!authStore.isAccessTokenValid) {
+      try {
+        const token = await authStore.doRefreshToken(true)
+        if (!token) {
+          next('/@login')
+          return
+        }
+      } catch (error) {
+        console.error('刷新登录状态失败:', error)
+        next('/@login')
+        return
+      }
     }
 
     // 检查是否需要管理员权限

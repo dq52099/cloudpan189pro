@@ -7,13 +7,23 @@ import (
 	"sort"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
+	"go.uber.org/zap"
 )
 
 // ClearEmptyDir 清理空目录（包括子目录）
 func (s *service) ClearEmptyDir(ctx context.Context, entryPath string) error {
+	validatedPath, err := validateMediaStorageRoot(entryPath)
+	if err != nil {
+		ctx.Error("拒绝清理非法媒体空目录根路径", zap.String("path", entryPath), zap.Error(err))
+
+		return err
+	}
+
+	entryPath = validatedPath
+
 	var dirs []string
 
-	err := filepath.WalkDir(entryPath, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(entryPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

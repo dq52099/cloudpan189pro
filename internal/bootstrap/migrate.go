@@ -1,17 +1,13 @@
 package bootstrap
 
 import (
-	"bytes"
 	"database/sql/driver"
 	"encoding/json"
 	"time"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
-	"golang.org/x/text/encoding/simplifiedchinese"
-	"golang.org/x/text/transform"
 	"gorm.io/gorm"
-	"io"
 )
 
 type SystemSetting struct {
@@ -41,18 +37,22 @@ func (sc SubConfig) Value() (driver.Value, error) {
 	if sc == (SubConfig{}) {
 		return nil, nil
 	}
+
 	return json.Marshal(sc)
 }
 
 func (sc *SubConfig) Scan(value interface{}) error {
 	if value == nil {
 		*sc = SubConfig{}
+
 		return nil
 	}
+
 	bytes, ok := value.([]byte)
 	if !ok {
 		return nil
 	}
+
 	return json.Unmarshal(bytes, sc)
 }
 
@@ -79,12 +79,6 @@ func migrateDB(db *gorm.DB) (err error) {
 		new(models.DailyHotHistory),
 		new(SystemSetting),
 	)
-}
-
-func toUTF8(src string) string {
-	reader := transform.NewReader(bytes.NewReader([]byte(src)), simplifiedchinese.GBK.NewDecoder())
-	result, _ := io.ReadAll(reader)
-	return string(result)
 }
 
 var (

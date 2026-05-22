@@ -258,25 +258,47 @@ const state = reactive({
 // 消息提示
 const message = useMessage()
 
-// 自动刷新定时器
-let refreshTimer: NodeJS.Timeout | null = null
+const AUTO_REFRESH_INTERVAL = 5000
+let refreshTimer: ReturnType<typeof setInterval> | null = null
+let isComponentMounted = false
+let engineStatusRequestId = 0
 
 // 获取任务引擎状态
 const fetchEngineStatus = () => {
+  if (!isComponentMounted) {
+    return
+  }
+
+  const requestId = ++engineStatusRequestId
+
   state.loading = true
 
   getTaskEngineList()
     .then((response) => {
-      if (response.data) {
-        state.engineData = response.data
+      if (!isComponentMounted || requestId !== engineStatusRequestId) {
+        return
       }
+
+      if (response.code === 200 && response.data) {
+        state.engineData = response.data
+
+        return
+      }
+
+      message.error(response.msg || '获取执行日志失败')
     })
     .catch((error) => {
+      if (!isComponentMounted || requestId !== engineStatusRequestId) {
+        return
+      }
+
       console.error('获取执行日志失败:', error)
       message.error(error?.message || '获取执行日志失败')
     })
     .finally(() => {
-      state.loading = false
+      if (isComponentMounted && requestId === engineStatusRequestId) {
+        state.loading = false
+      }
     })
 }
 
@@ -356,9 +378,13 @@ const formatPayload = (payload: number[]) => {
 
 // 启动自动刷新
 const startAutoRefresh = () => {
+  if (!isComponentMounted || refreshTimer) {
+    return
+  }
+
   refreshTimer = setInterval(() => {
     fetchEngineStatus()
-  }, 5000) // 每5秒刷新一次
+  }, AUTO_REFRESH_INTERVAL)
 }
 
 // 停止自动刷新
@@ -371,12 +397,15 @@ const stopAutoRefresh = () => {
 
 // 初始化：仅在组件挂载时加载，满足“切换到该页才请求”
 onMounted(() => {
+  isComponentMounted = true
   fetchEngineStatus()
   startAutoRefresh()
 })
 
 // 清理
 onUnmounted(() => {
+  isComponentMounted = false
+  engineStatusRequestId += 1
   stopAutoRefresh()
 })
 </script>

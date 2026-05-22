@@ -24,6 +24,14 @@ type CreateRequest struct {
 }
 
 func (s *service) Create(ctx context.Context, req *CreateRequest) (int64, error) {
+	if req == nil || req.FileId <= 0 {
+		return 0, errInvalidMountPointFileID
+	}
+
+	if req.TokenId < 0 {
+		return 0, errInvalidMountPointTokenID
+	}
+
 	// 从完整路径中提取名称 - 使用 split "/" 取最后一个
 	parts := strings.Split(req.FullPath, "/")
 	name := parts[len(parts)-1]

@@ -9,7 +9,7 @@ import (
 // Update 更新自动挂载计划字段
 func (s *service) Update(ctx context.Context, id int64, fields ...utils.Field) error {
 	if id <= 0 {
-		return nil
+		return errInvalidAutoIngestPlanID
 	}
 
 	mp := make(map[string]interface{})
@@ -17,10 +17,23 @@ func (s *service) Update(ctx context.Context, id int64, fields ...utils.Field) e
 		mp[field.Key] = field.Value
 	}
 
-	if err := s.getDB(ctx).Where("id = ?", id).Updates(mp).Error; err != nil {
-		ctx.Error("更新自动挂载计划失败", zap.Error(err), zap.Int64("id", id))
+	if len(mp) == 0 {
+		return errEmptyAutoIngestPlanUpdateFields
+	}
 
-		return err
+	result := s.getDB(ctx).Where("id = ?", id).Updates(mp)
+	if result.Error != nil {
+		ctx.Error("更新自动挂载计划失败", zap.Error(result.Error), zap.Int64("id", id))
+
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		if err := s.ensurePlanExists(ctx, id); err != nil {
+			ctx.Error("更新自动挂载计划失败，记录不存在", zap.Int64("id", id))
+
+			return err
+		}
 	}
 
 	return nil

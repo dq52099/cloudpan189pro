@@ -41,8 +41,10 @@ func (h *handler) UsernameLogin() httpcontext.HandlerFunc {
 		}
 
 		var (
-			username = req.Username
-			password = req.Password
+			username      = req.Username
+			password      = req.Password
+			currentUserID = ctx.GetInt64(consts.CtxKeyUserId)
+			isAdmin       = ctx.GetBool(consts.CtxKeyIsAdmin)
 		)
 
 		// 检查账号密码是否完整
@@ -58,7 +60,7 @@ func (h *handler) UsernameLogin() httpcontext.HandlerFunc {
 			}
 		} else if req.Username == "" || req.Password == "" {
 			// 去查询账号密码
-			token, err := h.cloudTokenService.Query(ctx.GetContext(), req.ID)
+			token, err := h.cloudTokenService.QueryAccessible(ctx.GetContext(), req.ID, currentUserID, isAdmin)
 			if err != nil {
 				ctx.Fail(codeQueryFailed.WithError(err))
 
@@ -88,7 +90,8 @@ func (h *handler) UsernameLogin() httpcontext.HandlerFunc {
 			Password: password,
 			Name:     name,
 			ID:       req.ID,
-			UserID:   ctx.GetInt64(consts.CtxKeyUserId),
+			UserID:   currentUserID,
+			IsAdmin:  isAdmin,
 		})
 		if err != nil {
 			ctx.Fail(codeUsernameLoginFailed.WithError(err))

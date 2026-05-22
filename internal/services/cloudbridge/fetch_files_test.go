@@ -51,7 +51,22 @@ var (
 	shareCode                     = os.Getenv(consts.EnvKeyTestShareCode)
 )
 
+func requireTestEnv(t *testing.T, keys ...string) {
+	t.Helper()
+
+	for _, key := range keys {
+		if os.Getenv(key) == "" {
+			t.Skipf("skipping cloudbridge integration test; missing %s", key)
+		}
+	}
+}
+
 func TestGetSubscribeUserFiles(t *testing.T) {
+	requireTestEnv(t,
+		consts.EnvKeyTestSubUserId,
+		consts.EnvKeyTestSubUserResourceCount,
+	)
+
 	mockSvc := bootstrap.NewMockServiceContext()
 
 	ctx := context.NewContext(stdContext.Background())
@@ -73,6 +88,14 @@ func TestGetSubscribeUserFiles(t *testing.T) {
 }
 
 func TestGetSubscribeShareFiles(t *testing.T) {
+	requireTestEnv(t,
+		consts.EnvKeyTestSubUserId,
+		consts.EnvKeyTestSubShareId,
+		consts.EnvKeyTestSubShareFileId,
+		consts.EnvKeyTestSubShareIsFolder,
+		consts.EnvKeyTestSubShareResourceCount,
+	)
+
 	mockSvc := bootstrap.NewMockServiceContext()
 
 	ctx := context.NewContext(stdContext.Background())
@@ -94,6 +117,14 @@ func TestGetSubscribeShareFiles(t *testing.T) {
 }
 
 func TestGetShareFiles(t *testing.T) {
+	requireTestEnv(t,
+		consts.EnvKeyTestShareId,
+		consts.EnvKeyTestShareFileId,
+		consts.EnvKeyTestShareMode,
+		consts.EnvKeyTestShareIsFolder,
+		consts.EnvKeyTestShareResourceCount,
+	)
+
 	mockSvc := bootstrap.NewMockServiceContext()
 
 	ctx := context.NewContext(stdContext.Background())
@@ -115,6 +146,15 @@ func TestGetShareFiles(t *testing.T) {
 }
 
 func TestGetShareFilesWithCode(t *testing.T) {
+	requireTestEnv(t,
+		consts.EnvKeyTestShareIdWithCode,
+		consts.EnvKeyTestShareFileIdWithCode,
+		consts.EnvKeyTestShareModeWithCode,
+		consts.EnvKeyTestShareIsFolderWithCode,
+		consts.EnvKeyTestShareWithCodeResourceCount,
+		consts.EnvKeyTestShareCode,
+	)
+
 	mockSvc := bootstrap.NewMockServiceContext()
 
 	ctx := context.NewContext(stdContext.Background())
@@ -136,6 +176,13 @@ func TestGetShareFilesWithCode(t *testing.T) {
 }
 
 func TestGetCloudFiles(t *testing.T) {
+	requireTestEnv(t,
+		consts.EnvKeyTestAccessToken,
+		consts.EnvKeyTestAccessExpire,
+		consts.EnvKeyTestPersonFileId,
+		consts.EnvKeyTestPersonFileCount,
+	)
+
 	mockSvc := bootstrap.NewMockServiceContext()
 
 	ctx := context.NewContext(stdContext.Background())
@@ -157,6 +204,14 @@ func TestGetCloudFiles(t *testing.T) {
 }
 
 func TestGetCloudFamilyFiles(t *testing.T) {
+	requireTestEnv(t,
+		consts.EnvKeyTestAccessToken,
+		consts.EnvKeyTestAccessExpire,
+		consts.EnvKeyTestFamilyFamilyId,
+		consts.EnvKeyTestFamilyFileId,
+		consts.EnvKeyTestFamilyFileCount,
+	)
+
 	mockSvc := bootstrap.NewMockServiceContext()
 
 	ctx := context.NewContext(stdContext.Background())

@@ -6,7 +6,8 @@ import (
 )
 
 type GroupCountByTopIdRequest struct {
-	TopId int64
+	TopId     int64
+	TopIdList []int64
 }
 
 type GroupCountByTopId struct {
@@ -17,8 +18,21 @@ type GroupCountByTopId struct {
 func (s *service) GroupCountByTopId(ctx context.Context, req *GroupCountByTopIdRequest) ([]*GroupCountByTopId, error) {
 	query := s.getDB(ctx).Select("top_id, COUNT(*) as count").Where("top_id != id").Group("top_id")
 
-	if req.TopId != 0 {
+	if req != nil && req.TopId != 0 {
 		query = query.Where("top_id = ?", req.TopId)
+	}
+
+	if req != nil && req.TopIdList != nil {
+		topIds, err := normalizeVirtualFileIDs(req.TopIdList)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(topIds) == 0 {
+			query = query.Where("1 = 0")
+		} else {
+			query = query.Where("top_id IN ?", topIds)
+		}
 	}
 
 	var result []*GroupCountByTopId

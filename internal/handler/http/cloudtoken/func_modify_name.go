@@ -1,6 +1,7 @@
 package cloudtoken
 
 import (
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
 )
@@ -29,6 +30,9 @@ func (h *handler) ModifyName() httpcontext.HandlerFunc {
 
 			return
 		}
+
+		req.UserID = ctx.GetInt64(consts.CtxKeyUserId)
+		req.IsAdmin = ctx.GetBool(consts.CtxKeyIsAdmin)
 
 		if err := h.cloudTokenService.ModifyName(ctx.GetContext(), req); err != nil {
 			ctx.Fail(codeModifyNameFailed.WithError(err))

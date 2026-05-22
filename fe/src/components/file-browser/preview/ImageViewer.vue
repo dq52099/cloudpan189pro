@@ -86,7 +86,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { NIcon, NSpin, NButton, NButtonGroup, NSpace, useMessage } from 'naive-ui'
 import {
   ImageOutline,
@@ -131,6 +131,8 @@ const imageInfo = ref<{
   width: number
   height: number
 } | null>(null)
+let isComponentMounted = false
+let sourceRequestId = 0
 
 // 计算属性
 const imageStyle = computed(() => ({
@@ -294,23 +296,46 @@ const handleKeydown = (event: KeyboardEvent) => {
 // 若传入 file，则通过接口生成直链
 const initSource = () => {
   if (!props.file) return
+  const fileId = props.file.id
+  const requestId = ++sourceRequestId
+
   loading.value = true
   error.value = false
   innerImageUrl.value = ''
-  createDownloadUrl({ fileId: props.file.id })
+  createDownloadUrl({ fileId })
     .then((res) => {
+      if (
+        !isComponentMounted ||
+        requestId !== sourceRequestId ||
+        !props.file ||
+        props.file.id !== fileId
+      ) {
+        return
+      }
+
       if (res.code === 200 && res.data?.downloadUrl) {
         innerImageUrl.value = res.data.downloadUrl
         // 加载完成由 img 的 @load/@error 驱动
       } else {
         error.value = true
+        loading.value = false
         errorMessage.value = res.msg || '获取图片链接失败'
         message.error(errorMessage.value)
       }
     })
     .catch((e) => {
+      if (
+        !isComponentMounted ||
+        requestId !== sourceRequestId ||
+        !props.file ||
+        props.file.id !== fileId
+      ) {
+        return
+      }
+
       console.error('createDownloadUrl error:', e)
       error.value = true
+      loading.value = false
       errorMessage.value = '获取图片链接失败'
       message.error(errorMessage.value)
     })
@@ -321,6 +346,7 @@ const initSource = () => {
 
 // 生命周期
 onMounted(() => {
+  isComponentMounted = true
   document.addEventListener('keydown', handleKeydown)
   // 如果传入 file，则初始化直链
   if (props.file) {
@@ -329,13 +355,14 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  isComponentMounted = false
+  sourceRequestId += 1
   document.removeEventListener('keydown', handleKeydown)
   document.removeEventListener('mousemove', handleMouseMove)
   document.removeEventListener('mouseup', handleMouseUp)
 })
 
 // 监听 file 切换时重新拉取直链
-import { watch } from 'vue'
 watch(
   () => props.file?.id,
   () => {
@@ -343,6 +370,11 @@ watch(
       // 重置视图并刷新
       resetZoom()
       initSource()
+    } else {
+      sourceRequestId += 1
+      innerImageUrl.value = ''
+      loading.value = false
+      error.value = false
     }
   }
 )

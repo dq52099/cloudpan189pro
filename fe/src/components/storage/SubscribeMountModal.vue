@@ -13,6 +13,7 @@
             placeholder="请输入订阅号ID"
             clearable
             size="large"
+            :disabled="searchLoading"
             @keyup.enter="handleSearchUser"
           >
             <template #prefix>
@@ -23,7 +24,7 @@
             type="primary"
             size="large"
             :loading="searchLoading"
-            :disabled="!isValidSubscribeUserId"
+            :disabled="!isValidSubscribeUserId || searchLoading"
             @click="handleSearchUser"
             style="margin-top: 16px; width: 100%"
           >
@@ -57,6 +58,7 @@
               v-model:value="resourceState.searchKeyword"
               placeholder="搜索资源名称"
               clearable
+              :disabled="resourceState.loading || resourceState.loadingAll"
               @keyup.enter="handleSearchResource"
               style="width: 200px"
             >
@@ -64,10 +66,19 @@
                 ><n-icon :size="16"><SearchOutline /></n-icon
               ></template>
             </n-input>
-            <n-button type="primary" @click="handleSearchResource" style="margin-left: 8px"
+            <n-button
+              type="primary"
+              :disabled="resourceState.loading || resourceState.loadingAll"
+              @click="handleSearchResource"
+              style="margin-left: 8px"
               >搜索</n-button
             >
-            <n-button @click="handleResetResourceSearch" style="margin-left: 8px">重置</n-button>
+            <n-button
+              :disabled="resourceState.loading || resourceState.loadingAll"
+              @click="handleResetResourceSearch"
+              style="margin-left: 8px"
+              >重置</n-button
+            >
           </div>
           <div class="batch-select-actions">
             <n-button
@@ -124,17 +135,20 @@
 
     <!-- 操作按钮 -->
     <div class="modal-actions">
-      <n-button v-if="currentStep === 2" @click="handleBackToStep1">
+      <n-button v-if="currentStep === 2" :disabled="bindLoading" @click="handleBackToStep1">
         <template #icon
           ><n-icon><ArrowBackOutline /></n-icon
         ></template>
         返回上一步
       </n-button>
-      <n-button @click="handleCancel">取消</n-button>
+      <n-button :disabled="bindLoading" @click="handleCancel">取消</n-button>
       <n-button
         v-if="currentStep === 2"
         type="primary"
-        :disabled="!hasSelectedResources"
+        :loading="bindLoading"
+        :disabled="
+          !hasSelectedResources || bindLoading || resourceState.loading || resourceState.loadingAll
+        "
         @click="handleConfirm"
       >
         绑定挂载点
@@ -144,7 +158,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, h, onMounted } from 'vue'
+import { ref, computed, h, onMounted, onUnmounted } from 'vue'
 import {
   NIcon,
   NText,
@@ -194,7 +208,21 @@ const currentStep = ref(1)
 // 第一步：用户搜索状态
 const subscribeUserId = ref('')
 const searchLoading = ref(false)
+const bindLoading = ref(false)
 const isValidSubscribeUserId = computed(() => subscribeUserId.value.trim().length > 0)
+let operationVersion = 0
+let isComponentMounted = false
+
+const isCurrentOperation = (version: number) => {
+  return isComponentMounted && operationVersion === version
+}
+
+const invalidatePendingWork = () => {
+  operationVersion++
+  searchLoading.value = false
+  bindLoading.value = false
+  invalidateRequests()
+}
 
 // 第二步：资源管理
 const {
@@ -204,33 +232,75 @@ const {
   hasResourceList,
   fetchResourceList,
   fetchAllResources,
-  handleSearchResource,
-  handleResetResourceSearch,
-  handleResourcePageChange,
-  handleResourcePageSizeChange,
+  handleSearchResource: searchResource,
+  handleResetResourceSearch: resetResourceSearch,
+  handleResourcePageChange: changeResourcePage,
+  handleResourcePageSizeChange: changeResourcePageSize,
+  invalidateRequests,
   resetState: resetResourceState,
   checkedRowKeys,
   handleCheckedRowKeysChange,
-} = useSubscribeResource(subscribeUserId, message)
+} = useSubscribeResource(subscribeUserId, message, () => isComponentMounted)
 
 // 判断是否已加载全部资源
 const isAllLoaded = ref(false)
 
 // 判断是否已加载全部资源
 const isAllLoadedComputed = computed(() => {
-  return isAllLoaded.value || (resourceState.list.length > 0 && resourcePagination.itemCount > 0 && 
-         resourceState.list.length >= resourcePagination.itemCount)
+  return (
+    isAllLoaded.value ||
+    (resourceState.list.length > 0 &&
+      resourcePagination.itemCount > 0 &&
+      resourceState.list.length >= resourcePagination.itemCount)
+  )
 })
 
 // 获取全部资源
 const handleFetchAllResources = async () => {
+  if (resourceState.loadingAll || resourceState.loading) {
+    return
+  }
+
+  const currentOperation = operationVersion
   const success = await fetchAllResources()
-  if (success) {
+
+  if (isCurrentOperation(currentOperation) && success) {
     isAllLoaded.value = true
     // 自动勾选所有资源
     resourceState.selected = [...resourceState.list]
     message.success(`已加载全部 ${resourceState.list.length} 个资源并全选`)
   }
+}
+
+// 搜索资源
+const handleSearchResource = () => {
+  if (resourceState.loading || resourceState.loadingAll) {
+    return
+  }
+
+  isAllLoaded.value = false
+  searchResource()
+}
+
+// 重置资源搜索
+const handleResetResourceSearch = () => {
+  if (resourceState.loading || resourceState.loadingAll) {
+    return
+  }
+
+  isAllLoaded.value = false
+  resetResourceSearch()
+}
+
+// 分页处理
+const handleResourcePageChange = (page: number) => {
+  isAllLoaded.value = false
+  changeResourcePage(page)
+}
+
+const handleResourcePageSizeChange = (pageSize: number) => {
+  isAllLoaded.value = false
+  changeResourcePageSize(pageSize)
 }
 
 // 表格列定义
@@ -245,7 +315,10 @@ const resourceColumns: DataTableColumns<ShareResourceInfo> = [
     width: 80,
     align: 'center',
     ellipsis: { tooltip: true },
-    render: (_, index) => isAllLoadedComputed.value ? index + 1 : (resourcePagination.page - 1) * resourcePagination.pageSize + index + 1,
+    render: (_, index) =>
+      isAllLoadedComputed.value
+        ? index + 1
+        : (resourcePagination.page - 1) * resourcePagination.pageSize + index + 1,
   },
   {
     title: '资源名称',
@@ -283,33 +356,62 @@ const resourceColumns: DataTableColumns<ShareResourceInfo> = [
 
 // 搜索用户资源
 const handleSearchUser = async () => {
+  if (!isComponentMounted) {
+    return
+  }
+
+  if (searchLoading.value) {
+    return
+  }
+
   if (!isValidSubscribeUserId.value) {
     message.warning('请输入订阅用户ID')
     return
   }
+
+  operationVersion++
+  const currentOperation = operationVersion
+
+  isAllLoaded.value = false
   searchLoading.value = true
   const success = await fetchResourceList(true)
-  if (success) {
+
+  if (isCurrentOperation(currentOperation) && success) {
     currentStep.value = 2
   }
-  searchLoading.value = false
+
+  if (isCurrentOperation(currentOperation)) {
+    searchLoading.value = false
+  }
 }
 
 // 返回上一步
 const handleBackToStep1 = () => {
+  invalidatePendingWork()
   currentStep.value = 1
+  isAllLoaded.value = false
   resourceState.selected = []
 }
 
 // 取消
 const handleCancel = () => {
+  invalidatePendingWork()
   emit('cancel')
 }
 
 // 确认挂载
 const handleConfirm = () => {
+  if (bindLoading.value) {
+    return
+  }
+
   if (!hasSelectedResources.value) {
     message.warning('请选择要挂载的资源')
+    return
+  }
+
+  if (resourceState.loading || resourceState.loadingAll) {
+    message.warning('资源加载中，请稍后再试')
     return
   }
   // 获取用户名
@@ -323,11 +425,21 @@ const handleConfirm = () => {
     userName: userName,
   }))
 
-  mountPointBind.show(itemsToMount).then((payload) => {
-    if (payload && payload.length > 0) {
-      handleMountBindSuccess()
-    }
-  })
+  const currentOperation = ++operationVersion
+  bindLoading.value = true
+
+  mountPointBind
+    .show(itemsToMount)
+    .then((payload) => {
+      if (isCurrentOperation(currentOperation) && payload && payload.length > 0) {
+        handleMountBindSuccess()
+      }
+    })
+    .finally(() => {
+      if (isCurrentOperation(currentOperation)) {
+        bindLoading.value = false
+      }
+    })
 }
 
 // 挂载成功回调
@@ -340,12 +452,21 @@ const resetAllState = () => {
   currentStep.value = 1
   subscribeUserId.value = ''
   searchLoading.value = false
+  bindLoading.value = false
+  isAllLoaded.value = false
   resetResourceState()
 }
 
 // 组件挂载时重置状态
 onMounted(() => {
+  isComponentMounted = true
+  operationVersion++
   resetAllState()
+})
+
+onUnmounted(() => {
+  isComponentMounted = false
+  invalidatePendingWork()
 })
 </script>
 

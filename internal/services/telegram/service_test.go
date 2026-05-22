@@ -51,7 +51,7 @@ func TestSendMessage(t *testing.T) {
 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"ok":true,"result":{}}`))
+			_, _ = w.Write([]byte(`{"ok":true,"result":{}}`))
 		}))
 		defer server.Close()
 
@@ -81,7 +81,7 @@ func TestSendMessage(t *testing.T) {
 	t.Run("API返回错误", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte(`{"ok":false,"description":"Bad Request"}`))
+			_, _ = w.Write([]byte(`{"ok":false,"description":"Bad Request"}`))
 		}))
 		defer server.Close()
 
@@ -100,7 +100,7 @@ func TestSendNotification(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"ok":true,"result":{}}`))
+			_, _ = w.Write([]byte(`{"ok":true,"result":{}}`))
 		}))
 		defer server.Close()
 
@@ -120,7 +120,7 @@ func TestTestConnection(t *testing.T) {
 			assert.Contains(t, r.URL.Path, "/sendMessage")
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"ok":true,"result":{}}`))
+			_, _ = w.Write([]byte(`{"ok":true,"result":{}}`))
 		}))
 		defer server.Close()
 
@@ -172,10 +172,12 @@ func TestDoRequestWithRetry(t *testing.T) {
 
 	t.Run("第一次成功", func(t *testing.T) {
 		callCount := 0
+
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			callCount++
+
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"ok":true}`))
+			_, _ = w.Write([]byte(`{"ok":true}`))
 		}))
 		defer server.Close()
 
@@ -189,8 +191,10 @@ func TestDoRequestWithRetry(t *testing.T) {
 
 	t.Run("重试3次后失败", func(t *testing.T) {
 		callCount := 0
+
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			callCount++
+
 			w.WriteHeader(http.StatusInternalServerError)
 		}))
 		defer server.Close()
@@ -202,6 +206,27 @@ func TestDoRequestWithRetry(t *testing.T) {
 		assert.Error(t, err)
 		// SendMessage 内部调用 doRequestWithRetry，最多重试3次
 	})
+}
+
+func TestDoRequestWithDataRejectsOversizedResponse(t *testing.T) {
+	logger := zap.NewNop()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(strings.Repeat("x", maxTelegramResponseSize+1)))
+	}))
+	defer server.Close()
+
+	svc := NewService("test-token", "123456", "", "", "", logger).(*service)
+	svc.apiURL = server.URL
+
+	result, err := svc.doRequestWithData("sendMessage", map[string]interface{}{
+		"chat_id": "123456",
+		"text":    "test",
+	})
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "响应体过大")
 }
 
 func TestIsEnabled(t *testing.T) {
@@ -246,13 +271,75 @@ func TestStopBot(t *testing.T) {
 	svc.StopBot()
 }
 
+func TestParseBatchAddMountResultHandlesJSONDecodedNumberCode(t *testing.T) {
+	mountID, errMsg, ok := parseBatchAddMountResult(map[string]interface{}{
+		"code": float64(200),
+		"data": map[string]interface{}{
+			"results": []interface{}{
+				map[string]interface{}{
+					"success": true,
+					"id":      float64(42),
+				},
+			},
+		},
+	})
+
+	assert.True(t, ok)
+	assert.Empty(t, errMsg)
+	assert.Equal(t, int64(42), mountID)
+}
+
+func TestParseAndMountShareLinkHandlesMalformedBatchAddResponse(t *testing.T) {
+	logger := zap.NewNop()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.URL.Path {
+		case "/api/public/share_info":
+			_, _ = w.Write([]byte(`{"data":{"name":"Shared","shareId":123,"id":"file-id"}}`))
+		case "/api/storage/batch_add":
+			_, _ = w.Write([]byte(`{"code":200,"data":null}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService("token", "chat", "", "", "", logger).(*service)
+	svc.backendURL = server.URL
+
+	result, err := svc.ParseAndMountShareLink("https://cloud.189.cn/t/abcDEF", "", true)
+	assert.NoError(t, err)
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Message, "响应结构异常")
+}
+
+func TestParseAndMountShareLinkRejectsOversizedShareInfoResponse(t *testing.T) {
+	logger := zap.NewNop()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(strings.Repeat("x", maxTelegramResponseSize+1)))
+	}))
+	defer server.Close()
+
+	svc := NewService("token", "chat", "", "", "", logger).(*service)
+	svc.backendURL = server.URL
+
+	result, err := svc.ParseAndMountShareLink("https://cloud.189.cn/t/abcDEF", "", false)
+	assert.NoError(t, err)
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Message, "响应体过大")
+}
+
 func TestConcurrentOperations(t *testing.T) {
 	logger := zap.NewNop()
 
 	t.Run("并发发送消息", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"ok":true}`))
+			_, _ = w.Write([]byte(`{"ok":true}`))
 		}))
 		defer server.Close()
 
@@ -261,10 +348,12 @@ func TestConcurrentOperations(t *testing.T) {
 
 		// 并发发送
 		done := make(chan bool, 10)
+
 		for i := 0; i < 10; i++ {
 			go func() {
 				err := svc.SendMessage("test")
 				assert.NoError(t, err)
+
 				done <- true
 			}()
 		}

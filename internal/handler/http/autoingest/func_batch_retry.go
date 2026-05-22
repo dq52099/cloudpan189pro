@@ -29,32 +29,45 @@ func (h *handler) BatchRetry() httpcontext.HandlerFunc {
 		req := new(BatchRetryRequest)
 		if err := ctx.ShouldBindJSON(req); err != nil {
 			ctx.AbortWithInvalidParams(err)
+
 			return
 		}
 
-		plans, err := h.planService.ListByIDs(ctx.GetContext(), req.IDs)
+		requestIDs, err := normalizeBatchIDs(req.IDs)
 		if err != nil {
-			ctx.Fail(codePlanListFailed.WithError(err))
+			ctx.AbortWithInvalidParams(err)
+
 			return
 		}
+
+		plans, err := h.planService.ListByIDs(ctx.GetContext(), requestIDs)
+		if err != nil {
+			ctx.Fail(codePlanListFailed.WithError(err))
+
+			return
+		}
+
+		accessiblePlans, initialFailCount := filterAccessiblePlans(ctx, requestIDs, plans)
 
 		var (
 			wg         sync.WaitGroup
 			successCnt int
-			failCnt    int
+			failCnt    = initialFailCount
 			mu         sync.Mutex
 			sem        = make(chan struct{}, maxBatchConcurrency)
 		)
 
-		for _, plan := range plans {
+		for _, plan := range accessiblePlans {
 			if plan.SourceType != autoingest.SourceTypeSubscribe {
 				mu.Lock()
 				failCnt++
 				mu.Unlock()
+
 				continue
 			}
 
 			wg.Add(1)
+
 			sem <- struct{}{}
 
 			go func(planId int64) {
@@ -65,6 +78,7 @@ func (h *handler) BatchRetry() httpcontext.HandlerFunc {
 					mu.Lock()
 					failCnt++
 					mu.Unlock()
+
 					return
 				}
 
@@ -72,6 +86,7 @@ func (h *handler) BatchRetry() httpcontext.HandlerFunc {
 					mu.Lock()
 					failCnt++
 					mu.Unlock()
+
 					return
 				}
 
@@ -79,11 +94,13 @@ func (h *handler) BatchRetry() httpcontext.HandlerFunc {
 					PlanId:  planId,
 					IsRetry: true,
 				}
+
 				body, err := json.Marshal(taskReq)
 				if err != nil {
 					mu.Lock()
 					failCnt++
 					mu.Unlock()
+
 					return
 				}
 
@@ -91,6 +108,7 @@ func (h *handler) BatchRetry() httpcontext.HandlerFunc {
 					mu.Lock()
 					failCnt++
 					mu.Unlock()
+
 					return
 				}
 

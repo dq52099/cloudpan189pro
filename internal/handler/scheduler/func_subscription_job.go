@@ -113,6 +113,7 @@ func (s *SubscriptionScheduler) tick() {
 	}
 
 	s.ctx.Info("执行每日订阅任务...", zap.Time("scheduled_at", s.nextRunAt))
+
 	if err := s.subscriptionSvc.RunSubscriptionJob(); err != nil {
 		s.ctx.Error("订阅任务执行失败", zap.Error(err))
 	}
@@ -125,7 +126,9 @@ func (s *SubscriptionScheduler) computeNextRun(after time.Time) time.Time {
 	schedule, err := cron.ParseStandard(s.cronExpr)
 	if err != nil {
 		s.ctx.Warn("解析订阅 cron 失败，使用默认 24h 间隔", zap.String("cron", s.cronExpr), zap.Error(err))
+
 		return after.Add(24 * time.Hour)
 	}
+
 	return schedule.Next(after)
 }

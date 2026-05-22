@@ -81,7 +81,11 @@ func (s *FileTaskLogCheckScheduler) doJob() bool {
 		ctx.Debug("文件刷新执行器查询到超时任务数量", zap.Int("count", len(tasks)))
 
 		for _, task := range tasks {
-			_ = s.fileTaskLogService.Failed(ctx, filetasklogSvi.NewLogID(task.ID), utils.WithField("result", fmt.Sprintf("任务执行超时, 系统强制回收任务, 回收前状态: %s", task.Status)))
+			if err := s.fileTaskLogService.Failed(ctx, filetasklogSvi.NewLogID(task.ID), utils.WithField("result", fmt.Sprintf("任务执行超时, 系统强制回收任务, 回收前状态: %s", task.Status))); err != nil {
+				ctx.Error("回收超时任务失败", zap.Int64("task_id", task.ID), zap.Error(err))
+
+				continue
+			}
 
 			ctx.Info("发现超时任务", zap.Int64("task_id", task.ID))
 		}

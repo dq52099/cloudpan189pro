@@ -65,6 +65,10 @@ export interface ModifySettingAdditionRequest {
   multipleStreamThreadCount?: number
   multipleStreamChunkSize?: number
   taskThreadCount?: number
+  workerCount?: number
+  enableStorageAutoRefresh?: boolean
+  webdavUserStrmOnly?: boolean
+  webdavAllowedSuffixes?: string[]
 }
 
 export const modifySettingAddition = (data: ModifySettingAdditionRequest): Promise<ApiResponse> => {

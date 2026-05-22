@@ -2,6 +2,7 @@ package setting
 
 import (
 	"errors"
+	"strings"
 
 	"go.uber.org/zap"
 
@@ -16,6 +17,17 @@ type InitSystemRequest struct {
 }
 
 func (s *service) InitSystem(ctx context.Context, req *InitSystemRequest) error {
+	if req == nil {
+		return errInvalidInitSystemRequest
+	}
+
+	title := strings.TrimSpace(req.Title)
+	baseURL := strings.TrimSpace(req.BaseURL)
+
+	if title == "" || baseURL == "" {
+		return errInvalidInitSystemRequest
+	}
+
 	setting, err := s.Query(ctx)
 	if err != nil {
 		ctx.Error("设置查询失败", zap.Error(err))
@@ -30,9 +42,9 @@ func (s *service) InitSystem(ctx context.Context, req *InitSystemRequest) error 
 	}
 
 	return s.Update(ctx,
-		utils.WithField("title", req.Title),
+		utils.WithField("title", title),
 		utils.WithField("enable_auth", req.EnableAuth),
-		utils.WithField("base_url", req.BaseURL),
+		utils.WithField("base_url", baseURL),
 		utils.WithField("initialized", true),
 	)
 }

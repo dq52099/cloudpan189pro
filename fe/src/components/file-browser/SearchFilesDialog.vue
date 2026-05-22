@@ -8,15 +8,22 @@
     @update:show="onUpdateShow"
   >
     <div class="search-toolbar">
-      <n-checkbox v-model:checked="globalSearch">全局搜索</n-checkbox>
+      <n-checkbox v-model:checked="globalSearch" :disabled="searching">全局搜索</n-checkbox>
       <n-input
         v-model:value="keyword"
         placeholder="请输入搜索关键词"
         clearable
+        :disabled="searching"
         @keyup.enter="doSearch"
         class="keyword-input"
       />
-      <n-button type="primary" secondary :loading="searching" @click="doSearch">
+      <n-button
+        type="primary"
+        secondary
+        :loading="searching"
+        :disabled="searching"
+        @click="doSearch"
+      >
         <template #icon>
           <n-icon :component="SearchOutline" />
         </template>
@@ -44,14 +51,18 @@
       <div class="pagination">
         <div class="summary">共 {{ total }} 条结果，第 {{ currentPage }} / {{ totalPages }} 页</div>
         <div class="pager">
-          <n-button size="small" tertiary :disabled="currentPage <= 1" @click="prevPage"
+          <n-button
+            size="small"
+            tertiary
+            :disabled="searching || currentPage <= 1"
+            @click="prevPage"
             >上一页</n-button
           >
           <n-button
             size="small"
             type="primary"
             ghost
-            :disabled="currentPage >= totalPages"
+            :disabled="searching || currentPage >= totalPages"
             @click="nextPage"
             >下一页</n-button
           >
@@ -62,7 +73,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed, h } from 'vue'
+import { ref, watch, computed, h, onUnmounted } from 'vue'
 import {
   NModal,
   NCheckbox,
@@ -106,26 +117,59 @@ const total = ref<number>(0)
 const currentPage = ref<number>(1)
 const pageSize = ref<number>(props.pageSize ?? 15)
 
+let dialogVersion = 0
+let searchRequestId = 0
+
 const totalPages = computed(() => {
   if (total.value === 0) return 1
   return Math.max(1, Math.ceil(total.value / pageSize.value))
 })
+
+const invalidateSearchRequests = () => {
+  dialogVersion += 1
+  searchRequestId += 1
+}
+
+const isLatestSearch = (targetDialogVersion: number, targetSearchRequestId: number) => {
+  return targetDialogVersion === dialogVersion && targetSearchRequestId === searchRequestId
+}
+
+const resetSearchState = () => {
+  currentPage.value = 1
+  list.value = []
+  total.value = 0
+  searching.value = false
+}
+
+const resetDialogState = () => {
+  invalidateSearchRequests()
+  resetSearchState()
+}
+
+const closeDialogState = () => {
+  invalidateSearchRequests()
+  searching.value = false
+}
 
 watch(
   () => props.show,
   (val) => {
     show.value = val
     if (val) {
-      // 重置分页、列表
-      currentPage.value = 1
-      list.value = []
-      total.value = 0
+      resetDialogState()
+    } else {
+      closeDialogState()
     }
   }
 )
 
 const onUpdateShow = (val: boolean) => {
   show.value = val
+  if (val) {
+    resetDialogState()
+  } else {
+    closeDialogState()
+  }
   emits('update:show', val)
 }
 
@@ -176,6 +220,8 @@ const rowProps = (row: FileSearchItem) => {
     style: 'cursor: pointer;',
     onClick: () => {
       emits('select', row)
+      show.value = false
+      closeDialogState()
       emits('update:show', false)
     },
   }
@@ -204,10 +250,16 @@ const buildQuery = () => {
 }
 
 const doSearch = () => {
-  searching.value = true
   const query = buildQuery()
+  const currentDialogVersion = dialogVersion
+  const currentSearchRequestId = searchRequestId + 1
+  searchRequestId = currentSearchRequestId
+  searching.value = true
+
   searchFiles(query)
     .then((res) => {
+      if (!isLatestSearch(currentDialogVersion, currentSearchRequestId)) return
+
       if (res.code === 200 && res.data) {
         const data = res.data as FileSearchResponse
         list.value = data.data || []
@@ -219,27 +271,35 @@ const doSearch = () => {
       }
     })
     .catch((err) => {
+      if (!isLatestSearch(currentDialogVersion, currentSearchRequestId)) return
+
       console.error('搜索失败: ', err)
       message.error('搜索失败')
     })
     .finally(() => {
+      if (!isLatestSearch(currentDialogVersion, currentSearchRequestId)) return
+
       searching.value = false
     })
 }
 
 const prevPage = () => {
-  if (currentPage.value > 1) {
+  if (!searching.value && currentPage.value > 1) {
     currentPage.value -= 1
     doSearch()
   }
 }
 
 const nextPage = () => {
-  if (currentPage.value < totalPages.value) {
+  if (!searching.value && currentPage.value < totalPages.value) {
     currentPage.value += 1
     doSearch()
   }
 }
+
+onUnmounted(() => {
+  closeDialogState()
+})
 </script>
 
 <style scoped>

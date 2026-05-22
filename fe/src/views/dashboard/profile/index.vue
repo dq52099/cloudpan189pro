@@ -109,7 +109,6 @@ const handleChangePassword = () => {
 // 修改密码成功回调
 const handleChangePasswordSuccess = () => {
   // 密码修改成功后的处理，组件内部已经处理了成功提示和退出登录
-  console.log('密码修改成功')
 }
 </script>
 

@@ -87,6 +87,7 @@ func (h *handler) CreateSubscribePlan() httpcontext.HandlerFunc {
 			if rs.AutoRefreshDays <= 0 {
 				rs.AutoRefreshDays = 7
 			}
+
 			if rs.RefreshInterval < 30 {
 				rs.RefreshInterval = 30
 			}

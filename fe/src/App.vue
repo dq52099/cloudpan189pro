@@ -22,26 +22,16 @@ import {
   NNotificationProvider,
   NGlobalStyle,
 } from 'naive-ui'
-import { useThemeStore, useSystemStore, useUserStore } from '@/stores'
+import { useThemeStore } from '@/stores'
 import { createTheme, createThemeOverrides } from '@/theme'
-import router from './router'
 
 const themeStore = useThemeStore()
-const systemStore = useSystemStore()
-const userStore = useUserStore()
 
 const theme = computed(() => createTheme(themeStore.isDark))
 const themeOverrides = computed(() => createThemeOverrides(themeStore.isDark))
 
-// 应用启动时初始化主题和启动系统信息自动刷新
+// 应用启动时初始化主题
 onMounted(() => {
   themeStore.initTheme()
-  systemStore.load()
-  userStore.load()
-  systemStore.refresh().then((res) => {
-    if (!res?.data?.initialized) {
-      router.replace('/@init')
-    }
-  })
 })
 </script>

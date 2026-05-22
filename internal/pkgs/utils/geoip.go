@@ -3,12 +3,15 @@ package utils
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 )
+
+const maxGeoIPResponseSize = 64 << 10
 
 // geoIPCache 地理信息缓存，避免对同一 IP 反复请求远程服务。
 type geoIPEntry struct {
@@ -70,9 +73,16 @@ func fetchGeoLocation(ip string) string {
 	if err != nil {
 		return "-"
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
+		return "-"
+	}
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxGeoIPResponseSize+1))
+	if err != nil || len(data) > maxGeoIPResponseSize {
 		return "-"
 	}
 
@@ -83,7 +93,7 @@ func fetchGeoLocation(ip string) string {
 		City       string `json:"city"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	if err := json.Unmarshal(data, &body); err != nil {
 		return "-"
 	}
 
@@ -92,6 +102,7 @@ func fetchGeoLocation(ip string) string {
 	}
 
 	parts := make([]string, 0, 3)
+
 	for _, p := range []string{body.Country, body.RegionName, body.City} {
 		p = strings.TrimSpace(p)
 		if p != "" {

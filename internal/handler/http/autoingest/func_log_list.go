@@ -54,20 +54,6 @@ func (h *handler) LogList() httpcontext.HandlerFunc {
 		userID := ctx.GetInt64(consts.CtxKeyUserId)
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
 
-		list, err := h.logService.List(ctx.GetContext(), req)
-		if err != nil {
-			ctx.Fail(codeLogListFailed.WithError(err))
-
-			return
-		}
-
-		total, err := h.logService.Count(ctx.GetContext(), req)
-		if err != nil {
-			ctx.Fail(codeLogListFailed.WithError(err))
-
-			return
-		}
-
 		// 仅列出当前用户可见的计划作为 planName 映射，避免越权暴露其他用户的计划名
 		planList, err := h.planService.List(ctx.GetContext(), &autoingestplanSvi.ListRequest{
 			NoPaginate: true,
@@ -81,6 +67,49 @@ func (h *handler) LogList() httpcontext.HandlerFunc {
 		}
 
 		planNameMap := lo.SliceToMap(planList, func(item *models.AutoIngestPlan) (int64, string) { return item.ID, item.Name })
+		visiblePlanIDs := lo.Keys(planNameMap)
+
+		if !isAdmin {
+			if req.PlanId > 0 {
+				if !lo.Contains(visiblePlanIDs, req.PlanId) {
+					ctx.Success(&logListResponse{
+						Total:       0,
+						Data:        []*logDTO{},
+						PageSize:    req.PageSize,
+						CurrentPage: req.CurrentPage,
+					})
+
+					return
+				}
+			} else {
+				if len(visiblePlanIDs) == 0 {
+					ctx.Success(&logListResponse{
+						Total:       0,
+						Data:        []*logDTO{},
+						PageSize:    req.PageSize,
+						CurrentPage: req.CurrentPage,
+					})
+
+					return
+				}
+
+				req.PlanIdList = visiblePlanIDs
+			}
+		}
+
+		list, err := h.logService.List(ctx.GetContext(), req)
+		if err != nil {
+			ctx.Fail(codeLogListFailed.WithError(err))
+
+			return
+		}
+
+		total, err := h.logService.Count(ctx.GetContext(), req)
+		if err != nil {
+			ctx.Fail(codeLogListFailed.WithError(err))
+
+			return
+		}
 
 		var dtoList = make([]*logDTO, 0, len(list))
 		for _, item := range list {

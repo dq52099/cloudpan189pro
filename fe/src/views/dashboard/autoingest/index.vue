@@ -54,7 +54,13 @@
     <!-- 批量操作栏（Plans） -->
     <div v-if="activeTab === 'plans' && selectedPlanIds.length > 0" class="batch-actions">
       <n-text depth="2">已选择 {{ selectedPlanIds.length }} 项</n-text>
-      <n-button size="small" type="info" @click="handleBatchRetry" :disabled="!hasEnabledPlans">
+      <n-button
+        size="small"
+        type="info"
+        @click="handleBatchRetry"
+        :disabled="batchActionLoading || !hasEnabledPlans"
+        :loading="batchActionLoading"
+      >
         <template #icon>
           <n-icon><RefreshOutline /></n-icon>
         </template>
@@ -64,7 +70,8 @@
         size="small"
         type="primary"
         @click="handleBatchRefresh"
-        :disabled="!hasEnabledPlans"
+        :disabled="batchActionLoading || !hasEnabledPlans"
+        :loading="batchActionLoading"
       >
         <template #icon>
           <n-icon><RefreshOutline /></n-icon>
@@ -75,7 +82,8 @@
         size="small"
         type="success"
         @click="handleBatchEnable"
-        :disabled="!hasDisabledPlans"
+        :disabled="batchActionLoading || !hasDisabledPlans"
+        :loading="batchActionLoading"
       >
         <template #icon>
           <n-icon><CheckmarkCircleOutline /></n-icon>
@@ -86,20 +94,27 @@
         size="small"
         type="warning"
         @click="handleBatchDisable"
-        :disabled="!hasEnabledPlans"
+        :disabled="batchActionLoading || !hasEnabledPlans"
+        :loading="batchActionLoading"
       >
         <template #icon>
           <n-icon><CloseCircleOutline /></n-icon>
         </template>
         批量停用
       </n-button>
-      <n-button size="small" type="error" @click="handleBatchDelete">
+      <n-button
+        size="small"
+        type="error"
+        @click="handleBatchDelete"
+        :disabled="batchActionLoading"
+        :loading="batchActionLoading"
+      >
         <template #icon>
           <n-icon><TrashOutline /></n-icon>
         </template>
         批量删除
       </n-button>
-      <n-button size="small" @click="selectedPlanIds = []">取消选择</n-button>
+      <n-button size="small" @click="clearPlanSelection">取消选择</n-button>
     </div>
 
     <!-- 头部区域（Logs） -->
@@ -135,9 +150,9 @@
           </template>
           重置
         </n-button>
-        <n-button type="error" @click="handleDeleteErrorLogs" style="margin-left: 8px">
-          清空日志
-        </n-button>
+        <n-dropdown trigger="click" :options="clearLogOptions" @select="handleClearLogsSelect">
+          <n-button type="error" style="margin-left: 8px">清理日志</n-button>
+        </n-dropdown>
       </div>
       <div class="header-right">
         <n-text depth="3">最近刷新：{{ refreshTime.format('YYYY-MM-DD HH:mm:ss') }}</n-text>
@@ -187,7 +202,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, h, onMounted, computed } from 'vue'
+import { ref, reactive, h, onMounted, onUnmounted, computed } from 'vue'
 import {
   NDataTable,
   NButton,
@@ -197,12 +212,15 @@ import {
   NSelect,
   NSpace,
   NPopconfirm,
+  NDropdown,
   NTabs,
   NTab,
   NTag,
   useMessage,
   useDialog,
   type DataTableColumns,
+  type DataTableRowKey,
+  type DropdownOption,
   type PaginationProps,
 } from 'naive-ui'
 import {
@@ -240,6 +258,10 @@ import { type ApiResponse, type BatchOperationResponse } from '@/utils/api'
 
 const message = useMessage()
 const dialog = useDialog()
+let isPageAlive = true
+
+const isActiveRequest = (requestId: number, latestRequestId: number) =>
+  isPageAlive && requestId === latestRequestId
 
 // Tabs
 const activeTab = ref<'plans' | 'logs'>('plans')
@@ -248,24 +270,40 @@ const activeTab = ref<'plans' | 'logs'>('plans')
 const refreshTime = ref(dayjs())
 
 // Cloud Token options
+let cloudTokenRequestId = 0
 const cloudTokenOptions = ref<{ label: string; value: number }[]>([])
 const loadCloudTokens = () => {
+  const requestId = ++cloudTokenRequestId
+
   getCloudTokenList({ noPaginate: true })
     .then((res: ApiResponse<Models.PaginationResponse<Models.CloudToken>>) => {
+      if (!isActiveRequest(requestId, cloudTokenRequestId)) {
+        return
+      }
+
       if (res.code === 200 && res.data) {
         cloudTokenOptions.value = res.data.data.map((t) => ({
           label: t.name || `令牌${t.id}`,
           value: t.id,
         }))
+
+        return
       }
+
+      message.error(res.msg || '获取令牌列表失败')
     })
     .catch((err: unknown) => {
-      // 忽略错误，仅防止类型告警
+      if (!isActiveRequest(requestId, cloudTokenRequestId)) {
+        return
+      }
+
       console.error('获取令牌列表失败:', err)
+      message.error('获取令牌列表失败')
     })
 }
 
 // -------- Plans --------
+let planListRequestId = 0
 const planLoading = ref(false)
 const planTable = ref<Models.AutoIngestPlan[]>([])
 const planQuery = reactive({
@@ -275,28 +313,78 @@ const planQuery = reactive({
 // 批量选择
 const selectedPlanIds = ref<number[]>([])
 const selectedPlanRows = ref<Models.AutoIngestPlan[]>([])
+const batchActionLoading = ref(false)
 const hasEnabledPlans = computed(() => {
   return selectedPlanRows.value.some((p) => p.enabled)
 })
 const hasDisabledPlans = computed(() => {
   return selectedPlanRows.value.some((p) => !p.enabled)
 })
+type PlanRowAction = 'enable' | 'disable' | 'refresh' | 'retry' | 'delete' | 'retryFailed'
+const planRowActions: PlanRowAction[] = ['enable', 'disable', 'refresh', 'retry', 'delete']
+const planActionPending = ref<Set<string>>(new Set())
+const planActionKey = (action: PlanRowAction, planId?: number) => `${action}:${planId ?? 'all'}`
+const isPlanActionPending = (action: PlanRowAction, planId?: number) => {
+  return planActionPending.value.has(planActionKey(action, planId))
+}
+const setPlanActionPending = (
+  action: PlanRowAction,
+  planId: number | undefined,
+  pending: boolean
+) => {
+  const next = new Set(planActionPending.value)
+  const key = planActionKey(action, planId)
+
+  if (pending) {
+    next.add(key)
+  } else {
+    next.delete(key)
+  }
+
+  planActionPending.value = next
+}
+const isPlanRowPending = (planId: number) => {
+  return planRowActions.some((action) => isPlanActionPending(action, planId))
+}
+const clearPlanSelection = () => {
+  selectedPlanIds.value = []
+  selectedPlanRows.value = []
+}
+const syncSelectedPlanRows = () => {
+  const visibleIds = new Set(planTable.value.map((p) => p.id))
+  const selectedIds = selectedPlanIds.value.filter((id) => visibleIds.has(id))
+
+  selectedPlanIds.value = selectedIds
+  selectedPlanRows.value = planTable.value.filter((p) => selectedIds.includes(p.id))
+}
 
 // 处理复选框选择变化
-const handlePlanSelectionChange = (keys: any) => {
-  selectedPlanIds.value = keys as number[]
-  selectedPlanRows.value = planTable.value.filter((p) => keys.includes(p.id))
+const handlePlanSelectionChange = (keys: DataTableRowKey[]) => {
+  const selectedIds = keys.filter((key): key is number => typeof key === 'number')
+
+  selectedPlanIds.value = selectedIds
+  selectedPlanRows.value = planTable.value.filter((p) => selectedIds.includes(p.id))
 }
 
 // 批量操作处理函数
 const handleBatchRetry = () => {
-  batchRetryPlan({ ids: selectedPlanIds.value })
+  if (batchActionLoading.value) {
+    return
+  }
+
+  const ids = [...selectedPlanIds.value]
+  if (ids.length === 0) {
+    return
+  }
+
+  batchActionLoading.value = true
+  batchRetryPlan({ ids })
     .then((res: ApiResponse<BatchOperationResponse>) => {
       if (res.code === 200) {
         message.success(
           `批量重试完成：成功 ${res.data?.success || 0}，失败 ${res.data?.failed || 0}`
         )
-        selectedPlanIds.value = []
+        clearPlanSelection()
         fetchPlanList()
       } else {
         message.error(res.msg || '批量重试失败')
@@ -306,16 +394,29 @@ const handleBatchRetry = () => {
       console.error('批量重试失败', err)
       message.error('批量重试失败')
     })
+    .finally(() => {
+      batchActionLoading.value = false
+    })
 }
 
 const handleBatchRefresh = () => {
-  batchRefreshPlan({ ids: selectedPlanIds.value })
+  if (batchActionLoading.value) {
+    return
+  }
+
+  const ids = [...selectedPlanIds.value]
+  if (ids.length === 0) {
+    return
+  }
+
+  batchActionLoading.value = true
+  batchRefreshPlan({ ids })
     .then((res: ApiResponse<BatchOperationResponse>) => {
       if (res.code === 200) {
         message.success(
           `批量扫描完成：成功 ${res.data?.success || 0}，失败 ${res.data?.failed || 0}`
         )
-        selectedPlanIds.value = []
+        clearPlanSelection()
       } else {
         message.error(res.msg || '批量扫描失败')
       }
@@ -324,16 +425,29 @@ const handleBatchRefresh = () => {
       console.error('批量扫描失败', err)
       message.error('批量扫描失败')
     })
+    .finally(() => {
+      batchActionLoading.value = false
+    })
 }
 
 const handleBatchEnable = () => {
-  batchEnablePlan({ ids: selectedPlanIds.value })
+  if (batchActionLoading.value) {
+    return
+  }
+
+  const ids = [...selectedPlanIds.value]
+  if (ids.length === 0) {
+    return
+  }
+
+  batchActionLoading.value = true
+  batchEnablePlan({ ids })
     .then((res: ApiResponse<BatchOperationResponse>) => {
       if (res.code === 200) {
         message.success(
           `批量启用完成：成功 ${res.data?.success || 0}，失败 ${res.data?.failed || 0}`
         )
-        selectedPlanIds.value = []
+        clearPlanSelection()
         fetchPlanList()
       } else {
         message.error(res.msg || '批量启用失败')
@@ -343,16 +457,29 @@ const handleBatchEnable = () => {
       console.error('批量启用失败', err)
       message.error('批量启用失败')
     })
+    .finally(() => {
+      batchActionLoading.value = false
+    })
 }
 
 const handleBatchDisable = () => {
-  batchDisablePlan({ ids: selectedPlanIds.value })
+  if (batchActionLoading.value) {
+    return
+  }
+
+  const ids = [...selectedPlanIds.value]
+  if (ids.length === 0) {
+    return
+  }
+
+  batchActionLoading.value = true
+  batchDisablePlan({ ids })
     .then((res: ApiResponse<BatchOperationResponse>) => {
       if (res.code === 200) {
         message.success(
           `批量停用完成：成功 ${res.data?.success || 0}，失败 ${res.data?.failed || 0}`
         )
-        selectedPlanIds.value = []
+        clearPlanSelection()
         fetchPlanList()
       } else {
         message.error(res.msg || '批量停用失败')
@@ -362,25 +489,53 @@ const handleBatchDisable = () => {
       console.error('批量停用失败', err)
       message.error('批量停用失败')
     })
+    .finally(() => {
+      batchActionLoading.value = false
+    })
 }
 
 const handleBatchDelete = () => {
-  batchDeletePlan({ ids: selectedPlanIds.value })
-    .then((res: ApiResponse<BatchOperationResponse>) => {
-      if (res.code === 200) {
-        message.success(
-          `批量删除完成：成功 ${res.data?.success || 0}，失败 ${res.data?.failed || 0}`
-        )
-        selectedPlanIds.value = []
-        fetchPlanList()
-      } else {
-        message.error(res.msg || '批量删除失败')
+  if (batchActionLoading.value || selectedPlanIds.value.length === 0) {
+    return
+  }
+
+  dialog.warning({
+    title: '批量删除计划',
+    content: `确定要删除选中的 ${selectedPlanIds.value.length} 个计划吗？此操作不可撤销。`,
+    positiveText: '确认删除',
+    negativeText: '取消',
+    onPositiveClick: () => {
+      if (batchActionLoading.value) {
+        return
       }
-    })
-    .catch((err: unknown) => {
-      console.error('批量删除失败', err)
-      message.error('批量删除失败')
-    })
+
+      const ids = [...selectedPlanIds.value]
+      if (ids.length === 0) {
+        return
+      }
+
+      batchActionLoading.value = true
+      batchDeletePlan({ ids })
+        .then((res: ApiResponse<BatchOperationResponse>) => {
+          if (res.code === 200) {
+            message.success(
+              `批量删除完成：成功 ${res.data?.success || 0}，失败 ${res.data?.failed || 0}`
+            )
+            clearPlanSelection()
+            fetchPlanList()
+          } else {
+            message.error(res.msg || '批量删除失败')
+          }
+        })
+        .catch((err: unknown) => {
+          console.error('批量删除失败', err)
+          message.error('批量删除失败')
+        })
+        .finally(() => {
+          batchActionLoading.value = false
+        })
+    },
+  })
 }
 
 // 分页（对齐用户组管理）
@@ -393,23 +548,27 @@ const planPagination = reactive<PaginationProps>({
   prefix: ({ itemCount }) => `共 ${itemCount} 条`,
   onChange: (page: number) => {
     planPagination.page = page
+    clearPlanSelection()
     fetchPlanList()
   },
   onUpdatePageSize: (ps: number) => {
     planPagination.pageSize = ps
     planPagination.page = 1
+    clearPlanSelection()
     fetchPlanList()
   },
 })
 
 const handlePlanSearch = () => {
   planPagination.page = 1
+  clearPlanSelection()
   fetchPlanList()
 }
 
 const handlePlanReset = () => {
   planQuery.name = ''
   planPagination.page = 1
+  clearPlanSelection()
   fetchPlanList()
 }
 
@@ -520,8 +679,15 @@ const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
     key: 'actions',
     minWidth: 220,
     align: 'center',
-    render: (row) =>
-      h(
+    render: (row) => {
+      const rowPending = isPlanRowPending(row.id)
+      const refreshPending = isPlanActionPending('refresh', row.id)
+      const retryPending = isPlanActionPending('retry', row.id)
+      const enablePending = isPlanActionPending('enable', row.id)
+      const disablePending = isPlanActionPending('disable', row.id)
+      const deletePending = isPlanActionPending('delete', row.id)
+
+      return h(
         NSpace,
         { size: 'small', justify: 'center', align: 'center' },
         {
@@ -530,7 +696,14 @@ const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
               ? [
                   h(
                     NButton,
-                    { size: 'tiny', type: 'info', secondary: true, onClick: () => onRefresh(row) },
+                    {
+                      size: 'tiny',
+                      type: 'info',
+                      secondary: true,
+                      loading: refreshPending,
+                      disabled: rowPending,
+                      onClick: () => onRefresh(row),
+                    },
                     {
                       icon: () => h(NIcon, { size: 12 }, { default: () => h(RefreshOutline) }),
                       default: () => '扫描',
@@ -539,7 +712,14 @@ const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
                   // 重试按钮（重新获取历史记录）
                   h(
                     NButton,
-                    { size: 'tiny', type: 'success', secondary: true, onClick: () => onRetry(row) },
+                    {
+                      size: 'tiny',
+                      type: 'success',
+                      secondary: true,
+                      loading: retryPending,
+                      disabled: rowPending,
+                      onClick: () => onRetry(row),
+                    },
                     {
                       icon: () => h(NIcon, { size: 12 }, { default: () => h(RefreshOutline) }),
                       default: () => '重试',
@@ -547,7 +727,13 @@ const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
                   ),
                   h(
                     NButton,
-                    { size: 'tiny', type: 'primary', secondary: true, onClick: () => onEdit(row) },
+                    {
+                      size: 'tiny',
+                      type: 'primary',
+                      secondary: true,
+                      disabled: rowPending,
+                      onClick: () => onEdit(row),
+                    },
                     {
                       icon: () => h(NIcon, { size: 12 }, { default: () => h(CreateOutline) }),
                       default: () => '修改',
@@ -559,6 +745,8 @@ const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
                       size: 'tiny',
                       type: 'warning',
                       secondary: true,
+                      loading: disablePending,
+                      disabled: rowPending,
                       onClick: () => onDisable(row),
                     },
                     {
@@ -569,7 +757,14 @@ const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
                 ]
               : h(
                   NButton,
-                  { size: 'tiny', type: 'success', secondary: true, onClick: () => onEnable(row) },
+                  {
+                    size: 'tiny',
+                    type: 'success',
+                    secondary: true,
+                    loading: enablePending,
+                    disabled: rowPending,
+                    onClick: () => onEnable(row),
+                  },
                   {
                     icon: () =>
                       h(NIcon, { size: 12 }, { default: () => h(CheckmarkCircleOutline) }),
@@ -587,7 +782,13 @@ const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
                 trigger: () =>
                   h(
                     NButton,
-                    { size: 'tiny', type: 'error', secondary: true },
+                    {
+                      size: 'tiny',
+                      type: 'error',
+                      secondary: true,
+                      loading: deletePending,
+                      disabled: rowPending,
+                    },
                     {
                       icon: () => h(NIcon, { size: 12 }, { default: () => h(TrashOutline) }),
                       default: () => '删除',
@@ -598,11 +799,14 @@ const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
             ),
           ],
         }
-      ),
+      )
+    },
   },
 ]
 
 const fetchPlanList = () => {
+  const requestId = ++planListRequestId
+
   planLoading.value = true
   getAutoIngestPlanList({
     currentPage: planPagination.page || 1,
@@ -610,9 +814,14 @@ const fetchPlanList = () => {
     name: planQuery.name || undefined,
   })
     .then((res: ApiResponse<Models.PaginationResponse<Models.AutoIngestPlan>>) => {
+      if (!isActiveRequest(requestId, planListRequestId)) {
+        return
+      }
+
       if (res.code === 200 && res.data) {
         planTable.value = res.data.data
         planPagination.itemCount = res.data.total
+        syncSelectedPlanRows()
         // 更新 planOptions 供日志筛选使用
         planOptions.value = [
           { label: '全部计划', value: undefined },
@@ -621,74 +830,198 @@ const fetchPlanList = () => {
             value: p.id,
           })),
         ]
+
+        return
       }
+
+      message.error(res.msg || '获取计划列表失败')
     })
     .catch((err: unknown) => {
+      if (!isActiveRequest(requestId, planListRequestId)) {
+        return
+      }
+
       console.error('获取计划列表失败:', err)
+      message.error('获取计划列表失败')
     })
     .finally(() => {
+      if (!isActiveRequest(requestId, planListRequestId)) {
+        return
+      }
+
       planLoading.value = false
       refreshTime.value = dayjs()
     })
 }
 
 const onEnable = (row: Models.AutoIngestPlan) => {
+  if (isPlanRowPending(row.id)) {
+    return
+  }
+
+  setPlanActionPending('enable', row.id, true)
   enableAutoIngestPlan({ id: row.id })
     .then((res: ApiResponse) => {
+      if (!isPageAlive) {
+        return
+      }
+
       if (res.code === 200) {
         message.success('已启用')
         fetchPlanList()
+      } else {
+        message.error(res.msg || '启用失败')
       }
     })
     .catch((err: unknown) => {
+      if (!isPageAlive) {
+        return
+      }
+
       console.error('启用失败', err)
+      message.error('启用失败')
+    })
+    .finally(() => {
+      if (isPageAlive) {
+        setPlanActionPending('enable', row.id, false)
+      }
     })
 }
 
 const onDisable = (row: Models.AutoIngestPlan) => {
+  if (isPlanRowPending(row.id)) {
+    return
+  }
+
+  setPlanActionPending('disable', row.id, true)
   disableAutoIngestPlan({ id: row.id })
     .then((res: ApiResponse) => {
+      if (!isPageAlive) {
+        return
+      }
+
       if (res.code === 200) {
         message.success('已停用')
         fetchPlanList()
+      } else {
+        message.error(res.msg || '停用失败')
       }
     })
     .catch((err: unknown) => {
+      if (!isPageAlive) {
+        return
+      }
+
       console.error('停用失败', err)
+      message.error('停用失败')
+    })
+    .finally(() => {
+      if (isPageAlive) {
+        setPlanActionPending('disable', row.id, false)
+      }
     })
 }
 
 const onRefresh = (row: Models.AutoIngestPlan) => {
+  if (isPlanRowPending(row.id)) {
+    return
+  }
+
+  setPlanActionPending('refresh', row.id, true)
   refreshAutoIngestPlan({ planId: row.id })
-    .then(() => {
+    .then((res: ApiResponse) => {
+      if (!isPageAlive) {
+        return
+      }
+
+      if (res.code !== 200) {
+        message.error(res.msg || '扫描下发失败')
+
+        return
+      }
       message.success('已下发扫描任务')
     })
     .catch((err: unknown) => {
+      if (!isPageAlive) {
+        return
+      }
+
       console.error('扫描下发失败', err)
+      message.error('扫描下发失败')
+    })
+    .finally(() => {
+      if (isPageAlive) {
+        setPlanActionPending('refresh', row.id, false)
+      }
     })
 }
 
 const onRetry = (row: Models.AutoIngestPlan) => {
+  if (isPlanRowPending(row.id)) {
+    return
+  }
+
+  setPlanActionPending('retry', row.id, true)
   retryAutoIngestPlan({ id: row.id })
     .then((res: ApiResponse) => {
+      if (!isPageAlive) {
+        return
+      }
+
       if (res.code === 200) {
         message.success('已下发重试任务，将重新获取所有历史记录')
         fetchPlanList()
+      } else {
+        message.error(res.msg || '重试失败')
       }
     })
     .catch((err: unknown) => {
+      if (!isPageAlive) {
+        return
+      }
+
       console.error('重试失败', err)
+      message.error('重试失败')
+    })
+    .finally(() => {
+      if (isPageAlive) {
+        setPlanActionPending('retry', row.id, false)
+      }
     })
 }
 
 const onDelete = (row: Models.AutoIngestPlan) => {
+  if (isPlanRowPending(row.id)) {
+    return
+  }
+
+  setPlanActionPending('delete', row.id, true)
   deleteAutoIngestPlan({ id: row.id })
-    .then(() => {
+    .then((res: ApiResponse) => {
+      if (!isPageAlive) {
+        return
+      }
+
+      if (res.code !== 200) {
+        message.error(res.msg || '删除失败')
+
+        return
+      }
       message.success('删除成功')
       fetchPlanList()
     })
     .catch((err: unknown) => {
+      if (!isPageAlive) {
+        return
+      }
+
       console.error('删除失败', err)
+      message.error('删除失败')
+    })
+    .finally(() => {
+      if (isPageAlive) {
+        setPlanActionPending('delete', row.id, false)
+      }
     })
 }
 
@@ -708,6 +1041,7 @@ const onEdit = (row: Models.AutoIngestPlan) => {
 }
 
 // -------- Logs --------
+let logListRequestId = 0
 const logLoading = ref(false)
 const logTable = ref<PlanLogResult[]>([])
 const logQuery = reactive<{
@@ -757,26 +1091,57 @@ const handleLogReset = () => {
   fetchLogList()
 }
 
-// 清空日志
-const handleDeleteErrorLogs = () => {
+const clearLogOptions: DropdownOption[] = [
+  { label: '清空全部', key: 'all' },
+  { label: '保留 7 天', key: '7d' },
+  { label: '保留 30 天', key: '30d' },
+  { label: '保留 90 天', key: '90d' },
+]
+
+const getClearLogText = (duration?: string) => {
+  if (!duration) {
+    return {
+      title: '清空日志',
+      content: '确定要清空所有运行日志吗？此操作不可撤销。',
+      positiveText: '确认清空',
+      successPrefix: '已清空',
+    }
+  }
+
+  const days = duration.replace('d', '')
+
+  return {
+    title: '清理日志',
+    content: `确定要清理 ${days} 天前的运行日志吗？将保留最近 ${days} 天日志。`,
+    positiveText: '确认清理',
+    successPrefix: '已清理',
+  }
+}
+
+// 清理日志
+const handleClearLogsSelect = (key: string | number) => {
+  const duration = key === 'all' ? undefined : String(key)
+  const text = getClearLogText(duration)
+
   dialog.warning({
-    title: '清空日志',
-    content: '确定要清空所有运行日志吗？此操作不可撤销。',
-    positiveText: '确认清空',
+    title: text.title,
+    content: text.content,
+    positiveText: text.positiveText,
     negativeText: '取消',
     onPositiveClick: () => {
-      clearAutoIngestLogs()
+      clearAutoIngestLogs(duration ? { duration } : undefined)
         .then((res) => {
-          if (res.code === 200 || res.code === 0) {
-            message.success(`已清空 ${res.data} 条日志`)
+          if (res.code === 200) {
+            message.success(`${text.successPrefix} ${res.data} 条日志`)
+            logPagination.page = 1
             fetchLogList()
           } else {
-            message.error(res.msg || '清空失败')
+            message.error(res.msg || '清理失败')
           }
         })
         .catch((err: unknown) => {
-          console.error('清空失败', err)
-          message.error('清空失败')
+          console.error('清理失败', err)
+          message.error('清理失败')
         })
     },
   })
@@ -816,11 +1181,15 @@ const logColumns: DataTableColumns<Models.AutoIngestLog> = [
     align: 'center',
     render: (row) => {
       if (row.level === 'error') {
+        const retryFailedPending = isPlanActionPending('retryFailed', row.planId)
+
         return h(
           NButton,
           {
             size: 'small',
             type: 'warning',
+            loading: retryFailedPending,
+            disabled: retryFailedPending,
             onClick: () => onRetryFailed(row.planId),
           },
           { default: () => '重试' }
@@ -833,9 +1202,18 @@ const logColumns: DataTableColumns<Models.AutoIngestLog> = [
 
 // 重试失败任务
 const onRetryFailed = (planId?: number) => {
+  if (isPlanActionPending('retryFailed', planId)) {
+    return
+  }
+
+  setPlanActionPending('retryFailed', planId, true)
   retryFailedAutoIngest({ planId })
     .then((res) => {
-      if (res.code === 200 || res.code === 0) {
+      if (!isPageAlive) {
+        return
+      }
+
+      if (res.code === 200) {
         message.success('已下发重试任务')
         fetchLogList()
       } else {
@@ -843,12 +1221,23 @@ const onRetryFailed = (planId?: number) => {
       }
     })
     .catch((err: unknown) => {
+      if (!isPageAlive) {
+        return
+      }
+
       console.error('重试失败', err)
       message.error('重试失败')
+    })
+    .finally(() => {
+      if (isPageAlive) {
+        setPlanActionPending('retryFailed', planId, false)
+      }
     })
 }
 
 const fetchLogList = () => {
+  const requestId = ++logListRequestId
+
   logLoading.value = true
   getAutoIngestLogList({
     currentPage: logPagination.page || 1,
@@ -857,15 +1246,32 @@ const fetchLogList = () => {
     level: logQuery.level || undefined,
   })
     .then((res: ApiResponse<Models.PaginationResponse<PlanLogResult>>) => {
-      if (res.data) {
+      if (!isActiveRequest(requestId, logListRequestId)) {
+        return
+      }
+
+      if (res.code === 200 && res.data) {
         logTable.value = res.data.data
         logPagination.itemCount = res.data.total
+
+        return
       }
+
+      message.error(res.msg || '获取日志失败')
     })
     .catch((err: unknown) => {
+      if (!isActiveRequest(requestId, logListRequestId)) {
+        return
+      }
+
       console.error('获取日志失败:', err)
+      message.error('获取日志失败')
     })
     .finally(() => {
+      if (!isActiveRequest(requestId, logListRequestId)) {
+        return
+      }
+
       logLoading.value = false
       refreshTime.value = dayjs()
     })
@@ -879,6 +1285,13 @@ onMounted(() => {
   loadCloudTokens()
   fetchPlanList()
   fetchLogList()
+})
+
+onUnmounted(() => {
+  isPageAlive = false
+  cloudTokenRequestId++
+  planListRequestId++
+  logListRequestId++
 })
 </script>
 

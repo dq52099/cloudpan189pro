@@ -74,6 +74,8 @@ func (h *handler) Add() httpcontext.HandlerFunc {
 		)
 
 		fileId := req.FileId
+		userID := ctx.GetInt64(consts.CtxKeyUserId)
+		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
 
 		switch req.OsType {
 		case protocolSubscribe:
@@ -83,10 +85,10 @@ func (h *handler) Add() httpcontext.HandlerFunc {
 		case protocolShare:
 			addition, fileId, err = h.executeOsTypeShare(ctx.GetContext(), req)
 		case protocolPerson:
-			err = h.executeOsTypePersonal(ctx.GetContext(), req)
+			err = h.executeOsTypePersonal(ctx.GetContext(), req, userID, isAdmin)
 			addition = datatypes.JSONMap{}
 		case protocolFamily:
-			addition, err = h.executeOsTypeFamily(ctx.GetContext(), req)
+			addition, err = h.executeOsTypeFamily(ctx.GetContext(), req, userID, isAdmin)
 		default:
 			ctx.Fail(busCodeStorageOsTypeUnsupport)
 
@@ -98,9 +100,6 @@ func (h *handler) Add() httpcontext.HandlerFunc {
 
 			return
 		}
-
-		// 获取当前用户ID
-		userID := ctx.GetInt64(consts.CtxKeyUserId)
 
 		// 使用组合服务创建存储（内部完成校验、父级创建、虚拟文件与挂载点创建与补偿）
 		id, err := h.storageFacadeService.CreateStorage(ctx.GetContext(), &storagefacadeSvi.CreateStorageRequest{

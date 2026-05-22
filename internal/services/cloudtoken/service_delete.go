@@ -16,45 +16,63 @@ type DeleteRequest struct {
 }
 
 func (s *service) Delete(ctx context.Context, req *DeleteRequest) (err error) {
-	// 非管理员只能删除自己的令牌
-	if !req.IsAdmin && req.UserID > 0 {
-		result := s.getDB(ctx).Where("id = ? AND user_id = ?", req.ID, req.UserID).Delete(nil)
+	if req == nil || req.ID <= 0 {
+		return errInvalidCloudTokenID
+	}
+
+	if !req.IsAdmin {
+		if req.UserID <= 0 {
+			return errInvalidCloudTokenUserID
+		}
+	}
+
+	if err := s.svc.GetDB(ctx).Transaction(func(tx *gorm.DB) error {
+		query := tx.Model(new(models.CloudToken)).Where("id = ?", req.ID)
+		if !req.IsAdmin {
+			query = query.Where("user_id = ?", req.UserID)
+		}
+
+		result := query.Delete(new(models.CloudToken))
 		if result.Error != nil {
 			ctx.Error("删除云盘令牌失败", zap.Error(result.Error), zap.Int64("id", req.ID), zap.Int64("user_id", req.UserID))
+
 			return errors.Wrap(result.Error, "删除云盘令牌失败")
 		}
+
 		if result.RowsAffected == 0 {
 			ctx.Error("删除云盘令牌失败，无权限或不存在", zap.Int64("id", req.ID), zap.Int64("user_id", req.UserID))
+
 			return errors.Wrap(gorm.ErrRecordNotFound, "令牌不存在或无权限删除")
 		}
 
+		if err := clearCloudTokenReferences(ctx, tx, req.ID); err != nil {
+			return err
+		}
+
 		return nil
+	}); err != nil {
+		return err
 	}
 
-	// 管理员删除前先清理所有挂载点与用户挂载令牌的关联，避免旧数据阻塞删除。
-	if err := s.svc.GetDB(ctx).
+	return nil
+}
+
+func clearCloudTokenReferences(ctx context.Context, tx *gorm.DB, tokenID int64) error {
+	if err := tx.
 		Model(new(models.MountPoint)).
-		Where("token_id = ?", req.ID).
+		Where("token_id = ?", tokenID).
 		Update("token_id", 0).Error; err != nil {
-		ctx.Error("清理挂载点令牌引用失败", zap.Error(err), zap.Int64("id", req.ID))
+		ctx.Error("清理挂载点令牌引用失败", zap.Error(err), zap.Int64("id", tokenID))
+
 		return errors.Wrap(err, "清理挂载点令牌引用失败")
 	}
 
-	if err := s.svc.GetDB(ctx).
-		Where("token_id = ?", req.ID).
+	if err := tx.
+		Where("token_id = ?", tokenID).
 		Delete(new(models.UserMountPointToken)).Error; err != nil {
-		ctx.Error("清理用户挂载点令牌绑定失败", zap.Error(err), zap.Int64("id", req.ID))
-		return errors.Wrap(err, "清理用户挂载点令牌绑定失败")
-	}
+		ctx.Error("清理用户挂载点令牌绑定失败", zap.Error(err), zap.Int64("id", tokenID))
 
-	result := s.getDB(ctx).Where("id = ?", req.ID).Delete(nil)
-	if result.Error != nil {
-		ctx.Error("删除云盘令牌失败", zap.Error(result.Error), zap.Int64("id", req.ID))
-		return errors.Wrap(result.Error, "删除云盘令牌失败")
-	}
-	if result.RowsAffected == 0 {
-		ctx.Error("删除云盘令牌失败，记录不存在", zap.Int64("id", req.ID))
-		return errors.Wrap(gorm.ErrRecordNotFound, "令牌不存在")
+		return errors.Wrap(err, "清理用户挂载点令牌绑定失败")
 	}
 
 	return nil

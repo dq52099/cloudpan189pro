@@ -1,5 +1,13 @@
 <template>
-  <n-modal v-model:show="visible" preset="dialog" title="绑定存储" style="width: 900px">
+  <n-modal
+    v-model:show="visible"
+    preset="dialog"
+    title="绑定存储"
+    style="width: 900px"
+    :closable="!submitting"
+    :mask-closable="!submitting"
+    :close-on-esc="!submitting"
+  >
     <div class="bind-files-modal">
       <div class="search-section">
         <n-space justify="space-between" style="width: 100%">
@@ -8,18 +16,27 @@
               v-model:value="searchKeyword"
               placeholder="搜索存储挂载点..."
               clearable
+              :disabled="submitting"
               @keyup.enter="handleSearch"
             >
               <template #prefix>
                 <n-icon :component="SearchOutline" />
               </template>
             </n-input>
-            <n-button type="primary" @click="handleSearch">搜索</n-button>
+            <n-button type="primary" :disabled="submitting" @click="handleSearch">搜索</n-button>
           </n-space>
 
           <n-space>
-            <n-button @click="selectCurrentPage" :disabled="storageList.length === 0">全选当前页</n-button>
-            <n-button type="info" ghost @click="selectAllSearchResults" :loading="selectingAll">
+            <n-button @click="selectCurrentPage" :disabled="storageList.length === 0 || submitting">
+              全选当前页
+            </n-button>
+            <n-button
+              type="info"
+              ghost
+              @click="selectAllSearchResults"
+              :loading="selectingAll"
+              :disabled="submitting"
+            >
               全选搜索结果
             </n-button>
           </n-space>
@@ -31,6 +48,7 @@
           :columns="columns"
           :data="storageList"
           :loading="loading"
+          :disabled="submitting"
           :row-key="(row) => row.id"
           :checked-row-keys="selectedStorageIds"
           @update:checked-row-keys="handleSelectionChange"
@@ -44,6 +62,7 @@
           :item-count="pagination.itemCount"
           :page-sizes="pagination.pageSizes"
           show-size-picker
+          :disabled="submitting"
           @update:page="handlePageChange"
           @update:page-size="handlePageSizeChange"
         >
@@ -55,7 +74,9 @@
         <n-divider style="margin: 12px 0 8px" />
         <div class="selected-header">
           <span>已选择 {{ selectedStorageIds.length }} 个存储挂载点</span>
-          <n-button text type="error" @click="clearSelection">清空选择</n-button>
+          <n-button text type="error" :disabled="submitting" @click="clearSelection"
+            >清空选择</n-button
+          >
         </div>
         <div class="selected-files">
           <n-tag
@@ -63,6 +84,7 @@
             :key="storageId"
             size="small"
             closable
+            :disabled="submitting"
             :title="getFullStorageName(storageId)"
             @close="removeSelection(storageId)"
           >
@@ -77,11 +99,11 @@
 
     <template #action>
       <n-space>
-        <n-button @click="handleCancel">取消</n-button>
+        <n-button :disabled="submitting" @click="handleCancel">取消</n-button>
         <n-button
           type="primary"
           :loading="submitting"
-          :disabled="selectedStorageIds.length === 0"
+          :disabled="selectedStorageIds.length === 0 || submitting"
           @click="handleConfirm"
         >
           确定绑定
@@ -130,7 +152,13 @@ const message = useMessage()
 
 const visible = computed({
   get: () => props.show,
-  set: (value) => emit('update:show', value),
+  set: (value) => {
+    if (!value && submitting.value) {
+      return
+    }
+
+    emit('update:show', value)
+  },
 })
 
 const searchKeyword = ref('')
@@ -140,6 +168,7 @@ const selectingAll = ref(false)
 const storageList = ref<StorageSelectItem[]>([])
 const selectedStorageIds = ref<number[]>([])
 const selectedStorageMap = ref<Record<number, StorageSelectItem>>({})
+const operationVersion = ref(0)
 
 const pagination = reactive({
   page: 1,
@@ -170,10 +199,26 @@ const columns: DataTableColumns<StorageSelectItem> = [
   },
 ]
 
+const invalidateOperation = () => {
+  operationVersion.value += 1
+}
+
+const getCurrentUserGroupId = () => props.userGroupInfo?.id ?? null
+
+const isCurrentOperation = (version: number, userGroupId: number | null) =>
+  visible.value && operationVersion.value === version && getCurrentUserGroupId() === userGroupId
+
 watch(
-  () => props.show,
-  (newShow) => {
+  () => [props.show, props.userGroupInfo?.id ?? null] as const,
+  ([newShow, userGroupId], [oldShow, oldUserGroupId]) => {
+    if (newShow !== oldShow || userGroupId !== oldUserGroupId) {
+      invalidateOperation()
+    }
+
     if (!newShow) {
+      loading.value = false
+      submitting.value = false
+      selectingAll.value = false
       return
     }
 
@@ -184,9 +229,14 @@ watch(
     pagination.page = 1
     pagination.pageSize = 10
     pagination.itemCount = 0
+    loading.value = false
+    submitting.value = false
+    selectingAll.value = false
+
+    const version = operationVersion.value
 
     nextTick(() => {
-      Promise.all([fetchStorageList(), loadBindFiles()])
+      Promise.all([fetchStorageList(version, userGroupId), loadBindFiles(version, userGroupId)])
     })
   }
 )
@@ -207,26 +257,38 @@ const mergeStorageMeta = (items: StorageSelectItem[]) => {
   selectedStorageMap.value = nextMap
 }
 
-const loadBindFiles = async () => {
-  if (!props.userGroupInfo?.id) return
+const loadBindFiles = async (
+  version = operationVersion.value,
+  userGroupId = getCurrentUserGroupId()
+) => {
+  if (userGroupId == null || !isCurrentOperation(version, userGroupId)) return
 
   try {
-    const response = await getBindFiles(props.userGroupInfo.id)
+    const response = await getBindFiles(userGroupId)
+    if (!isCurrentOperation(version, userGroupId)) return
+
     if (response.code === 200 && response.data) {
       selectedStorageIds.value = response.data.fileIds || []
     }
   } catch (error) {
+    if (!isCurrentOperation(version, userGroupId)) return
+
     console.error('获取已绑定文件失败:', error)
   }
 }
 
-const fetchStorageList = async () => {
-  if (!visible.value) return
+const fetchStorageList = async (
+  version = operationVersion.value,
+  userGroupId = getCurrentUserGroupId()
+) => {
+  if (!isCurrentOperation(version, userGroupId)) return
 
   loading.value = true
 
   try {
     const response = await getStorageSelectList(buildParams())
+    if (!isCurrentOperation(version, userGroupId)) return
+
     if (response.code === 200 && response.data) {
       storageList.value = response.data.data || []
       pagination.itemCount = response.data.total || 0
@@ -235,30 +297,42 @@ const fetchStorageList = async () => {
       message.error(response.msg || '获取存储列表失败')
     }
   } catch (error) {
+    if (!isCurrentOperation(version, userGroupId)) return
+
     console.error('获取存储列表失败:', error)
     message.error('获取存储列表失败')
   } finally {
-    loading.value = false
+    if (isCurrentOperation(version, userGroupId)) {
+      loading.value = false
+    }
   }
 }
 
 const handleSearch = async () => {
+  if (submitting.value) return
+
   pagination.page = 1
   await fetchStorageList()
 }
 
 const handlePageChange = async (page: number) => {
+  if (submitting.value) return
+
   pagination.page = page
   await fetchStorageList()
 }
 
 const handlePageSizeChange = async (pageSize: number) => {
+  if (submitting.value) return
+
   pagination.pageSize = pageSize
   pagination.page = 1
   await fetchStorageList()
 }
 
 const handleSelectionChange = (keys: Array<string | number>) => {
+  if (submitting.value) return
+
   const pageIDs = new Set(storageList.value.map((item) => item.id))
   const pageSelectedIDs = keys.map((key) => Number(key))
   const reservedIDs = selectedStorageIds.value.filter((id) => !pageIDs.has(id))
@@ -273,6 +347,8 @@ const handleSelectionChange = (keys: Array<string | number>) => {
 }
 
 const selectCurrentPage = () => {
+  if (submitting.value) return
+
   const next = new Set(selectedStorageIds.value)
   storageList.value.forEach((item) => {
     next.add(item.id)
@@ -282,6 +358,12 @@ const selectCurrentPage = () => {
 }
 
 const selectAllSearchResults = async () => {
+  if (submitting.value) return
+
+  const version = operationVersion.value
+  const userGroupId = getCurrentUserGroupId()
+  if (!isCurrentOperation(version, userGroupId)) return
+
   selectingAll.value = true
 
   try {
@@ -289,6 +371,7 @@ const selectAllSearchResults = async () => {
       ...buildParams(true),
       currentPage: 1,
     })
+    if (!isCurrentOperation(version, userGroupId)) return
 
     if (response.code !== 200 || !response.data) {
       message.error(response.msg || '获取全部存储失败')
@@ -300,18 +383,26 @@ const selectAllSearchResults = async () => {
     selectedStorageIds.value = items.map((item) => item.id)
     message.success(`已选择 ${selectedStorageIds.value.length} 个存储挂载点`)
   } catch (error) {
+    if (!isCurrentOperation(version, userGroupId)) return
+
     console.error('获取全部存储失败:', error)
     message.error('获取全部存储失败')
   } finally {
-    selectingAll.value = false
+    if (isCurrentOperation(version, userGroupId)) {
+      selectingAll.value = false
+    }
   }
 }
 
 const clearSelection = () => {
+  if (submitting.value) return
+
   selectedStorageIds.value = []
 }
 
 const removeSelection = (storageId: number) => {
+  if (submitting.value) return
+
   selectedStorageIds.value = selectedStorageIds.value.filter((id) => id !== storageId)
 }
 
@@ -327,11 +418,23 @@ const getFullStorageName = (storageId: number) => {
 }
 
 const handleCancel = () => {
+  if (submitting.value) return
+
+  invalidateOperation()
+  loading.value = false
+  submitting.value = false
+  selectingAll.value = false
   visible.value = false
 }
 
 const handleConfirm = async () => {
-  if (!props.userGroupInfo?.id || selectedStorageIds.value.length === 0) {
+  if (submitting.value) return
+
+  const version = operationVersion.value
+  const userGroupId = getCurrentUserGroupId()
+  const fileIds = [...selectedStorageIds.value]
+
+  if (userGroupId == null || fileIds.length === 0 || !isCurrentOperation(version, userGroupId)) {
     message.warning('请选择要绑定的存储')
     return
   }
@@ -340,22 +443,28 @@ const handleConfirm = async () => {
 
   try {
     const response = await batchBindFiles({
-      groupId: props.userGroupInfo.id,
-      fileIds: selectedStorageIds.value,
+      groupId: userGroupId,
+      fileIds,
     })
+    if (!isCurrentOperation(version, userGroupId)) return
 
     if (response.code === 200) {
       message.success('存储绑定成功')
+      invalidateOperation()
       visible.value = false
       emit('success')
     } else {
       message.error(response.msg || '存储绑定失败')
     }
   } catch (error) {
+    if (!isCurrentOperation(version, userGroupId)) return
+
     console.error('存储绑定失败:', error)
     message.error('存储绑定失败')
   } finally {
-    submitting.value = false
+    if (isCurrentOperation(version, userGroupId)) {
+      submitting.value = false
+    }
   }
 }
 </script>

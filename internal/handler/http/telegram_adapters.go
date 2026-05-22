@@ -75,6 +75,7 @@ func (a *telegramMountAdapter) CreateMountPoint(ctx stdContext.Context, req *tel
 		}
 
 		body, _ := json.Marshal(taskReq)
+
 		fullPath := mp.FullPath
 		if fullPath == "" {
 			fullPath = mp.Name

@@ -11,7 +11,15 @@ const PAGINATION_CONFIG = {
   DEFAULT_PAGE: 1,
 }
 
-export function useSubscribeResource(subscribeUserId: Ref<string>, message: MessageApi) {
+const isBusinessSuccess = <T>(response: ApiResponse<T>) => response.code === 200
+
+type ActiveChecker = () => boolean
+
+export function useSubscribeResource(
+  subscribeUserId: Ref<string>,
+  message: MessageApi,
+  isActive: ActiveChecker = () => true
+) {
   // 资源列表状态
   const resourceState = reactive({
     userInfo: null as GetSubscribeUserResponse | null,
@@ -32,12 +40,21 @@ export function useSubscribeResource(subscribeUserId: Ref<string>, message: Mess
   // 计算属性
   const hasSelectedResources = computed(() => resourceState.selected.length > 0)
   const hasResourceList = computed(() => resourceState.list.length > 0)
+  let resourceListRequestVersion = 0
+  let allResourcesRequestVersion = 0
+
+  const invalidateRequests = () => {
+    resourceListRequestVersion++
+    allResourcesRequestVersion++
+    resourceState.loading = false
+    resourceState.loadingAll = false
+  }
 
   // 重置状态
   const resetState = () => {
+    invalidateRequests()
     resourceState.userInfo = null
     resourceState.list = []
-    resourceState.loading = false
     resourceState.searchKeyword = ''
     resourceState.selected = []
     resourcePagination.page = PAGINATION_CONFIG.DEFAULT_PAGE
@@ -50,35 +67,43 @@ export function useSubscribeResource(subscribeUserId: Ref<string>, message: Mess
     response: ApiResponse<GetSubscribeUserResponse>,
     isInitialSearch = false
   ) => {
-    if (response.data) {
-      resourceState.userInfo = response.data
-      resourceState.list = response.data.data || []
-      resourcePagination.itemCount = response.data.total || 0
-
-      if (isInitialSearch) {
-        resourcePagination.page = PAGINATION_CONFIG.DEFAULT_PAGE
-        resourcePagination.pageSize = PAGINATION_CONFIG.DEFAULT_PAGE_SIZE
-
-        if (resourceState.list.length > 0) {
-          message.success(`找到 ${resourcePagination.itemCount} 个资源`)
-          return true
-        } else {
-          message.warning('该用户暂无分享资源')
-          return false
-        }
-      }
-      return true
-    } else {
+    if (!isBusinessSuccess(response) || !response.data) {
       message.error(response.msg || '获取用户资源失败')
+
       return false
     }
+
+    resourceState.userInfo = response.data
+    resourceState.list = response.data.data || []
+    resourcePagination.itemCount = response.data.total || 0
+
+    if (isInitialSearch) {
+      resourcePagination.page = PAGINATION_CONFIG.DEFAULT_PAGE
+      resourcePagination.pageSize = PAGINATION_CONFIG.DEFAULT_PAGE_SIZE
+
+      if (resourceState.list.length > 0) {
+        message.success(`找到 ${resourcePagination.itemCount} 个资源`)
+
+        return true
+      }
+
+      message.warning('该用户暂无分享资源')
+
+      return false
+    }
+
+    return true
   }
 
   // 获取资源列表
   const fetchResourceList = async (isInitialSearch = false) => {
-    if (!subscribeUserId.value.trim()) return false
+    if (!isActive() || !subscribeUserId.value.trim()) return false
 
+    const currentRequest = ++resourceListRequestVersion
+    allResourcesRequestVersion++
     resourceState.loading = true
+    resourceState.loadingAll = false
+
     try {
       const response = await getSubscribeUser({
         subscribeUser: subscribeUserId.value.trim(),
@@ -86,13 +111,24 @@ export function useSubscribeResource(subscribeUserId: Ref<string>, message: Mess
         currentPage: resourcePagination.page,
         pageSize: resourcePagination.pageSize,
       })
+
+      if (!isActive() || currentRequest !== resourceListRequestVersion) {
+        return false
+      }
+
       return handleApiResponse(response, isInitialSearch)
     } catch (error) {
+      if (!isActive() || currentRequest !== resourceListRequestVersion) {
+        return false
+      }
+
       console.error('获取资源列表失败:', error)
       message.error('获取资源列表失败')
       return false
     } finally {
-      resourceState.loading = false
+      if (isActive() && currentRequest === resourceListRequestVersion) {
+        resourceState.loading = false
+      }
     }
   }
 
@@ -123,37 +159,56 @@ export function useSubscribeResource(subscribeUserId: Ref<string>, message: Mess
 
   // 获取全部资源
   const fetchAllResources = async () => {
-    if (!subscribeUserId.value.trim()) return false
+    if (!isActive() || !subscribeUserId.value.trim()) return false
 
+    const currentRequest = ++allResourcesRequestVersion
+    resourceListRequestVersion++
     resourceState.loadingAll = true
+    resourceState.loading = false
     resourceState.selected = []
+
     try {
       const response = await getSubscribeUserAll({
         subscribeUser: subscribeUserId.value.trim(),
       })
-      if (response.data) {
-        resourceState.list = response.data.data || []
-        resourceState.userInfo = {
-          name: response.data.name,
-          data: response.data.data || [],
-          total: response.data.total,
-          currentPage: 1,
-          pageSize: response.data.total,
-        }
-        resourcePagination.itemCount = response.data.total || 0
-        resourcePagination.pageSize = response.data.total || 0
-        
-        return true
-      } else {
-        message.error(response.msg || '获取全部资源失败')
+
+      if (!isActive() || currentRequest !== allResourcesRequestVersion) {
         return false
       }
+
+      if (!isBusinessSuccess(response) || !response.data) {
+        message.error(response.msg || '获取全部资源失败')
+
+        return false
+      }
+
+      const total = response.data.total || 0
+      const pageSize = total > 0 ? total : PAGINATION_CONFIG.DEFAULT_PAGE_SIZE
+
+      resourceState.list = response.data.data || []
+      resourceState.userInfo = {
+        name: response.data.name,
+        data: response.data.data || [],
+        total,
+        currentPage: 1,
+        pageSize,
+      }
+      resourcePagination.itemCount = total
+      resourcePagination.pageSize = pageSize
+
+      return true
     } catch (error) {
+      if (!isActive() || currentRequest !== allResourcesRequestVersion) {
+        return false
+      }
+
       console.error('获取全部资源失败:', error)
       message.error('获取全部资源失败')
       return false
     } finally {
-      resourceState.loadingAll = false
+      if (isActive() && currentRequest === allResourcesRequestVersion) {
+        resourceState.loadingAll = false
+      }
     }
   }
 
@@ -177,6 +232,7 @@ export function useSubscribeResource(subscribeUserId: Ref<string>, message: Mess
     handleResetResourceSearch,
     handleResourcePageChange,
     handleResourcePageSizeChange,
+    invalidateRequests,
     resetState,
     checkedRowKeys,
     handleCheckedRowKeysChange,

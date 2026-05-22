@@ -4,11 +4,7 @@
       <n-tab-pane name="hot" tab="热门数据">
         <div class="hot-section">
           <div class="source-tabs">
-            <n-radio-group
-              v-model:value="selectedSource"
-              name="source"
-              @update:value="handleSourceChange"
-            >
+            <n-radio-group v-model:value="selectedSource" name="source">
               <n-radio-button value="tmdb">TMDB</n-radio-button>
               <n-radio-button value="douban">豆瓣</n-radio-button>
             </n-radio-group>
@@ -206,21 +202,30 @@
     </n-modal>
 
     <!-- 挂载确认弹窗 -->
-    <n-modal v-model:show="showMountModal" preset="card" title="挂载资源" style="width: 500px">
+    <n-modal
+      :show="showMountModal"
+      preset="card"
+      title="挂载资源"
+      style="width: 500px"
+      :closable="!mounting"
+      :mask-closable="!mounting"
+      :close-on-esc="!mounting"
+      @update:show="handleMountModalShowUpdate"
+    >
       <n-form :model="mountForm" label-placement="left">
         <n-form-item label="资源名称">
-          <n-input v-model:value="mountForm.title" />
+          <n-input v-model:value="mountForm.title" :disabled="mounting" />
         </n-form-item>
         <n-form-item label="分享链接">
-          <n-input v-model:value="mountForm.shareUrl" />
+          <n-input v-model:value="mountForm.shareUrl" :disabled="mounting" />
         </n-form-item>
         <n-form-item label="分享码">
-          <n-input v-model:value="mountForm.shareCode" />
+          <n-input v-model:value="mountForm.shareCode" :disabled="mounting" />
         </n-form-item>
       </n-form>
       <template #footer>
         <n-space justify="end">
-          <n-button @click="showMountModal = false">取消</n-button>
+          <n-button :disabled="mounting" @click="closeMountModal">取消</n-button>
           <n-button type="primary" @click="handleMount" :loading="mounting">确认挂载</n-button>
         </n-space>
       </template>
@@ -229,7 +234,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useMessage } from 'naive-ui'
 import { SearchOutline } from '@vicons/ionicons5'
 import {
@@ -290,6 +295,13 @@ const mountForm = ref({
   cover: '',
 })
 
+let isPageMounted = false
+let hotDataRequestId = 0
+let searchRequestId = 0
+let saveConfigRequestId = 0
+let mountRequestId = 0
+let mountModalSession = 0
+
 const loadCategories = async () => {
   try {
     const res = await getCategories()
@@ -303,10 +315,13 @@ const loadCategories = async () => {
 }
 
 const loadHotData = async () => {
+  const requestId = ++hotDataRequestId
+
   if (selectedSource.value === 'tmdb' && !configForm.value.tmdbAPIKey) {
     message.warning('TMDB API Key 未配置，已自动切换到豆瓣数据源')
     selectedSource.value = 'douban'
     selectedCategory.value = ['all', '热门']
+    loading.value = false
     return
   }
   loading.value = true
@@ -326,6 +341,10 @@ const loadHotData = async () => {
     } else {
       res = await getDoubanMovies(category)
     }
+    if (!isPageMounted || requestId !== hotDataRequestId) {
+      return
+    }
+
     if (res.code === 200) {
       movies.value = res.data?.movies || []
     } else {
@@ -333,10 +352,16 @@ const loadHotData = async () => {
       movies.value = []
     }
   } catch {
+    if (!isPageMounted || requestId !== hotDataRequestId) {
+      return
+    }
+
     message.error('加载数据失败')
     movies.value = []
   } finally {
-    loading.value = false
+    if (isPageMounted && requestId === hotDataRequestId) {
+      loading.value = false
+    }
   }
 }
 
@@ -385,10 +410,17 @@ const handleSearch = async () => {
     message.warning('请输入搜索关键词')
     return
   }
+
+  const requestId = ++searchRequestId
+
   searching.value = true
   searched.value = true
   try {
     const res = await searchPan(searchKeyword.value)
+    if (!isPageMounted || requestId !== searchRequestId) {
+      return
+    }
+
     if (res.code === 200) {
       searchResults.value = res.data || []
     } else {
@@ -396,10 +428,16 @@ const handleSearch = async () => {
       searchResults.value = []
     }
   } catch {
+    if (!isPageMounted || requestId !== searchRequestId) {
+      return
+    }
+
     message.error('搜索失败')
     searchResults.value = []
   } finally {
-    searching.value = false
+    if (isPageMounted && requestId === searchRequestId) {
+      searching.value = false
+    }
   }
 }
 
@@ -408,10 +446,17 @@ const handleAISearch = async () => {
     message.warning('请输入搜索关键词')
     return
   }
+
+  const requestId = ++searchRequestId
+
   searching.value = true
   searched.value = true
   try {
     const res = await searchPanWithAI(searchKeyword.value)
+    if (!isPageMounted || requestId !== searchRequestId) {
+      return
+    }
+
     if (res.code === 200 && res.data) {
       if (res.data.result) {
         message.success('AI推荐: ' + res.data.keyword)
@@ -428,14 +473,21 @@ const handleAISearch = async () => {
       searchResults.value = []
     }
   } catch {
+    if (!isPageMounted || requestId !== searchRequestId) {
+      return
+    }
+
     message.error('AI搜索失败')
     searchResults.value = []
   } finally {
-    searching.value = false
+    if (isPageMounted && requestId === searchRequestId) {
+      searching.value = false
+    }
   }
 }
 
 const selectSearchResult = (item: SearchResult) => {
+  mountModalSession++
   mountForm.value = {
     title: item.name,
     shareUrl: item.shareUrl,
@@ -443,6 +495,25 @@ const selectSearchResult = (item: SearchResult) => {
     cover: '',
   }
   showMountModal.value = true
+}
+
+const handleMountModalShowUpdate = (show: boolean) => {
+  if (show) {
+    showMountModal.value = true
+
+    return
+  }
+  if (mounting.value) {
+    return
+  }
+
+  closeMountModal()
+}
+
+const closeMountModal = () => {
+  mountModalSession++
+  showMountModal.value = false
+  mounting.value = false
 }
 
 const handleSearchResource = () => {
@@ -455,45 +526,100 @@ const handleSearchResource = () => {
 }
 
 const handleSaveConfig = async () => {
+  if (savingConfig.value) {
+    return
+  }
+
+  const requestId = ++saveConfigRequestId
+
   savingConfig.value = true
   try {
     const res = await updateSubscriptionConfig(configForm.value)
+    if (!isPageMounted || requestId !== saveConfigRequestId) {
+      return
+    }
+
     if (res.code === 200) {
       message.success('保存成功')
     } else {
       message.error(res.msg || '保存失败')
     }
   } catch {
+    if (!isPageMounted || requestId !== saveConfigRequestId) {
+      return
+    }
+
     message.error('保存失败')
   } finally {
-    savingConfig.value = false
+    if (isPageMounted && requestId === saveConfigRequestId) {
+      savingConfig.value = false
+    }
   }
 }
 
 const handleMount = async () => {
+  if (mounting.value) {
+    return
+  }
+
   if (!mountForm.value.title || !mountForm.value.shareUrl) {
     message.warning('请填写完整信息')
     return
   }
+
+  const requestId = ++mountRequestId
+  const session = mountModalSession
+  const payload = { ...mountForm.value }
+
   mounting.value = true
   try {
-    const res = await mountSubscription(mountForm.value)
+    const res = await mountSubscription(payload)
+    if (
+      !isPageMounted ||
+      requestId !== mountRequestId ||
+      session !== mountModalSession ||
+      !showMountModal.value
+    ) {
+      return
+    }
+
     if (res.code === 200) {
       message.success('挂载请求已提交')
-      showMountModal.value = false
+      closeMountModal()
     } else {
       message.error(res.msg || '挂载失败')
     }
   } catch {
+    if (
+      !isPageMounted ||
+      requestId !== mountRequestId ||
+      session !== mountModalSession ||
+      !showMountModal.value
+    ) {
+      return
+    }
+
     message.error('挂载失败')
   } finally {
-    mounting.value = false
+    if (
+      isPageMounted &&
+      requestId === mountRequestId &&
+      session === mountModalSession &&
+      showMountModal.value
+    ) {
+      mounting.value = false
+    }
   }
 }
 
 onMounted(async () => {
+  isPageMounted = true
+
   await loadConfig()
+  if (!isPageMounted) return
+
   await loadCategories()
+  if (!isPageMounted) return
 
   // 设置默认分类
   if (configForm.value.tmdbAPIKey) {
@@ -507,6 +633,15 @@ onMounted(async () => {
 
   // 加载热门数据
   loadHotData()
+})
+
+onUnmounted(() => {
+  isPageMounted = false
+  hotDataRequestId++
+  searchRequestId++
+  saveConfigRequestId++
+  mountRequestId++
+  mountModalSession++
 })
 </script>
 

@@ -9,10 +9,36 @@ import (
 )
 
 func (s *service) Query(ctx context.Context, id int64) (*models.CloudToken, error) {
+	if id <= 0 {
+		return nil, errInvalidCloudTokenID
+	}
+
+	return s.query(ctx, s.getDB(ctx).Where("id = ?", id), id)
+}
+
+func (s *service) QueryAccessible(ctx context.Context, id, userID int64, isAdmin bool) (*models.CloudToken, error) {
+	if id <= 0 {
+		return nil, errInvalidCloudTokenID
+	}
+
+	query := s.getDB(ctx).Where("id = ?", id)
+
+	if !isAdmin {
+		if userID <= 0 {
+			return nil, errInvalidCloudTokenUserID
+		}
+
+		query = query.Where("user_id = ?", userID)
+	}
+
+	return s.query(ctx, query, id)
+}
+
+func (s *service) query(ctx context.Context, query *gorm.DB, id int64) (*models.CloudToken, error) {
 	var cloudToken models.CloudToken
-	if err := s.getDB(ctx).Where("id = ?", id).First(&cloudToken).Error; err != nil {
+	if err := query.First(&cloudToken).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("云盘令牌不存在")
+			return nil, errors.Wrap(gorm.ErrRecordNotFound, "云盘令牌不存在")
 		}
 
 		ctx.Error("查询云盘令牌失败", zap.Error(err), zap.Int64("id", id))

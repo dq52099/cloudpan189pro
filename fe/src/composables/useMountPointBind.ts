@@ -12,8 +12,23 @@ export function useMountPointBind() {
   ): Promise<AddStorageResponse[]> => {
     return new Promise((resolve) => {
       const contentRef = ref<InstanceType<typeof MountPointBindModal> | null>(null)
+      let settled = false
+      let modalInstance: ReturnType<typeof modal.create>
 
-      const modalInstance = modal.create({
+      const settle = (payload: AddStorageResponse[]) => {
+        if (settled) return
+        settled = true
+        resolve(payload)
+      }
+
+      const closeWithCancel = () => {
+        if (settled) return
+        if (contentRef.value?.state.submitLoading) return
+        settle([])
+        modalInstance.destroy()
+      }
+
+      modalInstance = modal.create({
         title: '挂载点绑定',
         preset: 'dialog',
         style: {
@@ -25,11 +40,11 @@ export function useMountPointBind() {
             items,
             defaultCloudToken: options?.defaultCloudToken,
             onConfirm: (payload) => {
-              resolve(payload)
+              settle(payload)
               modalInstance.destroy()
             },
             onCancel: () => {
-              modalInstance.destroy()
+              closeWithCancel()
             },
           }),
         action: () =>
@@ -38,8 +53,9 @@ export function useMountPointBind() {
               NButton,
               {
                 onClick: () => {
-                  modalInstance.destroy()
+                  closeWithCancel()
                 },
+                disabled: contentRef.value?.state.submitLoading,
               },
               { default: () => '取消' }
             ),
@@ -48,6 +64,7 @@ export function useMountPointBind() {
               {
                 type: 'primary',
                 loading: contentRef.value?.state.submitLoading,
+                disabled: contentRef.value?.state.submitLoading,
                 onClick: () => {
                   contentRef.value?.handleConfirm()
                 },
@@ -55,8 +72,10 @@ export function useMountPointBind() {
               { default: () => '确认挂载' }
             ),
           ]),
-        closable: true,
+        closable: false,
         maskClosable: false,
+        closeOnEsc: false,
+        onClose: closeWithCancel,
       })
     })
   }

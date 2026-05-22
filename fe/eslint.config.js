@@ -26,21 +26,6 @@ export default [
         parser: typescriptParser,
         extraFileExtensions: ['.vue'],
       },
-    },
-    plugins: {
-      '@typescript-eslint': typescript,
-      prettier,
-    },
-    rules: {
-      'n/prefer-global/process': 'off',
-      'no-undef': 'error',
-      'no-fallthrough': 'off',
-      'vue/block-order': 'off',
-      '@typescript-eslint/no-this-alias': 'off',
-      'prefer-promise-reject-errors': 'off',
-      'vue/multi-word-component-names': 'off',
-    },
-    languageOptions: {
       globals: {
         h: 'readonly',
         unref: 'readonly',
@@ -61,6 +46,19 @@ export default [
         NodeJS: 'readonly',
         Enums: 'readonly',
       },
+    },
+    plugins: {
+      '@typescript-eslint': typescript,
+      prettier,
+    },
+    rules: {
+      'n/prefer-global/process': 'off',
+      'no-undef': 'error',
+      'no-fallthrough': 'off',
+      'vue/block-order': 'off',
+      '@typescript-eslint/no-this-alias': 'off',
+      'prefer-promise-reject-errors': 'off',
+      'vue/multi-word-component-names': 'off',
     },
   },
 

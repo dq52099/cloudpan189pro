@@ -94,7 +94,7 @@ http://localhost:12395/dav
 ## 🛠️ 技术栈
 
 ### 后端
-- **语言**: Go 1.24
+- **语言**: Go 1.25
 - **框架**: Gin
 - **数据库**: SQLite (GORM)
 - **认证**: JWT
@@ -107,9 +107,9 @@ http://localhost:12395/dav
 ## 📦 开发部署
 
 ### 环境要求
-- Go 1.24+
+- Go 1.25+
 - Node.js 22+
-- npm 或 yarn 或 pnpm
+- Corepack（Node.js 22 自带，用于固定 pnpm 版本）
 
 ### 1. 克隆项目
 ```bash
@@ -135,13 +135,13 @@ go run cmd/main.go
 cd fe
 
 # 安装依赖
-npm install
+corepack pnpm@9.15.9 install --frozen-lockfile
 
 # 开发模式
-npm run dev
+corepack pnpm@9.15.9 dev
 
 # 构建生产版本
-npm run build
+corepack pnpm@9.15.9 build
 ```
 
 ### 4. 配置文件
@@ -161,7 +161,7 @@ mediaDir: "media_dir"  # 媒体文件映射目录
 go run cmd/main.go
 
 # 启动前端开发服务器（另一个终端）
-cd fe && npm run dev
+cd fe && corepack pnpm@9.15.9 dev
 ```
 
 ### 6. 访问开发环境

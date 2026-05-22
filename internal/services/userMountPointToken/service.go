@@ -1,6 +1,7 @@
 package userMountPointToken
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/bootstrap"
@@ -13,6 +14,7 @@ import (
 type Service interface {
 	BindToken(ctx context.Context, userID, mountPointID, tokenID int64) error
 	UnbindToken(ctx context.Context, userID, mountPointID int64) error
+	UnbindTokenWithResult(ctx context.Context, userID, mountPointID int64) (bool, error)
 	GetTokenID(ctx context.Context, userID, mountPointID int64) (int64, error)
 	GetUserTokens(ctx context.Context, userID int64, mountPointIDs []int64) (map[int64]int64, error)
 	GetUserMountPointIDs(ctx context.Context, userID int64) ([]int64, error)
@@ -25,6 +27,12 @@ type service struct {
 	svc bootstrap.ServiceContext
 }
 
+var errInvalidBindTokenID = errors.New("userID、mountPointID、tokenID 必须全部大于 0")
+var errInvalidUnbindTokenID = errors.New("userID、mountPointID 必须全部大于 0")
+var errInvalidUserID = errors.New("userID 必须大于 0")
+var errInvalidMountPointID = errors.New("mountPointID 必须大于 0")
+var errInvalidTokenID = errors.New("tokenID 必须大于 0")
+
 func NewService(svc bootstrap.ServiceContext) Service {
 	return &service{
 		svc: svc,
@@ -36,49 +44,90 @@ func (s *service) getDB(ctx context.Context) *gorm.DB {
 }
 
 func (s *service) BindToken(ctx context.Context, userID, mountPointID, tokenID int64) error {
-	var existing models.UserMountPointToken
-	err := s.getDB(ctx).Where("user_id = ? AND mount_point_id = ?", userID, mountPointID).First(&existing).Error
-	if err == gorm.ErrRecordNotFound {
-		return s.getDB(ctx).Create(&models.UserMountPointToken{
+	if userID <= 0 || mountPointID <= 0 || tokenID <= 0 {
+		return errInvalidBindTokenID
+	}
+
+	if err := s.getDB(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("user_id = ? AND mount_point_id = ?", userID, mountPointID).
+			Delete(new(models.UserMountPointToken)).Error; err != nil {
+			return err
+		}
+
+		return tx.Create(&models.UserMountPointToken{
 			UserID:       userID,
 			MountPointID: mountPointID,
 			TokenID:      tokenID,
 		}).Error
-	} else if err != nil {
-		ctx.Error("查询用户挂载点令牌绑定失败", zap.Error(err))
+	}); err != nil {
+		ctx.Error("绑定用户挂载点令牌失败", zap.Error(err))
+
 		return err
 	}
 
-	existing.TokenID = tokenID
-	return s.getDB(ctx).Save(&existing).Error
+	return nil
 }
 
 func (s *service) UnbindToken(ctx context.Context, userID, mountPointID int64) error {
-	return s.getDB(ctx).Where("user_id = ? AND mount_point_id = ?", userID, mountPointID).Delete(nil).Error
+	_, err := s.UnbindTokenWithResult(ctx, userID, mountPointID)
+
+	return err
+}
+
+func (s *service) UnbindTokenWithResult(ctx context.Context, userID, mountPointID int64) (bool, error) {
+	if userID <= 0 || mountPointID <= 0 {
+		return false, errInvalidUnbindTokenID
+	}
+
+	result := s.getDB(ctx).
+		Where("user_id = ? AND mount_point_id = ?", userID, mountPointID).
+		Delete(new(models.UserMountPointToken))
+	if result.Error != nil {
+		return false, result.Error
+	}
+
+	return result.RowsAffected > 0, nil
 }
 
 func (s *service) GetTokenID(ctx context.Context, userID, mountPointID int64) (int64, error) {
+	if userID <= 0 || mountPointID <= 0 {
+		return 0, errInvalidUnbindTokenID
+	}
+
 	var binding models.UserMountPointToken
+
 	err := s.getDB(ctx).Where("user_id = ? AND mount_point_id = ?", userID, mountPointID).First(&binding).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return 0, nil
 	}
+
 	return binding.TokenID, err
 }
 
 func (s *service) GetUserTokens(ctx context.Context, userID int64, mountPointIDs []int64) (map[int64]int64, error) {
+	if userID <= 0 {
+		return nil, errInvalidUserID
+	}
+
 	if len(mountPointIDs) == 0 {
 		return make(map[int64]int64), nil
 	}
 
+	normalizedMountPointIDs, err := normalizeMountPointIDs(mountPointIDs)
+	if err != nil {
+		return nil, err
+	}
+
 	var bindings []models.UserMountPointToken
-	err := s.getDB(ctx).Where("user_id = ? AND mount_point_id IN ?", userID, mountPointIDs).Find(&bindings).Error
+
+	err = s.getDB(ctx).Where("user_id = ? AND mount_point_id IN ?", userID, normalizedMountPointIDs).Find(&bindings).Error
 	if err != nil {
 		if isMissingTableError(err) {
 			return make(map[int64]int64), nil
 		}
 
 		ctx.Error("查询用户挂载点令牌绑定列表失败", zap.Error(err))
+
 		return nil, err
 	}
 
@@ -86,11 +135,17 @@ func (s *service) GetUserTokens(ctx context.Context, userID int64, mountPointIDs
 	for _, b := range bindings {
 		result[b.MountPointID] = b.TokenID
 	}
+
 	return result, nil
 }
 
 func (s *service) GetUserMountPointIDs(ctx context.Context, userID int64) ([]int64, error) {
+	if userID <= 0 {
+		return nil, errInvalidUserID
+	}
+
 	var bindings []models.UserMountPointToken
+
 	err := s.getDB(ctx).Where("user_id = ?", userID).Find(&bindings).Error
 	if err != nil {
 		if isMissingTableError(err) {
@@ -98,6 +153,7 @@ func (s *service) GetUserMountPointIDs(ctx context.Context, userID int64) ([]int
 		}
 
 		ctx.Error("查询用户挂载点绑定失败", zap.Error(err))
+
 		return nil, err
 	}
 
@@ -114,14 +170,21 @@ func (s *service) GetAnyUserTokens(ctx context.Context, mountPointIDs []int64) (
 		return make(map[int64]int64), nil
 	}
 
+	normalizedMountPointIDs, err := normalizeMountPointIDs(mountPointIDs)
+	if err != nil {
+		return nil, err
+	}
+
 	var bindings []models.UserMountPointToken
-	err := s.getDB(ctx).Where("mount_point_id IN ?", mountPointIDs).Order("updated_at DESC, id DESC").Find(&bindings).Error
+
+	err = s.getDB(ctx).Where("mount_point_id IN ?", normalizedMountPointIDs).Order("updated_at DESC, id DESC").Find(&bindings).Error
 	if err != nil {
 		if isMissingTableError(err) {
 			return make(map[int64]int64), nil
 		}
 
 		ctx.Error("查询挂载点已绑定令牌失败", zap.Error(err))
+
 		return nil, err
 	}
 
@@ -130,18 +193,51 @@ func (s *service) GetAnyUserTokens(ctx context.Context, mountPointIDs []int64) (
 		if _, ok := result[binding.MountPointID]; ok {
 			continue
 		}
+
 		result[binding.MountPointID] = binding.TokenID
 	}
 
 	return result, nil
 }
 
+func normalizeMountPointIDs(mountPointIDs []int64) ([]int64, error) {
+	seen := make(map[int64]struct{}, len(mountPointIDs))
+	normalized := make([]int64, 0, len(mountPointIDs))
+
+	for _, mountPointID := range mountPointIDs {
+		if mountPointID <= 0 {
+			return nil, errInvalidMountPointID
+		}
+
+		if _, ok := seen[mountPointID]; ok {
+			continue
+		}
+
+		seen[mountPointID] = struct{}{}
+		normalized = append(normalized, mountPointID)
+	}
+
+	return normalized, nil
+}
+
 func (s *service) DeleteByMountPoint(ctx context.Context, mountPointID int64) error {
-	return s.getDB(ctx).Where("mount_point_id = ?", mountPointID).Delete(nil).Error
+	if mountPointID <= 0 {
+		return errInvalidMountPointID
+	}
+
+	return s.getDB(ctx).
+		Where("mount_point_id = ?", mountPointID).
+		Delete(new(models.UserMountPointToken)).Error
 }
 
 func (s *service) DeleteByToken(ctx context.Context, tokenID int64) error {
-	return s.getDB(ctx).Where("token_id = ?", tokenID).Delete(nil).Error
+	if tokenID <= 0 {
+		return errInvalidTokenID
+	}
+
+	return s.getDB(ctx).
+		Where("token_id = ?", tokenID).
+		Delete(new(models.UserMountPointToken)).Error
 }
 
 func isMissingTableError(err error) bool {

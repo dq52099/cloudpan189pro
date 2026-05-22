@@ -1,14 +1,22 @@
 package bootstrap
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/glebarez/sqlite"
 	"github.com/xxcheng123/cloudpan189-share/internal/configs"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+var errMissingSourceTable = errors.New("source table is missing")
+
+const dataMigrationBatchSize = 1000
 
 func MigrateFromSQLite(cfg *configs.Config) error {
 	sqlitePath := cfg.DBFile
@@ -20,8 +28,11 @@ func MigrateFromSQLite(cfg *configs.Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to open SQLite database: %w", err)
 	}
+	defer closeGormDB(sqliteDB)
 
-	sqliteDB.Exec("PRAGMA encoding = 'UTF-8'")
+	if err := sqliteDB.Exec("PRAGMA encoding = 'UTF-8'").Error; err != nil {
+		return fmt.Errorf("failed to set SQLite encoding: %w", err)
+	}
 
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=Asia/Shanghai",
 		cfg.Postgres.Host,
@@ -36,8 +47,11 @@ func MigrateFromSQLite(cfg *configs.Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to open PostgreSQL database: %w", err)
 	}
+	defer closeGormDB(pgDB)
 
-	pgDB.Exec("SET client_encoding = 'UTF8'")
+	if err := pgDB.Exec("SET client_encoding = 'UTF8'").Error; err != nil {
+		return fmt.Errorf("failed to set PostgreSQL encoding: %w", err)
+	}
 
 	var userCount int64
 	if err := sqliteDB.Model(&models.User{}).Count(&userCount).Error; err != nil {
@@ -46,214 +60,271 @@ func MigrateFromSQLite(cfg *configs.Config) error {
 		fmt.Printf("检测到 SQLite 用户数: %d\n", userCount)
 	}
 
-	if err := migrateUsers(sqliteDB, pgDB); err != nil {
-		fmt.Printf("迁移用户数据失败: %v\n", err)
-	} else {
-		fmt.Println("用户数据迁移完成")
+	steps := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "用户组", run: func() error { return migrateUserGroups(sqliteDB, pgDB) }},
+		{name: "用户", run: func() error { return migrateUsers(sqliteDB, pgDB) }},
+		{name: "云盘令牌", run: func() error { return migrateCloudTokens(sqliteDB, pgDB) }},
+		{name: "虚拟文件", run: func() error { return migrateVirtualFiles(sqliteDB, pgDB) }},
+		{name: "挂载点", run: func() error { return migrateMountPoints(sqliteDB, pgDB) }},
+		{name: "用户组文件关系", run: func() error { return migrateGroup2Files(sqliteDB, pgDB) }},
+		{name: "用户挂载点令牌", run: func() error { return migrateUserMountPointTokens(sqliteDB, pgDB) }},
+		{name: "自动订阅计划", run: func() error { return migrateAutoIngestPlans(sqliteDB, pgDB) }},
+		{name: "自动订阅日志", run: func() error { return migrateAutoIngestLogs(sqliteDB, pgDB) }},
+		{name: "媒体文件", run: func() error { return migrateMediaFiles(sqliteDB, pgDB) }},
+		{name: "媒体配置", run: func() error { return migrateMediaConfig(sqliteDB, pgDB) }},
+		{name: "文件任务日志", run: func() error { return migrateFileTaskLogs(sqliteDB, pgDB) }},
+		{name: "登录日志", run: func() error { return migrateLoginLogs(sqliteDB, pgDB) }},
+		{name: "Telegram 设置", run: func() error { return migrateTelegramSettings(sqliteDB, pgDB) }},
+		{name: "Telegram 用户", run: func() error { return migrateTelegramUsers(sqliteDB, pgDB) }},
+		{name: "订阅", run: func() error { return migrateSubscriptions(sqliteDB, pgDB) }},
+		{name: "订阅匹配历史", run: func() error { return migrateMatchHistory(sqliteDB, pgDB) }},
+		{name: "每日热门历史", run: func() error { return migrateDailyHotHistory(sqliteDB, pgDB) }},
+		{name: "系统设置", run: func() error { return migrateSystemSettings(sqliteDB, pgDB) }},
+		{name: "设置", run: func() error { return migrateSettings(sqliteDB, pgDB, userCount) }},
 	}
 
-	if err := migrateUserGroups(sqliteDB, pgDB); err != nil {
-		fmt.Printf("迁移用户组数据失败: %v\n", err)
-	} else {
-		fmt.Println("用户组数据迁移完成")
-	}
-
-	if err := migrateCloudTokens(sqliteDB, pgDB); err != nil {
-		fmt.Printf("迁移云盘令牌数据失败: %v\n", err)
-	} else {
-		fmt.Println("云盘令牌数据迁移完成")
-	}
-
-	if err := migrateAutoIngestPlans(sqliteDB, pgDB); err != nil {
-		fmt.Printf("迁移自动订阅计划数据失败: %v\n", err)
-	} else {
-		fmt.Println("自动订阅计划数据迁移完成")
-	}
-
-	if err := migrateSettings(sqliteDB, pgDB, userCount); err != nil {
-		fmt.Printf("迁移设置数据失败: %v\n", err)
-	} else {
-		fmt.Println("设置数据迁移完成")
+	for _, step := range steps {
+		if err := runMigrationStep(step.name, step.run); err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
 func migrateUsers(src, dst *gorm.DB) error {
-	var users []models.User
-	if err := src.Find(&users).Error; err != nil {
-		return err
-	}
-	if len(users) == 0 {
-		return nil
-	}
-	for i := range users {
-		users[i].ID = 0
-	}
-	return dst.Save(&users).Error
+	return migrateRows[models.User](src, dst, new(models.User).TableName())
 }
 
 func migrateUserGroups(src, dst *gorm.DB) error {
-	var groups []models.UserGroup
-	if err := src.Find(&groups).Error; err != nil {
-		return err
-	}
-	if len(groups) == 0 {
-		return nil
-	}
-	for i := range groups {
-		groups[i].ID = 0
-	}
-	return dst.Save(&groups).Error
+	return migrateRows[models.UserGroup](src, dst, new(models.UserGroup).TableName())
 }
 
 func migrateGroup2Files(src, dst *gorm.DB) error {
-	var relations []models.Group2File
-	if err := src.Find(&relations).Error; err != nil {
-		return err
-	}
-	if len(relations) == 0 {
-		return nil
-	}
-	for i := range relations {
-		relations[i].ID = 0
-	}
-	return dst.Save(&relations).Error
+	return migrateRows[models.Group2File](src, dst, new(models.Group2File).TableName())
 }
 
 func migrateCloudTokens(src, dst *gorm.DB) error {
-	var tokens []models.CloudToken
-	if err := src.Find(&tokens).Error; err != nil {
-		return err
-	}
-	if len(tokens) == 0 {
-		return nil
-	}
-	for i := range tokens {
-		tokens[i].ID = 0
-	}
-	return dst.Save(&tokens).Error
+	return migrateRows[models.CloudToken](src, dst, new(models.CloudToken).TableName())
 }
 
 func migrateAutoIngestPlans(src, dst *gorm.DB) error {
-	var plans []models.AutoIngestPlan
-	if err := src.Find(&plans).Error; err != nil {
-		return err
-	}
-	if len(plans) == 0 {
-		return nil
-	}
-	for i := range plans {
-		plans[i].ID = 0
-	}
-	return dst.Save(&plans).Error
+	return migrateRows[models.AutoIngestPlan](src, dst, new(models.AutoIngestPlan).TableName())
+}
+
+func migrateAutoIngestLogs(src, dst *gorm.DB) error {
+	return migrateRows[models.AutoIngestLog](src, dst, new(models.AutoIngestLog).TableName())
 }
 
 func migrateSettings(src, dst *gorm.DB, userCount int64) error {
 	var settings []models.Setting
-	if err := src.Find(&settings).Error; err != nil {
+	if err := findSourceRows(src, &settings); err != nil {
 		return err
 	}
+
 	if len(settings) == 0 {
 		return nil
 	}
+
 	for i := range settings {
-		settings[i].ID = 0
 		if userCount > 0 {
 			settings[i].Initialized = true
 		}
 	}
-	return dst.Save(&settings).Error
+
+	if err := upsertRows(dst, settings); err != nil {
+		return err
+	}
+
+	return resetPostgresSequence(dst, new(models.Setting).TableName())
+}
+
+func migrateMediaFiles(src, dst *gorm.DB) error {
+	return migrateRows[models.MediaFile](src, dst, new(models.MediaFile).TableName())
 }
 
 func migrateMediaConfig(src, dst *gorm.DB) error {
-	var configs []models.MediaConfig
-	if err := src.Find(&configs).Error; err != nil {
-		return err
-	}
-	if len(configs) == 0 {
-		return nil
-	}
-	for i := range configs {
-		configs[i].ID = 0
-	}
-	return dst.Save(&configs).Error
+	return migrateRows[models.MediaConfig](src, dst, new(models.MediaConfig).TableName())
 }
 
 func migrateLoginLogs(src, dst *gorm.DB) error {
-	var logs []models.LoginLog
-	if err := src.Find(&logs).Error; err != nil {
-		return err
-	}
-	if len(logs) == 0 {
-		return nil
-	}
-	for i := range logs {
-		logs[i].ID = 0
-	}
-	return dst.Save(&logs).Error
+	return migrateRows[models.LoginLog](src, dst, new(models.LoginLog).TableName())
 }
 
 func migrateFileTaskLogs(src, dst *gorm.DB) error {
-	var logs []models.FileTaskLog
-	if err := src.Find(&logs).Error; err != nil {
-		return err
-	}
-	if len(logs) == 0 {
-		return nil
-	}
-	for i := range logs {
-		logs[i].ID = 0
-	}
-	return dst.Save(&logs).Error
+	return migrateRows[models.FileTaskLog](src, dst, new(models.FileTaskLog).TableName())
 }
 
 func migrateMountPoints(src, dst *gorm.DB) error {
-	var mountPoints []models.MountPoint
-	if err := src.Find(&mountPoints).Error; err != nil {
-		return err
-	}
-	if len(mountPoints) == 0 {
-		return nil
-	}
-	for i := range mountPoints {
-		mountPoints[i].ID = 0
-	}
-	return dst.Save(&mountPoints).Error
+	return migrateRows[models.MountPoint](src, dst, new(models.MountPoint).TableName())
+}
+
+func migrateUserMountPointTokens(src, dst *gorm.DB) error {
+	return migrateRows[models.UserMountPointToken](src, dst, new(models.UserMountPointToken).TableName())
+}
+
+func migrateTelegramSettings(src, dst *gorm.DB) error {
+	return migrateRows[models.TelegramSetting](src, dst, new(models.TelegramSetting).TableName())
+}
+
+func migrateTelegramUsers(src, dst *gorm.DB) error {
+	return migrateRows[models.TelegramUser](src, dst, new(models.TelegramUser).TableName())
+}
+
+func migrateSubscriptions(src, dst *gorm.DB) error {
+	return migrateRows[models.Subscription](src, dst, new(models.Subscription).TableName())
+}
+
+func migrateMatchHistory(src, dst *gorm.DB) error {
+	return migrateRows[models.MatchHistory](src, dst, new(models.MatchHistory).TableName())
+}
+
+func migrateDailyHotHistory(src, dst *gorm.DB) error {
+	return migrateRows[models.DailyHotHistory](src, dst, new(models.DailyHotHistory).TableName())
+}
+
+func migrateSystemSettings(src, dst *gorm.DB) error {
+	return migrateRows[SystemSetting](src, dst, new(SystemSetting).TableName())
 }
 
 func migrateVirtualFiles(src, dst *gorm.DB) error {
 	var files []models.VirtualFile
-	if err := src.Find(&files).Error; err != nil {
+	if err := findSourceRows(src, &files); err != nil {
 		return err
 	}
+
 	if len(files) == 0 {
 		return nil
 	}
-	batchSize := 1000
-	for i := 0; i < len(files); i += batchSize {
-		end := i + batchSize
+
+	for i := 0; i < len(files); i += dataMigrationBatchSize {
+		end := i + dataMigrationBatchSize
 		if end > len(files) {
 			end = len(files)
 		}
+
 		batch := files[i:end]
-		for j := range batch {
-			batch[j].ID = 0
-		}
-		if err := dst.Save(&batch).Error; err != nil {
-			fmt.Printf("批量迁移虚拟文件失败: %v\n", err)
+		if err := upsertRows(dst, batch); err != nil {
+			return fmt.Errorf("批量迁移虚拟文件失败: %w", err)
 		}
 	}
+
+	return resetPostgresSequence(dst, new(models.VirtualFile).TableName())
+}
+
+func runMigrationStep(name string, run func() error) error {
+	if err := run(); err != nil {
+		if errors.Is(err, errMissingSourceTable) {
+			fmt.Printf("%s数据表不存在，跳过\n", name)
+
+			return nil
+		}
+
+		return fmt.Errorf("迁移%s数据失败: %w", name, err)
+	}
+
+	fmt.Printf("%s数据迁移完成\n", name)
+
 	return nil
+}
+
+func migrateRows[T any](src, dst *gorm.DB, tableName string) error {
+	var rows []T
+	if err := findSourceRows(src, &rows); err != nil {
+		return err
+	}
+
+	if len(rows) == 0 {
+		return nil
+	}
+
+	if err := upsertRows(dst, rows); err != nil {
+		return err
+	}
+
+	return resetPostgresSequence(dst, tableName)
+}
+
+func findSourceRows[T any](src *gorm.DB, rows *[]T) error {
+	if err := src.Find(rows).Error; err != nil {
+		if isMissingTableError(err) {
+			return errMissingSourceTable
+		}
+
+		return err
+	}
+
+	return nil
+}
+
+func upsertRows[T any](dst *gorm.DB, rows []T) error {
+	return dst.Clauses(clause.OnConflict{UpdateAll: true}).CreateInBatches(&rows, dataMigrationBatchSize).Error
+}
+
+func resetPostgresSequence(db *gorm.DB, tableName string) error {
+	dialector := db.Dialector
+	if dialector == nil || dialector.Name() != "postgres" {
+		return nil
+	}
+
+	var sequence sql.NullString
+	if err := db.Raw("SELECT pg_get_serial_sequence(?, 'id')", tableName).Scan(&sequence).Error; err != nil {
+		return fmt.Errorf("failed to find PostgreSQL sequence for %s: %w", tableName, err)
+	}
+
+	if !sequence.Valid || sequence.String == "" {
+		return nil
+	}
+
+	query := fmt.Sprintf(
+		"SELECT setval(?::regclass, COALESCE((SELECT MAX(id) FROM %s), 0) + 1, false)",
+		quotePostgresIdentifier(tableName),
+	)
+	if err := db.Exec(query, sequence.String).Error; err != nil {
+		return fmt.Errorf("failed to reset PostgreSQL sequence for %s: %w", tableName, err)
+	}
+
+	return nil
+}
+
+func closeGormDB(db *gorm.DB) {
+	sqlDB, err := db.DB()
+	if err != nil {
+		return
+	}
+
+	_ = sqlDB.Close()
+}
+
+func isMissingTableError(err error) bool {
+	msg := strings.ToLower(err.Error())
+
+	return strings.Contains(msg, "no such table") ||
+		strings.Contains(msg, "does not exist") ||
+		strings.Contains(msg, "unknown table")
+}
+
+func quotePostgresIdentifier(identifier string) string {
+	parts := strings.Split(identifier, ".")
+	for i, part := range parts {
+		parts[i] = `"` + strings.ReplaceAll(part, `"`, `""`) + `"`
+	}
+
+	return strings.Join(parts, ".")
 }
 
 func DataMigrationEnabled(cfg *configs.Config) bool {
 	if cfg.DBType != "postgresql" && cfg.DBType != "postgres" {
 		return false
 	}
+
 	if cfg.Postgres == nil {
 		return false
 	}
+
 	return true
 }
 
@@ -261,6 +332,7 @@ func ShouldMigrateData(cfg *configs.Config) bool {
 	if !DataMigrationEnabled(cfg) {
 		return false
 	}
+
 	sqlitePath := cfg.DBFile
 	if sqlitePath == "" {
 		sqlitePath = "data/data.db"
@@ -270,6 +342,7 @@ func ShouldMigrateData(cfg *configs.Config) bool {
 	if err != nil {
 		return false
 	}
+	defer closeGormDB(sqliteDB)
 
 	var settingCount int64
 	if err := sqliteDB.Model(&models.Setting{}).Count(&settingCount).Error; err != nil {
@@ -293,6 +366,7 @@ func ShouldMigrateData(cfg *configs.Config) bool {
 	if err != nil {
 		return false
 	}
+	defer closeGormDB(pgDB)
 
 	var pgUserCount int64
 	if err := pgDB.Model(&models.User{}).Count(&pgUserCount).Error; err != nil {

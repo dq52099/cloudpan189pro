@@ -84,6 +84,7 @@ func Start(svc bootstrap.ServiceContext, ext *bootstrap.ExtensionServices) (func
 	} else {
 		subscriptionService = subscriptionSvi.NewService(svc.GetDBWithoutContext(), logger.Named("subscription"), nil)
 	}
+
 	subscriptionScheduler := NewSubscriptionScheduler(subscriptionService)
 	if err := subscriptionScheduler.Start(ctx); err != nil {
 		errs = append(errs, err)

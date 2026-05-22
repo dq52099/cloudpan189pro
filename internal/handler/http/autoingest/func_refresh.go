@@ -59,6 +59,10 @@ func (h *handler) Refresh() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !ensurePlanAccess(ctx, plan) {
+			return
+		}
+
 		// 当前刷新任务仅实现了订阅来源类型；新增来源时需要同步实现对应的刷新任务处理器。
 		if plan.SourceType != autoingest.SourceTypeSubscribe {
 			ctx.Fail(codePlanInvalidSource)
@@ -78,6 +82,7 @@ func (h *handler) Refresh() httpcontext.HandlerFunc {
 		body, jerr := json.Marshal(taskReq)
 		if jerr != nil {
 			ctx.Fail(codePlanRefreshFailed.WithError(jerr))
+
 			return
 		}
 
@@ -111,6 +116,7 @@ func (h *handler) RetryFailed() httpcontext.HandlerFunc {
 		req := new(retryFailedRequest)
 		if err := ctx.ShouldBindJSON(req); err != nil {
 			ctx.AbortWithInvalidParams(err)
+
 			return
 		}
 
@@ -118,22 +124,32 @@ func (h *handler) RetryFailed() httpcontext.HandlerFunc {
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				ctx.Fail(codePlanNotFound.WithError(err))
+
 				return
 			}
+
 			ctx.Fail(codePlanQueryFailed.WithError(err))
+
+			return
+		}
+
+		if !ensurePlanAccess(ctx, plan) {
 			return
 		}
 
 		if plan.SourceType != autoingest.SourceTypeSubscribe {
 			ctx.Fail(codePlanInvalidSource)
+
 			return
 		}
 
 		// 将偏移量重置为0，重新扫描所有文件
 		oldOffset := plan.Offset
+
 		if err := h.planService.UpdateOffset(ctx.GetContext(), req.PlanId, 0); err != nil {
 			ctx.GetContext().Error("重置偏移量失败", zap.Error(err))
 			ctx.Fail(codePlanUpdateFailed.WithError(err))
+
 			return
 		}
 
@@ -151,11 +167,13 @@ func (h *handler) RetryFailed() httpcontext.HandlerFunc {
 		body, jerr := json.Marshal(taskReq)
 		if jerr != nil {
 			ctx.Fail(codePlanRefreshFailed.WithError(jerr))
+
 			return
 		}
 
 		if err = h.taskEngine.PushMessage(ctx.GetContext(), taskReq.Topic(), body); err != nil {
 			ctx.Fail(codePlanRefreshFailed.WithError(err))
+
 			return
 		}
 

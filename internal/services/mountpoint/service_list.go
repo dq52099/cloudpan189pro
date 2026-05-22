@@ -1,10 +1,18 @@
 package mountpoint
 
 import (
+	"strings"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+)
+
+const (
+	defaultMountPointCurrentPage = 1
+	defaultMountPointPageSize    = 10
+	maxMountPointPageSize        = 500
 )
 
 type ListRequest struct {
@@ -15,6 +23,7 @@ type ListRequest struct {
 	Name              string  `form:"name" binding:"omitempty" example:"挂载点名称"`                              // 挂载点名称模糊搜索，可选
 	FullPath          string  `form:"fullPath" binding:"omitempty" example:"/path/to/mount"`                 // 完整路径模糊搜索，可选
 	FileId            *int64  `form:"fileId" binding:"omitempty" example:"1"`                                // 文件ID
+	FileIdList        []int64 `form:"-"`                                                                     // 文件ID列表，用于内部筛选
 	EnableAutoRefresh *bool   `form:"enableAutoRefresh" binding:"omitempty" example:"true"`                  // 自动刷新
 	LastState         string  `form:"lastState" binding:"omitempty" example:"成功"`                            // 按状态筛选：成功、失败等
 	UserID            int64   `form:"-"`                                                                     // 当前用户ID，用于权限过滤
@@ -24,18 +33,20 @@ type ListRequest struct {
 }
 
 func (s *service) List(ctx context.Context, req *ListRequest) (list []*models.MountPoint, err error) {
-	query := s.getListQuery(ctx, req)
+	if req == nil {
+		req = &ListRequest{}
+	}
+
+	query, err := s.getListQuery(ctx, req)
+	if err != nil {
+		ctx.Error("构建挂载点列表查询失败", zap.Error(err))
+
+		return nil, err
+	}
 
 	// 应用分页
 	if !req.NoPaginate {
-		if req.CurrentPage <= 0 {
-			req.CurrentPage = 1
-		}
-
-		if req.PageSize <= 0 {
-			req.PageSize = 10
-		}
-
+		normalizeMountPointPagination(req)
 		query = query.Offset((req.CurrentPage - 1) * req.PageSize).Limit(req.PageSize)
 	}
 
@@ -51,7 +62,18 @@ func (s *service) List(ctx context.Context, req *ListRequest) (list []*models.Mo
 }
 
 func (s *service) Count(ctx context.Context, req *ListRequest) (count int64, err error) {
-	if err = s.getListQuery(ctx, req).Count(&count).Error; err != nil {
+	if req == nil {
+		req = &ListRequest{}
+	}
+
+	query, err := s.getListQuery(ctx, req)
+	if err != nil {
+		ctx.Error("构建挂载点数量查询失败", zap.Error(err))
+
+		return 0, err
+	}
+
+	if err = query.Count(&count).Error; err != nil {
 		ctx.Error("查询挂载点数量失败", zap.Error(err))
 
 		return 0, err
@@ -60,8 +82,12 @@ func (s *service) Count(ctx context.Context, req *ListRequest) (count int64, err
 	return count, nil
 }
 
-func (s *service) getListQuery(ctx context.Context, req *ListRequest) *gorm.DB {
+func (s *service) getListQuery(ctx context.Context, req *ListRequest) (*gorm.DB, error) {
 	query := s.getDB(ctx)
+
+	if !req.IsAdmin && req.UserID <= 0 {
+		return nil, errInvalidMountPointUserID
+	}
 
 	if req.Name != "" {
 		query = query.Where("name LIKE ?", "%"+req.Name+"%")
@@ -72,10 +98,27 @@ func (s *service) getListQuery(ctx context.Context, req *ListRequest) *gorm.DB {
 	}
 
 	if req.FileId != nil {
+		if *req.FileId <= 0 {
+			return nil, errInvalidMountPointFileID
+		}
+
 		query = query.Where("file_id = ?", *req.FileId)
 	}
 
+	if len(req.FileIdList) > 0 {
+		fileIDs, err := normalizeMountPointFileIDs(req.FileIdList)
+		if err != nil {
+			return nil, err
+		}
+
+		query = query.Where("file_id IN ?", fileIDs)
+	}
+
 	if req.TokenId != nil {
+		if *req.TokenId < 0 {
+			return nil, errInvalidMountPointTokenID
+		}
+
 		query = query.Where("token_id = ?", *req.TokenId)
 	}
 
@@ -87,15 +130,69 @@ func (s *service) getListQuery(ctx context.Context, req *ListRequest) *gorm.DB {
 		query = query.Where("last_state = ?", req.LastState)
 	}
 
-	// 非管理员：查看自己创建的 + 用户组分享的挂载点
-	if !req.IsAdmin && req.UserID > 0 {
+	// 非管理员：查看自己创建的 + 用户组分享的 + 自己绑定了令牌的挂载点。
+	if !req.IsAdmin {
+		conditions := []string{"creator_user_id = ?"}
+		args := []any{req.UserID}
+
 		if len(req.GroupFileIds) > 0 {
-			// 自己创建的 OR 用户组分享的
-			query = query.Where("creator_user_id = ? OR file_id IN ?", req.UserID, req.GroupFileIds)
-		} else {
-			query = query.Where("creator_user_id = ?", req.UserID)
+			groupFileIDs, err := normalizeMountPointFileIDs(req.GroupFileIds)
+			if err != nil {
+				return nil, err
+			}
+
+			conditions = append(conditions, "file_id IN ?")
+			args = append(args, groupFileIDs)
 		}
+
+		if s.userMountPointTokenService != nil {
+			boundMountPointIDs, err := s.userMountPointTokenService.GetUserMountPointIDs(ctx, req.UserID)
+			if err != nil {
+				return nil, err
+			}
+
+			if len(boundMountPointIDs) > 0 {
+				conditions = append(conditions, "id IN ?")
+				args = append(args, boundMountPointIDs)
+			}
+		}
+
+		query = query.Where(strings.Join(conditions, " OR "), args...)
 	}
 
-	return query
+	return query, nil
+}
+
+func normalizeMountPointPagination(req *ListRequest) {
+	if req.CurrentPage <= 0 {
+		req.CurrentPage = defaultMountPointCurrentPage
+	}
+
+	if req.PageSize <= 0 {
+		req.PageSize = defaultMountPointPageSize
+	}
+
+	if req.PageSize > maxMountPointPageSize {
+		req.PageSize = maxMountPointPageSize
+	}
+}
+
+func normalizeMountPointFileIDs(fileIDs []int64) ([]int64, error) {
+	seen := make(map[int64]struct{}, len(fileIDs))
+
+	normalized := make([]int64, 0, len(fileIDs))
+	for _, fileID := range fileIDs {
+		if fileID <= 0 {
+			return nil, errInvalidMountPointFileID
+		}
+
+		if _, ok := seen[fileID]; ok {
+			continue
+		}
+
+		seen[fileID] = struct{}{}
+		normalized = append(normalized, fileID)
+	}
+
+	return normalized, nil
 }

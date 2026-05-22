@@ -93,6 +93,7 @@ func (s *RefreshFileScheduler) loop() {
 		return
 	case <-time.After(s.startupDelay):
 	}
+
 	s.firstRunSkipped = true
 	s.ctx.Info("文件刷新执行器启动完成", zap.Duration("startup_delay", s.startupDelay))
 
@@ -105,6 +106,7 @@ func (s *RefreshFileScheduler) loop() {
 		select {
 		case <-s.ctx.Done():
 			s.ctx.Info("文件刷新执行器停止")
+
 			return
 		case <-ticker.C:
 		}
@@ -127,6 +129,7 @@ func (s *RefreshFileScheduler) tick() {
 	mountPoints, err := s.mountPointService.GetAutoRefreshList(s.ctx, &mountpoint.GetAutoRefreshListRequest{})
 	if err != nil {
 		s.ctx.Error("查询挂载点失败", zap.Error(err))
+
 		return
 	}
 
@@ -158,6 +161,7 @@ func (s *RefreshFileScheduler) dispatchIfDue(mp *models.MountPoint, now time.Tim
 	if interval < 1 {
 		interval = 30 // 最小 30 分钟，兜底 1 分钟
 	}
+
 	intervalDuration := time.Duration(interval) * time.Minute
 
 	last, ok := s.lastDispatchedAt[mp.FileId]
@@ -176,6 +180,7 @@ func (s *RefreshFileScheduler) dispatchIfDue(mp *models.MountPoint, now time.Tim
 		s.ctx.Error("序列化刷新任务失败",
 			zap.Int64("mount_point_id", mp.ID),
 			zap.Error(err))
+
 		return
 	}
 
@@ -189,6 +194,7 @@ func (s *RefreshFileScheduler) dispatchIfDue(mp *models.MountPoint, now time.Tim
 			zap.Int64("file_id", mp.FileId),
 			zap.String("full_path", mp.FullPath),
 			zap.Error(err))
+
 		return
 	}
 

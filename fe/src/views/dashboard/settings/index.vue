@@ -15,6 +15,7 @@
               clearable
               maxlength="50"
               show-count
+              :disabled="savingTitle"
               style="width: 320px"
               @keyup.enter="handleSaveTitle"
             />
@@ -22,7 +23,7 @@
               type="primary"
               size="small"
               :loading="savingTitle"
-              :disabled="!isTitleChanged"
+              :disabled="savingTitle || !isTitleChanged"
               @click="handleSaveTitle"
             >
               保存
@@ -38,18 +39,21 @@
         </div>
         <div class="item-right">
           <div class="right-inline">
-            <n-button size="small" @click="autoDetectBaseURL">自动获取</n-button>
+            <n-button size="small" :disabled="savingBaseURL" @click="autoDetectBaseURL">
+              自动获取
+            </n-button>
             <n-input
               v-model:value="form.baseURL"
               placeholder="http://example.com"
               clearable
+              :disabled="savingBaseURL"
               style="width: 320px"
             />
             <n-button
               size="small"
               type="primary"
               :loading="savingBaseURL"
-              :disabled="!isBaseURLChanged"
+              :disabled="savingBaseURL || !isBaseURLChanged"
               @click="handleSaveBaseURL"
             >
               保存
@@ -81,6 +85,7 @@
           <n-switch
             v-model:value="enableAuth"
             :loading="savingEnableAuth"
+            :disabled="savingEnableAuth"
             @update:value="handleToggleEnableAuth"
           />
         </div>
@@ -98,6 +103,7 @@
           <n-switch
             v-model:value="additionForm.localProxy"
             :loading="savingLocalProxy"
+            :disabled="savingLocalProxy"
             @update:value="handleToggleLocalProxy"
           />
         </div>
@@ -115,6 +121,7 @@
           <n-switch
             v-model:value="additionForm.multipleStream"
             :loading="savingMultipleStream"
+            :disabled="savingMultipleStream"
             @update:value="handleToggleMultipleStream"
           />
         </div>
@@ -135,6 +142,7 @@
               :step="1"
               :marks="threadCountMarks"
               :format-tooltip="formatThreadTooltip"
+              :disabled="savingThreadCount"
               style="width: 340px"
               @change="handleThreadCountChange"
             />
@@ -142,6 +150,7 @@
               size="small"
               type="primary"
               :loading="savingThreadCount"
+              :disabled="savingThreadCount"
               @click="handleSaveThreadCount"
             >
               保存
@@ -165,6 +174,7 @@
               :step="524288"
               :marks="chunkSizeMarks"
               :format-tooltip="formatChunkTooltip"
+              :disabled="savingChunkSize"
               style="width: 340px"
               @change="handleChunkSizeChange"
             />
@@ -172,6 +182,7 @@
               size="small"
               type="primary"
               :loading="savingChunkSize"
+              :disabled="savingChunkSize"
               @click="handleSaveChunkSize"
             >
               保存
@@ -195,6 +206,7 @@
               :step="1"
               :marks="taskThreadMarks"
               :format-tooltip="formatTaskThreadTooltip"
+              :disabled="savingTaskThreads"
               style="width: 340px"
               @change="handleTaskThreadChange"
             />
@@ -202,6 +214,7 @@
               size="small"
               type="primary"
               :loading="savingTaskThreads"
+              :disabled="savingTaskThreads"
               @click="handleSaveTaskThreads"
             >
               保存
@@ -223,6 +236,7 @@
               :min="1"
               :max="32"
               :step="1"
+              :disabled="savingWorkerCount"
               style="width: 340px"
               @change="handleWorkerCountChange"
             />
@@ -230,6 +244,7 @@
               size="small"
               type="primary"
               :loading="savingWorkerCount"
+              :disabled="savingWorkerCount"
               @click="handleWorkerCountChange"
             >
               保存
@@ -248,6 +263,7 @@
           <n-switch
             v-model:value="additionForm.enableStorageAutoRefresh"
             :loading="savingStorageAutoRefresh"
+            :disabled="savingStorageAutoRefresh"
             @update:value="handleToggleStorageAutoRefresh"
           />
         </div>
@@ -264,6 +280,7 @@
           <n-switch
             v-model:value="additionForm.webdavUserStrmOnly"
             :loading="savingWebdavUserStrmOnly"
+            :disabled="savingWebdavUserStrmOnly"
             @update:value="handleToggleWebdavUserStrmOnly"
           />
         </div>
@@ -282,14 +299,22 @@
             type="textarea"
             :autosize="{ minRows: 3, maxRows: 6 }"
             placeholder=".mp4, .mkv, .avi"
+            :disabled="savingWebdavAllowedSuffixes"
             style="width: 420px"
           />
           <div class="right-inline suffix-actions">
-            <n-button size="small" @click="resetWebdavAllowedSuffixes">恢复默认</n-button>
+            <n-button
+              size="small"
+              :disabled="savingWebdavAllowedSuffixes"
+              @click="resetWebdavAllowedSuffixes"
+            >
+              恢复默认
+            </n-button>
             <n-button
               size="small"
               type="primary"
               :loading="savingWebdavAllowedSuffixes"
+              :disabled="savingWebdavAllowedSuffixes"
               @click="handleSaveWebdavAllowedSuffixes"
             >
               保存
@@ -302,7 +327,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watchEffect, onMounted, computed } from 'vue'
+import { ref, reactive, watchEffect, onMounted, onUnmounted, computed } from 'vue'
 import { NInput, NButton, NText, useMessage, NSlider, NSwitch } from 'naive-ui'
 import { useSystemStore } from '@/stores'
 import {
@@ -312,6 +337,7 @@ import {
   getSettingAddition,
   modifySettingAddition,
   toggleSystemEnableAuth,
+  type ModifySettingAdditionRequest,
 } from '@/api/setting'
 import { formatFileSize } from '@/utils/format'
 
@@ -319,6 +345,21 @@ const message = useMessage()
 
 const systemStore = useSystemStore()
 const systemInfo = systemStore.get()
+let isSettingsMounted = false
+
+const refreshSystemInfoAfterSave = () => {
+  return systemStore.refresh().then((res) => {
+    if (!isSettingsMounted) {
+      return res
+    }
+
+    if (res?.code !== 200) {
+      message.warning(res?.msg || '设置已保存，但刷新系统信息失败')
+    }
+
+    return res
+  })
+}
 
 const defaultWebdavAllowedSuffixes = [
   '.mp4',
@@ -382,37 +423,54 @@ const form = reactive({
   title: systemInfo.title || '',
   baseURL: systemInfo.baseURL || '',
 })
+const lastSyncedTitle = ref(systemInfo.title || '')
+const lastSyncedBaseURL = ref(systemInfo.baseURL || '')
 
 watchEffect(() => {
-  form.title = systemInfo.title || ''
-  form.baseURL = systemInfo.baseURL || ''
+  const nextTitle = systemInfo.title || ''
+  const nextBaseURL = systemInfo.baseURL || ''
+
+  if ((form.title || '') === lastSyncedTitle.value) {
+    form.title = nextTitle
+  }
+
+  if ((form.baseURL || '') === lastSyncedBaseURL.value) {
+    form.baseURL = nextBaseURL
+  }
+
+  lastSyncedTitle.value = nextTitle
+  lastSyncedBaseURL.value = nextBaseURL
 })
 
 // ===== 用户认证开关 =====
 const enableAuth = ref<boolean>(systemInfo.enableAuth || false)
 const savingEnableAuth = ref(false)
 const handleToggleEnableAuth = (val: boolean) => {
+  if (savingEnableAuth.value || !isSettingsMounted) return
+
   savingEnableAuth.value = true
   toggleSystemEnableAuth(val)
     .then((res) => {
+      if (!isSettingsMounted) return
+
       if (res.code === 200) {
         message.success('设置已保存')
         // 刷新系统信息
-        systemStore
-          .refresh()
-          .then(() => {})
-          .catch(() => {})
-          .finally(() => {})
+        refreshSystemInfoAfterSave()
       } else {
         message.error(res.msg || '保存失败')
         enableAuth.value = !val // 失败时回滚显示
       }
     })
     .catch((err) => {
+      if (!isSettingsMounted) return
+
       message.error(err instanceof Error ? err.message : '网络错误')
       enableAuth.value = !val
     })
     .finally(() => {
+      if (!isSettingsMounted) return
+
       savingEnableAuth.value = false
     })
 }
@@ -445,40 +503,154 @@ const savingWorkerCount = ref(false)
 const savingStorageAutoRefresh = ref(false)
 const savingWebdavUserStrmOnly = ref(false)
 const savingWebdavAllowedSuffixes = ref(false)
+const pendingAdditionPayloads = new Map<string, ModifySettingAdditionRequest>()
+
+const cloneAddition = (addition: Models.SettingAddition): Models.SettingAddition => ({
+  ...addition,
+  webdavAllowedSuffixes: [...addition.webdavAllowedSuffixes],
+})
+
+const cloneAdditionPayload = (
+  payload: ModifySettingAdditionRequest
+): ModifySettingAdditionRequest => ({
+  ...payload,
+  webdavAllowedSuffixes: payload.webdavAllowedSuffixes
+    ? [...payload.webdavAllowedSuffixes]
+    : undefined,
+})
+
+const getAdditionPayloadKey = (payload: ModifySettingAdditionRequest) =>
+  Object.keys(payload).sort().join(',')
+
+const commitAdditionPayload = (payload: ModifySettingAdditionRequest) => {
+  const saved = originalAddition.value
+    ? cloneAddition(originalAddition.value)
+    : cloneAddition(additionForm)
+
+  if (payload.localProxy !== undefined) saved.localProxy = payload.localProxy
+  if (payload.multipleStream !== undefined) saved.multipleStream = payload.multipleStream
+  if (payload.multipleStreamThreadCount !== undefined) {
+    saved.multipleStreamThreadCount = payload.multipleStreamThreadCount
+  }
+  if (payload.multipleStreamChunkSize !== undefined) {
+    saved.multipleStreamChunkSize = payload.multipleStreamChunkSize
+  }
+  if (payload.taskThreadCount !== undefined) saved.taskThreadCount = payload.taskThreadCount
+  if (payload.workerCount !== undefined) saved.workerCount = payload.workerCount
+  if (payload.enableStorageAutoRefresh !== undefined) {
+    saved.enableStorageAutoRefresh = payload.enableStorageAutoRefresh
+  }
+  if (payload.webdavUserStrmOnly !== undefined) {
+    saved.webdavUserStrmOnly = payload.webdavUserStrmOnly
+  }
+  if (payload.webdavAllowedSuffixes !== undefined) {
+    saved.webdavAllowedSuffixes = [...payload.webdavAllowedSuffixes]
+  }
+
+  originalAddition.value = saved
+}
+
+const rollbackAdditionPayload = (payload: ModifySettingAdditionRequest) => {
+  const saved = originalAddition.value
+  if (!saved) return
+
+  if (payload.localProxy !== undefined) additionForm.localProxy = saved.localProxy
+  if (payload.multipleStream !== undefined) additionForm.multipleStream = saved.multipleStream
+  if (payload.multipleStreamThreadCount !== undefined) {
+    additionForm.multipleStreamThreadCount = saved.multipleStreamThreadCount
+  }
+  if (payload.multipleStreamChunkSize !== undefined) {
+    additionForm.multipleStreamChunkSize = saved.multipleStreamChunkSize
+  }
+  if (payload.taskThreadCount !== undefined) additionForm.taskThreadCount = saved.taskThreadCount
+  if (payload.workerCount !== undefined) additionForm.workerCount = saved.workerCount
+  if (payload.enableStorageAutoRefresh !== undefined) {
+    additionForm.enableStorageAutoRefresh = saved.enableStorageAutoRefresh
+  }
+  if (payload.webdavUserStrmOnly !== undefined) {
+    additionForm.webdavUserStrmOnly = saved.webdavUserStrmOnly
+  }
+  if (payload.webdavAllowedSuffixes !== undefined) {
+    additionForm.webdavAllowedSuffixes = [...saved.webdavAllowedSuffixes]
+    webdavAllowedSuffixesText.value = additionForm.webdavAllowedSuffixes.join(', ')
+  }
+}
 
 // 通用保存函数：仅提交传入字段
-const saveAdditionField = (payload: Record<string, unknown>, setLoading: (v: boolean) => void) => {
-  if (!additionLoaded.value) return
+const saveAdditionField = (
+  payload: ModifySettingAdditionRequest,
+  setLoading: (v: boolean) => void,
+  isSaving: () => boolean
+) => {
+  if (!additionLoaded.value || !isSettingsMounted) return
+
+  const payloadKey = getAdditionPayloadKey(payload)
+  if (isSaving()) {
+    pendingAdditionPayloads.set(payloadKey, cloneAdditionPayload(payload))
+
+    return
+  }
+
+  const requestPayload = cloneAdditionPayload(payload)
   setLoading(true)
-  modifySettingAddition(payload)
+  modifySettingAddition(requestPayload)
     .then((res) => {
+      if (!isSettingsMounted) return
+
       if (res.code === 200) {
         message.success('已保存')
-        originalAddition.value = { ...additionForm }
+        commitAdditionPayload(requestPayload)
       } else {
         message.error(res.msg || '保存失败')
+        if (!pendingAdditionPayloads.has(payloadKey)) {
+          rollbackAdditionPayload(requestPayload)
+        }
       }
     })
     .catch((err) => {
+      if (!isSettingsMounted) return
+
       message.error(err instanceof Error ? err.message : '网络错误')
+      if (!pendingAdditionPayloads.has(payloadKey)) {
+        rollbackAdditionPayload(requestPayload)
+      }
     })
     .finally(() => {
+      if (!isSettingsMounted) return
+
       setLoading(false)
+      const pendingPayload = pendingAdditionPayloads.get(payloadKey)
+      if (pendingPayload) {
+        pendingAdditionPayloads.delete(payloadKey)
+        saveAdditionField(pendingPayload, setLoading, isSaving)
+      }
     })
 }
 
 // 工作流数量保存
 const handleWorkerCountChange = () => {
-  saveAdditionField({ workerCount: additionForm.workerCount }, (v) => (savingWorkerCount.value = v))
+  saveAdditionField(
+    { workerCount: additionForm.workerCount },
+    (v) => (savingWorkerCount.value = v),
+    () => savingWorkerCount.value
+  )
 }
 
 // 存储自动刷新保存
 const handleToggleStorageAutoRefresh = (val: boolean) => {
-  saveAdditionField({ enableStorageAutoRefresh: val }, (v) => (savingStorageAutoRefresh.value = v))
+  saveAdditionField(
+    { enableStorageAutoRefresh: val },
+    (v) => (savingStorageAutoRefresh.value = v),
+    () => savingStorageAutoRefresh.value
+  )
 }
 
 const handleToggleWebdavUserStrmOnly = (val: boolean) => {
-  saveAdditionField({ webdavUserStrmOnly: val }, (v) => (savingWebdavUserStrmOnly.value = v))
+  saveAdditionField(
+    { webdavUserStrmOnly: val },
+    (v) => (savingWebdavUserStrmOnly.value = v),
+    () => savingWebdavUserStrmOnly.value
+  )
 }
 
 const handleSaveWebdavAllowedSuffixes = () => {
@@ -489,7 +661,8 @@ const handleSaveWebdavAllowedSuffixes = () => {
   webdavAllowedSuffixesText.value = additionForm.webdavAllowedSuffixes.join(', ')
   saveAdditionField(
     { webdavAllowedSuffixes: additionForm.webdavAllowedSuffixes },
-    (v) => (savingWebdavAllowedSuffixes.value = v)
+    (v) => (savingWebdavAllowedSuffixes.value = v),
+    () => savingWebdavAllowedSuffixes.value
   )
 }
 
@@ -500,10 +673,18 @@ const resetWebdavAllowedSuffixes = () => {
 
 // 开机关联保存
 const handleToggleLocalProxy = (val: boolean) => {
-  saveAdditionField({ localProxy: val }, (v) => (savingLocalProxy.value = v))
+  saveAdditionField(
+    { localProxy: val },
+    (v) => (savingLocalProxy.value = v),
+    () => savingLocalProxy.value
+  )
 }
 const handleToggleMultipleStream = (val: boolean) => {
-  saveAdditionField({ multipleStream: val }, (v) => (savingMultipleStream.value = v))
+  saveAdditionField(
+    { multipleStream: val },
+    (v) => (savingMultipleStream.value = v),
+    () => savingMultipleStream.value
+  )
 }
 
 // Slider change事件处理
@@ -530,19 +711,22 @@ const handleTaskThreadChange = () => {
 const handleSaveThreadCount = () => {
   saveAdditionField(
     { multipleStreamThreadCount: additionForm.multipleStreamThreadCount },
-    (v) => (savingThreadCount.value = v)
+    (v) => (savingThreadCount.value = v),
+    () => savingThreadCount.value
   )
 }
 const handleSaveChunkSize = () => {
   saveAdditionField(
     { multipleStreamChunkSize: additionForm.multipleStreamChunkSize },
-    (v) => (savingChunkSize.value = v)
+    (v) => (savingChunkSize.value = v),
+    () => savingChunkSize.value
   )
 }
 const handleSaveTaskThreads = () => {
   saveAdditionField(
     { taskThreadCount: additionForm.taskThreadCount },
-    (v) => (savingTaskThreads.value = v)
+    (v) => (savingTaskThreads.value = v),
+    () => savingTaskThreads.value
   )
 }
 
@@ -585,38 +769,49 @@ const isBaseURLChanged = computed(
   () => (form.baseURL || '').trim() !== (systemInfo.baseURL || '').trim()
 )
 
-const handleSaveTitle = () => {
+const handleSaveTitle = async () => {
+  if (savingTitle.value) return
+
   const newTitle = (form.title || '').trim()
   if (newTitle.length === 0) {
     message.warning('请输入网站名称')
     return
   }
+
+  const previousTitle = systemInfo.title || ''
+
   savingTitle.value = true
-  modifySystemTitle(newTitle)
-    .then((res) => {
-      if (res.code === 200) {
-        message.success('网站名称已更新')
-        systemStore
-          .refresh()
-          .then(() => {})
-          .catch(() => {})
-          .finally(() => {})
-      } else {
-        message.error(res.msg || '更新失败')
-      }
-    })
-    .catch((err) => {
-      message.error(err instanceof Error ? err.message : '网络错误')
-    })
-    .finally(() => {
+  try {
+    const res = await modifySystemTitle(newTitle)
+    if (!isSettingsMounted) return
+
+    if (res.code === 200) {
+      message.success('网站名称已更新')
+      await refreshSystemInfoAfterSave()
+    } else {
+      message.error(res.msg || '更新失败')
+      form.title = previousTitle
+    }
+  } catch (err) {
+    if (!isSettingsMounted) return
+
+    message.error(err instanceof Error ? err.message : '网络错误')
+    form.title = previousTitle
+  } finally {
+    if (isSettingsMounted) {
       savingTitle.value = false
-    })
+    }
+  }
 }
 
 const autoDetectBaseURL = () => {
+  if (savingBaseURL.value) return
+
   form.baseURL = window.location.origin
 }
-const handleSaveBaseURL = () => {
+const handleSaveBaseURL = async () => {
+  if (savingBaseURL.value) return
+
   const newBaseURL = (form.baseURL || '').trim()
   if (newBaseURL.length === 0) {
     message.warning('请输入基础 URL')
@@ -626,53 +821,70 @@ const handleSaveBaseURL = () => {
     message.warning('基础 URL 必须以 http:// 或 https:// 开头')
     return
   }
+
+  const previousBaseURL = systemInfo.baseURL || ''
+
   savingBaseURL.value = true
-  modifySystemBaseURL(newBaseURL)
-    .then((res) => {
-      if (res.code === 200) {
-        message.success('基础 URL 已更新')
-        systemStore
-          .refresh()
-          .then(() => {})
-          .catch(() => {})
-          .finally(() => {})
-      } else {
-        message.error(res.msg || '更新失败')
-      }
-    })
-    .catch((err) => {
-      message.error(err instanceof Error ? err.message : '网络错误')
-    })
-    .finally(() => {
+  try {
+    const res = await modifySystemBaseURL(newBaseURL)
+    if (!isSettingsMounted) return
+
+    if (res.code === 200) {
+      message.success('基础 URL 已更新')
+      await refreshSystemInfoAfterSave()
+    } else {
+      message.error(res.msg || '更新失败')
+      form.baseURL = previousBaseURL
+    }
+  } catch (err) {
+    if (!isSettingsMounted) return
+
+    message.error(err instanceof Error ? err.message : '网络错误')
+    form.baseURL = previousBaseURL
+  } finally {
+    if (isSettingsMounted) {
       savingBaseURL.value = false
-    })
+    }
+  }
 }
 
 // 初始化
 onMounted(() => {
+  isSettingsMounted = true
+
   systemStore
     .refresh()
     .then((res) => {
+      if (!isSettingsMounted) return
+
       enableAuth.value = systemStore.get().enableAuth || false
       if (res?.code !== 200) {
         getSystemInfo()
           .then((r) => {
+            if (!isSettingsMounted) return
+
             if (r.data) {
-              systemStore.load()
               enableAuth.value = r.data.enableAuth || false
             }
           })
-          .catch(() => {})
-          .finally(() => {})
+          .catch((err) => {
+            if (!isSettingsMounted) return
+
+            message.error(err instanceof Error ? err.message : '获取系统信息失败')
+          })
       }
     })
-    .catch(() => {})
-    .finally(() => {})
+    .catch((err) => {
+      if (!isSettingsMounted) return
+
+      message.error(err instanceof Error ? err.message : '获取系统信息失败')
+    })
 
   getSettingAddition()
     .then((res) => {
+      if (!isSettingsMounted) return
+
       if (res.code === 200 && res.data) {
-        originalAddition.value = { ...res.data }
         additionForm.localProxy = !!res.data.localProxy
         additionForm.multipleStream = !!res.data.multipleStream
         additionForm.multipleStreamThreadCount = res.data.multipleStreamThreadCount ?? 4
@@ -685,14 +897,26 @@ onMounted(() => {
           ? [...res.data.webdavAllowedSuffixes]
           : [...defaultWebdavAllowedSuffixes]
         webdavAllowedSuffixesText.value = additionForm.webdavAllowedSuffixes.join(', ')
+        originalAddition.value = cloneAddition(additionForm)
       } else {
         message.error(res.msg || '获取附加设置失败')
       }
     })
-    .catch(() => {})
+    .catch((err) => {
+      if (!isSettingsMounted) return
+
+      message.error(err instanceof Error ? err.message : '获取附加设置失败')
+    })
     .finally(() => {
+      if (!isSettingsMounted) return
+
       additionLoaded.value = true
     })
+})
+
+onUnmounted(() => {
+  isSettingsMounted = false
+  pendingAdditionPayloads.clear()
 })
 </script>
 

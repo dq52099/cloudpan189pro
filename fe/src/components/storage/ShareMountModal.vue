@@ -16,6 +16,7 @@
               placeholder="请输入分享码"
               clearable
               size="large"
+              :disabled="shareState.loading"
               @keyup.enter="handleGetShareInfo"
             >
               <template #prefix>
@@ -31,6 +32,7 @@
               placeholder="请输入访问码（如果分享设置了访问码）"
               clearable
               size="large"
+              :disabled="shareState.loading"
               @keyup.enter="handleGetShareInfo"
             >
               <template #prefix>
@@ -43,7 +45,7 @@
             type="primary"
             size="large"
             :loading="shareState.loading"
-            :disabled="!isValidShareCode"
+            :disabled="!isValidShareCode || shareState.loading"
             @click="handleGetShareInfo"
             style="margin-top: 24px; width: 100%"
           >
@@ -96,17 +98,18 @@
     </div>
 
     <div class="modal-actions">
-      <n-button v-if="currentStep === 2" @click="handleBackToStep1">
+      <n-button v-if="currentStep === 2" :disabled="bindLoading" @click="handleBackToStep1">
         <template #icon
           ><n-icon><ArrowBackOutline /></n-icon
         ></template>
         返回上一步
       </n-button>
-      <n-button @click="handleCancel">取消</n-button>
+      <n-button :disabled="bindLoading" @click="handleCancel">取消</n-button>
       <n-button
         v-if="currentStep === 2"
         type="primary"
-        :disabled="!shareState.shareInfo"
+        :loading="bindLoading"
+        :disabled="!shareState.shareInfo || bindLoading"
         @click="handleConfirm"
       >
         绑定挂载点
@@ -116,7 +119,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { NIcon, NText, NInput, NButton, useMessage } from 'naive-ui'
 import {
   FolderOutline,
@@ -155,15 +158,40 @@ const shareState = reactive({
   shareInfo: null as ShareInfo | null,
 })
 
+const bindLoading = ref(false)
+let operationVersion = 0
+let isComponentMounted = false
+
 // 计算属性
 const isValidShareCode = computed(() => shareState.shareCode.trim().length > 0)
 
+const isCurrentOperation = (version: number) => {
+  return isComponentMounted && operationVersion === version
+}
+
+const invalidatePendingWork = () => {
+  operationVersion++
+  shareState.loading = false
+  bindLoading.value = false
+}
+
 // 获取分享信息
 const handleGetShareInfo = () => {
+  if (!isComponentMounted) {
+    return
+  }
+
+  if (shareState.loading) {
+    return
+  }
+
   if (!isValidShareCode.value) {
     message.warning('请输入分享码')
     return
   }
+
+  operationVersion++
+  const currentOperation = operationVersion
 
   shareState.loading = true
 
@@ -177,6 +205,10 @@ const handleGetShareInfo = () => {
 
   getShareInfo(params)
     .then((response: ApiResponse<ShareInfo>) => {
+      if (!isCurrentOperation(currentOperation)) {
+        return
+      }
+
       if (response.code === 200 && response.data) {
         shareState.shareInfo = response.data
         currentStep.value = 2
@@ -186,11 +218,17 @@ const handleGetShareInfo = () => {
       }
     })
     .catch((error) => {
+      if (!isCurrentOperation(currentOperation)) {
+        return
+      }
+
       console.error('获取分享信息失败:', error)
       message.error('获取分享信息失败')
     })
     .finally(() => {
-      shareState.loading = false
+      if (isCurrentOperation(currentOperation)) {
+        shareState.loading = false
+      }
     })
 }
 
@@ -201,11 +239,16 @@ const handleBackToStep1 = () => {
 
 // 取消
 const handleCancel = () => {
+  invalidatePendingWork()
   emit('cancel')
 }
 
 // 确认挂载
 const handleConfirm = () => {
+  if (bindLoading.value) {
+    return
+  }
+
   if (!shareState.shareInfo) {
     message.warning('分享信息不完整')
     return
@@ -220,11 +263,21 @@ const handleConfirm = () => {
     },
   ]
 
-  mountPointBind.show(itemsToMount).then((payload) => {
-    if (payload && payload.length > 0) {
-      handleMountBindSuccess()
-    }
-  })
+  const currentOperation = ++operationVersion
+  bindLoading.value = true
+
+  mountPointBind
+    .show(itemsToMount)
+    .then((payload) => {
+      if (isCurrentOperation(currentOperation) && payload && payload.length > 0) {
+        handleMountBindSuccess()
+      }
+    })
+    .finally(() => {
+      if (isCurrentOperation(currentOperation)) {
+        bindLoading.value = false
+      }
+    })
 }
 
 // 绑定挂载点成功回调
@@ -238,11 +291,19 @@ const resetAllState = () => {
   shareState.shareCode = ''
   shareState.shareAccessCode = ''
   shareState.loading = false
+  bindLoading.value = false
   shareState.shareInfo = null
 }
 
 onMounted(() => {
+  isComponentMounted = true
+  operationVersion++
   resetAllState()
+})
+
+onUnmounted(() => {
+  isComponentMounted = false
+  invalidatePendingWork()
 })
 </script>
 

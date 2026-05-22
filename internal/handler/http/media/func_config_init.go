@@ -10,7 +10,7 @@ import (
 type configInitRequest struct {
 	Enable              bool                     `json:"enable" example:"false"`
 	StoragePath         string                   `json:"storagePath" binding:"required" example:"/opt/media"`
-	AutoClean           bool                     `json:"autoClean" binding:"required" example:"true"`
+	AutoClean           *bool                    `json:"autoClean" binding:"required" example:"true"`
 	ConflictPolicy      media.FileConflictPolicy `json:"conflictPolicy" binding:"omitempty,oneof=skip replace" example:"skip"`
 	BaseURL             string                   `json:"baseURL" binding:"required" example:"http://localhost:12395"`
 	IncludedSuffixes    []string                 `json:"includedSuffixes" binding:"omitempty" example:"['.mp4','.mkv','.avi']"`
@@ -41,7 +41,7 @@ func (h *handler) ConfigInit() httpcontext.HandlerFunc {
 		iReq := &mediaconfig.InitRequest{
 			Enable:              req.Enable,
 			StoragePath:         req.StoragePath,
-			AutoClean:           req.AutoClean,
+			AutoClean:           *req.AutoClean,
 			ConflictPolicy:      req.ConflictPolicy,
 			BaseURL:             req.BaseURL,
 			IncludedSuffixes:    req.IncludedSuffixes,

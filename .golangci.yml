@@ -18,7 +18,8 @@ linters:
     rules:
       - linters:
           - staticcheck
-        text: "SA5008: unknown JSON option"
+        path: internal/configs/config.go
+        text: "SA5008:"
       - linters:
           - nlreturn
         path: internal/framework/context/trace.go

@@ -1,6 +1,7 @@
 {
   "name": "cloudpan189-share-fe",
   "version": "1.0.0",
+  "packageManager": "pnpm@9.15.9",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +11,7 @@
     "format": "prettier --write src/",
     "lint:css": "stylelint \"src/**/*.{css,vue}\"",
     "lint:css:fix": "stylelint \"src/**/*.{css,vue}\" --fix",
-    "postinstall": "cd .. && npx husky"
+    "postinstall": "node -e \"const fs=require('node:fs');const cp=require('node:child_process');if(fs.existsSync('../.git'))cp.execFileSync('husky',{stdio:'inherit',cwd:'..'});\""
   },
   "lint-staged": {
     "*.{js,ts,vue}": [

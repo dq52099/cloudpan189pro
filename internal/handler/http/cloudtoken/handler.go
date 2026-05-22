@@ -1,6 +1,8 @@
 package cloudtoken
 
 import (
+	"net/http"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	cloudtokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
@@ -31,6 +33,7 @@ var (
 	codeMissUsername        = bi.Next("缺少用户名")
 	codeMissPassword        = bi.Next("缺少密码")
 	codeNotMatchLoginType   = bi.Next("不匹配的登录类型")
+	codeTokenNotFound       = bi.Next("云盘令牌不存在").WithHTTPCode(http.StatusNotFound)
 )
 
 type handler struct {

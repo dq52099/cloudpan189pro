@@ -21,13 +21,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Development
 - `make dev` - Start development server (backend only)
 - `go run ./cmd/main.go` - Direct backend development
-- Frontend development: `cd fe && npm run dev` (starts Vite dev server on port 5173)
+- Frontend development: `cd fe && corepack pnpm@9.15.9 dev` (starts Vite dev server on port 5173)
 
 ### Testing and Quality
 - `make test` - Run Go tests
 - `make lint` - Run golangci-lint
-- Frontend linting: `cd fe && npm run lint` (ESLint + stylelint)
-- Frontend formatting: `cd fe && npm run format` (Prettier)
+- Frontend linting: `cd fe && corepack pnpm@9.15.9 lint` (ESLint + stylelint)
+- Frontend formatting: `cd fe && corepack pnpm@9.15.9 format` (Prettier)
 
 ### Docker
 - `make docker-build` - Build Docker image

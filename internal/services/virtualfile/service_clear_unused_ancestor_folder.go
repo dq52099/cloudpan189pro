@@ -2,6 +2,7 @@ package virtualfile
 
 import (
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
+	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 )
 
 func (s *service) ClearUnusedAncestorFolder(ctx context.Context, subId int64) error {
@@ -20,6 +21,10 @@ func (s *service) ClearUnusedAncestorFolder(ctx context.Context, subId int64) er
 		parentFile, err := s.Query(ctx, parentId)
 		if err != nil {
 			return err
+		}
+
+		if !parentFile.IsDir || parentFile.IsTop || parentFile.OsType != models.OsTypeFolder {
+			break
 		}
 
 		grandParentId := parentFile.ParentId

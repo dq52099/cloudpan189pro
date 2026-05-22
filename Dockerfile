@@ -9,20 +9,19 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 # 设置 npm 为淘宝镜像
 RUN npm config set registry https://registry.npmmirror.com
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
+ARG PNPM_VERSION=9.15.9
+RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 # 设置 pnpm 为淘宝镜像
 RUN pnpm config set registry https://registry.npmmirror.com
 
 # 先复制 package.json 和 lock 文件
 COPY fe/package.json fe/pnpm-lock.yaml ./
-# 先不安装依赖，等复制源码后再安装（避免平台问题）
 
-# 复制源码
-COPY fe/ ./
-
-# 在容器内安装依赖
+# 先安装依赖以复用 Docker 缓存；.dockerignore 会排除本地 node_modules。
 RUN pnpm install --frozen-lockfile
 
+# 复制源码并构建前端
+COPY fe/ ./
 RUN pnpm build
 
 # Stage 2: Build the Go backend
@@ -44,7 +43,6 @@ ENV GOPROXY=https://goproxy.cn,direct
 ENV GOSUMDB=sum.golang.google.cn
 
 COPY go.mod go.sum ./
-RUN go mod tidy
 RUN go mod download
 
 COPY . .
@@ -53,6 +51,7 @@ COPY --from=frontend-builder /app/fe/dist ./fe/dist
 
 # 构建参数 - 与 Makefile 保持一致
 ARG MODULE_NAME=github.com/xxcheng123/cloudpan189-share
+ARG CONFIG_PACKAGE=github.com/xxcheng123/cloudpan189-share/internal/configs
 ARG VAR_COMMIT
 ARG VAR_BUILD_DATE
 ARG VAR_GIT_SUMMARY
@@ -65,18 +64,17 @@ RUN BUILD_DATE="${VAR_BUILD_DATE}" && \
     if [ -z "$BUILD_DATE" ]; then BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"; fi && \
     echo "Building for $TARGETOS/$TARGETARCH on $BUILDPLATFORM" && \
     echo "Build date: $BUILD_DATE" && \
-    go mod tidy && \
     GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 \
     go build \
     -ldflags="-s -w \
-              -X ${MODULE_NAME}/configs.Commit=${VAR_COMMIT} \
-              -X ${MODULE_NAME}/configs.BuildDate=${BUILD_DATE} \
-              -X ${MODULE_NAME}/configs.GitSummary=${VAR_GIT_SUMMARY} \
-              -X ${MODULE_NAME}/configs.GitBranch=${VAR_GIT_BRANCH}" \
+              -X ${CONFIG_PACKAGE}.Commit=${VAR_COMMIT} \
+              -X ${CONFIG_PACKAGE}.BuildDate=${BUILD_DATE} \
+              -X ${CONFIG_PACKAGE}.GitSummary=${VAR_GIT_SUMMARY} \
+              -X ${CONFIG_PACKAGE}.GitBranch=${VAR_GIT_BRANCH}" \
     -o ${OUTPUT_DIR}/${BINARY_NAME} ./cmd/main.go
 
 # Stage 3: Final image
-FROM --platform=$TARGETPLATFORM alpine:latest
+FROM alpine:latest
 
 WORKDIR /app
 

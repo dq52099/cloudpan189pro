@@ -30,6 +30,7 @@ func InitExtensionServices(db *gorm.DB, logger *zap.Logger, cfg *configs.Config)
 
 	// 1. 从数据库加载 Telegram 设置
 	var telegramSetting models.TelegramSetting
+
 	_ = db.First(&telegramSetting)
 
 	ext.TelegramSetting = &telegramSetting
@@ -47,12 +48,15 @@ func InitExtensionServices(db *gorm.DB, logger *zap.Logger, cfg *configs.Config)
 	if envToken := os.Getenv("TG_BOT_TOKEN"); envToken != "" {
 		botToken = envToken
 	}
+
 	if envChatID := os.Getenv("TG_CHAT_ID"); envChatID != "" {
 		chatID = envChatID
 	}
+
 	if envProxy := os.Getenv("TG_PROXY"); envProxy != "" {
 		proxyURL = envProxy
 	}
+
 	if envProxyType := os.Getenv("TG_PROXY_TYPE"); envProxyType != "" {
 		proxyType = envProxyType
 	}
@@ -73,15 +77,19 @@ func InitExtensionServices(db *gorm.DB, logger *zap.Logger, cfg *configs.Config)
 	openaiAPIKey := cfg.OpenAI.APIKey
 	openaiBaseURL := cfg.OpenAI.BaseURL
 	openaiModel := cfg.OpenAI.Model
+
 	if envToken := os.Getenv("OPENAI_API_KEY"); envToken != "" {
 		openaiAPIKey = envToken
 	}
+
 	if envBaseURL := os.Getenv("OPENAI_BASE_URL"); envBaseURL != "" {
 		openaiBaseURL = envBaseURL
 	}
+
 	if envModel := os.Getenv("OPENAI_MODEL"); envModel != "" {
 		openaiModel = envModel
 	}
+
 	ext.OpenAI = openai.NewService(logger.Named("openai"), openaiAPIKey, openaiBaseURL, openaiModel)
 
 	// 6. 初始化 Subscription 服务
@@ -89,20 +97,25 @@ func InitExtensionServices(db *gorm.DB, logger *zap.Logger, cfg *configs.Config)
 	panSearchURL := "https://tg.252035.xyz"
 	enableTMDB := true
 	enableDouban := true
+
 	if cfg.Subscription != nil {
 		panSearchURL = cfg.Subscription.PanSearchURL
 		enableTMDB = cfg.Subscription.EnableTMDB
 		enableDouban = cfg.Subscription.EnableDouban
 	}
+
 	if envURL := os.Getenv("PAN_SEARCH_URL"); envURL != "" {
 		panSearchURL = envURL
 	}
+
 	if envTMDB := os.Getenv("SUBSCRIPTION_ENABLE_TMDB"); envTMDB != "" {
 		enableTMDB = envTMDB == "true"
 	}
+
 	if envDouban := os.Getenv("SUBSCRIPTION_ENABLE_DOUBAN"); envDouban != "" {
 		enableDouban = envDouban == "true"
 	}
+
 	subscriptionConfig := &subscription.SubscriptionConfig{
 		PanSearchURL: panSearchURL,
 		EnableTMDB:   enableTMDB,
@@ -124,6 +137,7 @@ func (ext *ExtensionServices) StartTelegramBot() error {
 	if ext.Telegram != nil && ext.Telegram.IsEnabled() {
 		return ext.Telegram.StartBot()
 	}
+
 	return nil
 }
 

@@ -25,3 +25,13 @@ export const getLoginLogList = (
 ): Promise<ApiResponse<Models.PaginationResponse<Models.LoginLog>>> => {
   return api.get('/login_log/list', { params }).then((res) => res.data)
 }
+
+// 清空登录日志请求参数
+export interface ClearLoginLogsRequest {
+  duration?: string // 保留时长，如 7d、30d、24h；不传则清空所有
+}
+
+// 清空登录日志
+export const clearLoginLogs = (params?: ClearLoginLogsRequest): Promise<ApiResponse<number>> => {
+  return api.post('/login_log/clear', params).then((res) => res.data)
+}

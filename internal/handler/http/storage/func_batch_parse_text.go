@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 )
@@ -25,13 +26,18 @@ func (h *handler) BatchParseFromText() httpcontext.HandlerFunc {
 		req := new(topic.BatchParseTextRequest)
 		if err := ctx.ShouldBindJSON(req); err != nil {
 			ctx.AbortWithInvalidParams(err)
+
 			return
 		}
 
+		req.UserID = ctx.GetInt64(consts.CtxKeyUserId)
+		req.IsAdmin = ctx.GetBool(consts.CtxKeyIsAdmin)
+
 		// 校验 CloudToken 是否存在
-		tokenInfo, err := h.cloudTokenService.Query(ctx.GetContext(), req.CloudToken)
+		tokenInfo, err := h.cloudTokenService.QueryAccessible(ctx.GetContext(), req.CloudToken, req.UserID, req.IsAdmin)
 		if err != nil || tokenInfo == nil {
 			ctx.Fail(busCodeStorageCloudTokenNotExist)
+
 			return
 		}
 
@@ -39,6 +45,7 @@ func (h *handler) BatchParseFromText() httpcontext.HandlerFunc {
 		result, err := h.mountPointService.BatchParseText(ctx.GetContext(), req)
 		if err != nil {
 			ctx.Fail(busCodeStorageQueryPathFailed.WithError(err))
+
 			return
 		}
 

@@ -1,6 +1,9 @@
 package loginlog
 
 import (
+	"errors"
+	"fmt"
+	"io"
 	"time"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
@@ -27,12 +30,18 @@ type clearRequest struct {
 func (h *handler) Clear() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
 		var req clearRequest
-		_ = ctx.ShouldBindJSON(&req)
+
+		if err := ctx.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+			ctx.AbortWithInvalidParams(err)
+
+			return
+		}
 
 		if req.Duration == "" {
 			count, err := h.loginLogService.ClearAll(ctx.GetContext())
 			if err != nil {
 				ctx.Fail(codeClearFailed.WithError(err))
+
 				return
 			}
 
@@ -83,6 +92,10 @@ func resolveCutoff(duration string) (time.Time, error) {
 	d, err := time.ParseDuration(duration)
 	if err != nil {
 		return time.Time{}, err
+	}
+
+	if d <= 0 {
+		return time.Time{}, fmt.Errorf("duration 必须大于 0: %s", duration)
 	}
 
 	return now.Add(-d), nil

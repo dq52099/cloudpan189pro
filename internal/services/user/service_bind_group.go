@@ -12,7 +12,16 @@ type BindGroupRequest struct {
 
 // BindGroup 绑定用户到用户组
 func (s *service) BindGroup(ctx context.Context, req *BindGroupRequest) error {
-	if err := s.getDB(ctx).Where("id", req.UserID).Update("group_id", req.GroupID).Error; err != nil {
+	if req == nil || req.UserID <= 0 {
+		return errInvalidUserID
+	}
+
+	if req.GroupID < 0 {
+		return errInvalidUserGroupID
+	}
+
+	result := s.getDB(ctx).Where("id = ?", req.UserID).Update("group_id", req.GroupID)
+	if err := s.checkUserUpdateResult(ctx, result, req.UserID); err != nil {
 		ctx.Error("绑定用户到用户组失败",
 			zap.Error(err),
 			zap.Int64("user_id", req.UserID),

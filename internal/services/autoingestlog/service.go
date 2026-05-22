@@ -31,6 +31,9 @@ type Service interface {
 
 	// Clear 清空所有日志
 	Clear(ctx appContext.Context) (int64, error)
+
+	// ClearByDuration 按保留时长清理日志
+	ClearByDuration(ctx appContext.Context, duration string) (int64, error)
 }
 
 // service 与构造函数，保持与 autoingestplan/mountpoint/filetasklog 风格一致

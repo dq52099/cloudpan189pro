@@ -44,6 +44,10 @@ func (h *handler) ToggleAutoRefresh() httpcontext.HandlerFunc {
 			return
 		}
 
+		if _, ok := h.queryOwnedMountPoint(ctx, req.ID); !ok {
+			return
+		}
+
 		if !req.EnableAutoRefresh {
 			if err := h.mountPointService.EnableAutoRefresh(ctx.GetContext(), req.ID, false); err != nil {
 				ctx.Fail(busCodeStorageToggleAutoRefreshError.WithError(err))

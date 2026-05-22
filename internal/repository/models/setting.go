@@ -62,18 +62,22 @@ func NormalizeSuffixes(items []string) []string {
 	}
 
 	result := make([]string, 0, len(items))
+
 	seen := make(map[string]struct{}, len(items))
 	for _, item := range items {
 		suffix := strings.ToLower(strings.TrimSpace(item))
 		if suffix == "" {
 			continue
 		}
+
 		if !strings.HasPrefix(suffix, ".") {
 			suffix = "." + suffix
 		}
+
 		if _, ok := seen[suffix]; ok {
 			continue
 		}
+
 		seen[suffix] = struct{}{}
 		result = append(result, suffix)
 	}
@@ -114,6 +118,7 @@ func (sa *SettingAddition) ApplyDefaultsForWrite() {
 // Value 实现 driver.Valuer 接口 - 将结构体转换为数据库值
 func (sa SettingAddition) Value() (driver.Value, error) {
 	normalized := sa
+
 	normalized.WebDAVAllowedSuffixes = NormalizeSuffixes(normalized.WebDAVAllowedSuffixes)
 	if normalized.Keep == "" &&
 		!normalized.LocalProxy &&
@@ -141,6 +146,7 @@ func (sa *SettingAddition) Scan(value interface{}) error {
 	}
 
 	var bytes []byte
+
 	switch v := value.(type) {
 	case []byte:
 		bytes = v

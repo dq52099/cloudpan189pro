@@ -2,6 +2,7 @@ package taskcontext
 
 import (
 	stdContext "context"
+	"fmt"
 	"runtime/debug"
 
 	"github.com/google/uuid"
@@ -17,16 +18,18 @@ type messageProcessor struct {
 	processorId string
 }
 
-func (p *messageProcessor) Process(ctx stdContext.Context, message []byte) error {
+func (p *messageProcessor) Process(ctx stdContext.Context, message []byte) (err error) {
 	defer func() {
 		// 捕获panic并记录日志
-		if err := recover(); err != nil {
+		if recovered := recover(); recovered != nil {
 			stackInfo := string(debug.Stack())
 			p.logger.Error("task processor panic recovery",
-				zap.Any("panic", err),
+				zap.Any("panic", recovered),
 				zap.String("stack", stackInfo),
 				zap.String("processor_id", p.processorId),
 			)
+
+			err = fmt.Errorf("task processor panic: %v", recovered)
 		}
 	}()
 

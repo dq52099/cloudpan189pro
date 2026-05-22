@@ -114,8 +114,16 @@ func (h *handler) Open() httpcontext.HandlerFunc {
 
 		// 获取用户组绑定的文件ID
 		var groupFileIds []int64
+
 		if userGroupId > 0 {
-			groupFileIds, _ = h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
+			groupFileIDs, err := h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
+			if err != nil {
+				ctx.Fail(busCodeQueryTopIdError.WithError(err))
+
+				return
+			}
+
+			groupFileIds = groupFileIDs
 		}
 
 		accessibleIds, err := h.mountPointService.GetAccessibleMountPointIDs(ctx.GetContext(), userID, isAdmin, groupFileIds)
@@ -141,8 +149,7 @@ func (h *handler) Open() httpcontext.HandlerFunc {
 		allowTopIds = accessibleIds
 
 		var (
-			children      []*models.VirtualFile
-			childrenCount int64 = 0
+			children []*models.VirtualFile
 		)
 
 		// 查询子节点
@@ -153,13 +160,6 @@ func (h *handler) Open() httpcontext.HandlerFunc {
 
 			// 目录查询子节点
 			if children, err = h.virtualFileService.List(ctx.GetContext(), childReq); err != nil {
-				ctx.Fail(busCodeFileQueryError.WithError(err))
-
-				return
-			}
-
-			// 子节点数量
-			if childrenCount, err = h.virtualFileService.Count(ctx.GetContext(), childReq); err != nil {
 				ctx.Fail(busCodeFileQueryError.WithError(err))
 
 				return
@@ -175,6 +175,8 @@ func (h *handler) Open() httpcontext.HandlerFunc {
 				return child.OsType == models.OsTypeFolder || lo.Contains(allowTopIds, child.TopId)
 			})
 		}
+
+		childrenCount := int64(len(children))
 
 		// 转换为 DTO
 		childrenDTO := make([]*childDTO, 0, len(children))

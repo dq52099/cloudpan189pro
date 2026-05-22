@@ -10,11 +10,12 @@
               v-model:value="storageSetting.pathPrefix"
               placeholder="必须以 / 开头"
               style="flex-grow: 1"
+              :disabled="state.submitLoading"
             />
             <n-button
               type="primary"
               size="small"
-              :disabled="!hasValidPathPrefix"
+              :disabled="state.submitLoading || !hasValidPathPrefix"
               @click="handleBatchApplyPathPrefix"
             >
               应用
@@ -29,11 +30,12 @@
               placeholder="选择令牌"
               clearable
               style="flex-grow: 1"
+              :disabled="state.submitLoading"
             />
             <n-button
               type="primary"
               size="small"
-              :disabled="storageSetting.selectedToken === undefined"
+              :disabled="state.submitLoading || storageSetting.selectedToken === undefined"
               @click="handleBatchApplyToken"
             >
               应用
@@ -42,11 +44,15 @@
 
           <div class="batch-item">
             <n-text class="batch-label">自动刷新</n-text>
-            <n-switch v-model:value="storageSetting.enableAutoRefresh" />
+            <n-switch
+              v-model:value="storageSetting.enableAutoRefresh"
+              :disabled="state.submitLoading"
+            />
             <n-button
               v-if="storageSetting.enableAutoRefresh"
               type="primary"
               size="small"
+              :disabled="state.submitLoading"
               @click="handleEditAutoRefreshConfig"
             >
               编辑
@@ -73,7 +79,15 @@
     </div>
 
     <!-- 自动刷新配置弹窗 -->
-    <n-modal v-model:show="showAutoRefreshModal" preset="dialog" title="自动刷新配置">
+    <n-modal
+      :show="showAutoRefreshModal"
+      preset="dialog"
+      title="自动刷新配置"
+      :closable="!state.submitLoading"
+      :mask-closable="!state.submitLoading"
+      :close-on-esc="!state.submitLoading"
+      @update:show="handleAutoRefreshModalShowUpdate"
+    >
       <div class="auto-refresh-config">
         <n-form
           ref="autoRefreshFormRef"
@@ -89,6 +103,7 @@
               :max="1440"
               placeholder="30-1440分钟"
               style="width: 100%"
+              :disabled="state.submitLoading"
             />
           </n-form-item>
 
@@ -99,25 +114,31 @@
               :max="365"
               placeholder="1-365天"
               style="width: 100%"
+              :disabled="state.submitLoading"
             />
           </n-form-item>
 
           <n-form-item label="深度刷新" path="enableDeepRefresh">
-            <n-switch v-model:value="autoRefreshForm.enableDeepRefresh" />
+            <n-switch
+              v-model:value="autoRefreshForm.enableDeepRefresh"
+              :disabled="state.submitLoading"
+            />
           </n-form-item>
         </n-form>
       </div>
 
       <template #action>
-        <n-button @click="showAutoRefreshModal = false">取消</n-button>
-        <n-button type="primary" @click="handleAutoRefreshConfirm"> 确认 </n-button>
+        <n-button :disabled="state.submitLoading" @click="closeAutoRefreshModal">取消</n-button>
+        <n-button type="primary" :disabled="state.submitLoading" @click="handleAutoRefreshConfirm">
+          确认
+        </n-button>
       </template>
     </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { reactive, computed, h, onMounted, ref } from 'vue'
+import { reactive, computed, h, onMounted, onUnmounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import {
   NButton,
@@ -134,7 +155,11 @@ import {
   NFormItem,
   NInputNumber,
 } from 'naive-ui'
-import { batchAddStorage, type AddStorageRequest, type BatchAddStorageResponse } from '@/api/storage'
+import {
+  batchAddStorage,
+  type AddStorageRequest,
+  type BatchAddStorageResponse,
+} from '@/api/storage'
 import type { ApiResponse } from '@/utils/api'
 import { getCloudTokenList } from '@/api/cloudtoken'
 import { getOsTypeDisplayName, getOsTypeColor } from '@/utils/osType'
@@ -175,6 +200,24 @@ const state = reactive({
   submitLoading: false,
   cloudTokens: [] as Models.CloudToken[],
 })
+
+let isComponentMounted = false
+let submitRequestVersion = 0
+let cloudTokenRequestVersion = 0
+
+const isCurrentSubmitRequest = (version: number) => {
+  return isComponentMounted && submitRequestVersion === version
+}
+
+const isCurrentCloudTokenRequest = (version: number) => {
+  return isComponentMounted && cloudTokenRequestVersion === version
+}
+
+const invalidatePendingWork = () => {
+  submitRequestVersion++
+  cloudTokenRequestVersion++
+  state.submitLoading = false
+}
 
 // 共享存储
 const sharedStore = useSharedStore()
@@ -281,7 +324,12 @@ const columns: DataTableColumns<TableRow> = [
       return h(NInput, {
         value: row.localPath,
         placeholder: '请输入挂载路径',
+        disabled: state.submitLoading,
         onUpdateValue: (value: string) => {
+          if (state.submitLoading) {
+            return
+          }
+
           tableData[index].localPath = value
         },
       })
@@ -298,8 +346,12 @@ const columns: DataTableColumns<TableRow> = [
         options: cloudTokenOptions.value,
         placeholder: '选择云盘令牌',
         clearable: true,
-        disabled: row.disableSwitchCloudToken,
+        disabled: state.submitLoading || row.disableSwitchCloudToken,
         onUpdateValue: (value: number | undefined) => {
+          if (state.submitLoading) {
+            return
+          }
+
           tableData[index].selectedCloudToken = value
         },
       })
@@ -310,50 +362,65 @@ const columns: DataTableColumns<TableRow> = [
 // 初始化表格数据
 const initTableData = () => {
   // 如果有用户名，强制设置默认路径前缀（覆盖localStorage保存的值）
-  const firstItemWithUserName = props.items.find(item => item.userName)
+  const firstItemWithUserName = props.items.find((item) => item.userName)
   if (firstItemWithUserName?.userName) {
     // 强制设置为订阅号默认路径
-    storageSetting.value.pathPrefix = `/电影/${firstItemWithUserName.userName}/`
+    sharedStore.resetPathPrefix(`/电影/${firstItemWithUserName.userName}/`)
   }
-  
-  const newItems = props.items.map(
-    (item, index) => {
-      // 构建路径：路径前缀 + 名称
-      let localPath: string
-      if (item.userName) {
-        localPath = `${storageSetting.value.pathPrefix || ''}${item.name}`
-      } else {
-        localPath = `${storageSetting.value.pathPrefix || '/'}${item.name}`
-      }
-      return {
-        ...item,
-        id: `item_${index}`,
-        localPath,
-        selectedCloudToken: item.disableSwitchCloudToken
-          ? item.cloudToken
-          : storageSetting.value.selectedToken,
-      } as TableRow
+
+  const newItems = props.items.map((item, index) => {
+    // 构建路径：路径前缀 + 名称
+    let localPath: string
+    if (item.userName) {
+      localPath = `${storageSetting.value.pathPrefix || ''}${item.name}`
+    } else {
+      localPath = `${storageSetting.value.pathPrefix || '/'}${item.name}`
     }
-  )
+    return {
+      ...item,
+      id: `item_${index}`,
+      localPath,
+      selectedCloudToken: item.disableSwitchCloudToken
+        ? item.cloudToken
+        : storageSetting.value.selectedToken,
+    } as TableRow
+  })
   tableData.length = 0
   tableData.push(...newItems)
 }
 
 // 获取云盘令牌列表
 const fetchCloudTokens = () => {
+  const currentRequest = ++cloudTokenRequestVersion
+
   return getCloudTokenList({ noPaginate: true })
     .then((res) => {
-      if (res.data) {
-        state.cloudTokens = res.data.data
+      if (!isCurrentCloudTokenRequest(currentRequest)) {
+        return
       }
+
+      if (res.code === 200 && res.data) {
+        state.cloudTokens = res.data.data
+
+        return
+      }
+      message.error(res.msg || '获取云盘令牌列表失败')
     })
     .catch((error) => {
+      if (!isCurrentCloudTokenRequest(currentRequest)) {
+        return
+      }
+
       message.error(error?.message || '获取云盘令牌列表失败')
     })
 }
 
 // 批量应用令牌
 const handleBatchApplyToken = () => {
+  if (state.submitLoading) {
+    return
+  }
+
   if (allTokenSwitchDisabled.value) {
     message.warning('所有项目都禁止修改令牌')
     return
@@ -381,6 +448,10 @@ const handleBatchApplyToken = () => {
 
 // 批量应用路径前缀
 const handleBatchApplyPathPrefix = () => {
+  if (state.submitLoading) {
+    return
+  }
+
   if (!hasValidPathPrefix.value) {
     message.warning('路径前缀必须以 / 开头')
     return
@@ -402,11 +473,21 @@ const handleBatchApplyPathPrefix = () => {
 
 // 取消
 const handleCancel = () => {
+  if (state.submitLoading) {
+    return
+  }
+
+  invalidatePendingWork()
+  sharedStore.restorePathPrefix()
   emit('cancel')
 }
 
 // 编辑自动刷新配置
 const handleEditAutoRefreshConfig = () => {
+  if (state.submitLoading) {
+    return
+  }
+
   // 从 store 同步当前配置到表单
   autoRefreshForm.refreshInterval = storageSetting.value.refreshInterval || 60
   autoRefreshForm.autoRefreshDays = storageSetting.value.autoRefreshDays || 7
@@ -415,9 +496,35 @@ const handleEditAutoRefreshConfig = () => {
   showAutoRefreshModal.value = true
 }
 
+const handleAutoRefreshModalShowUpdate = (show: boolean) => {
+  if (show) {
+    showAutoRefreshModal.value = true
+
+    return
+  }
+
+  closeAutoRefreshModal()
+}
+
+const closeAutoRefreshModal = () => {
+  if (state.submitLoading) {
+    return
+  }
+
+  showAutoRefreshModal.value = false
+}
+
 // 确认自动刷新配置
 const handleAutoRefreshConfirm = () => {
+  if (state.submitLoading) {
+    return
+  }
+
   autoRefreshFormRef.value?.validate((errors: unknown) => {
+    if (state.submitLoading) {
+      return
+    }
+
     if (errors) {
       message.error('请检查表单输入')
       return
@@ -428,7 +535,7 @@ const handleAutoRefreshConfirm = () => {
     storageSetting.value.refreshInterval = autoRefreshForm.refreshInterval
     storageSetting.value.enableDeepRefresh = autoRefreshForm.enableDeepRefresh
 
-    showAutoRefreshModal.value = false
+    closeAutoRefreshModal()
     message.success('自动刷新配置已保存')
   })
 }
@@ -464,15 +571,23 @@ const handleMountResults = (response: ApiResponse<BatchAddStorageResponse>) => {
     return
   }
 
-  const { successCount, failCount, results } = response.data
+  const { successCount, failCount, scanFailedCount = 0, results } = response.data
 
-  const successItems = results.filter((r) => r.success && r.id !== undefined).map((r) => ({
-    id: r.id as number,
-    path: r.localPath,
-  }))
+  const successItems = results
+    .filter((r) => r.success && r.id !== undefined)
+    .map((r) => ({
+      id: r.id as number,
+      path: r.localPath,
+    }))
 
   if (successCount > 0) {
-    message.success(`成功挂载 ${successCount} 个存储点${failCount > 0 ? `，失败 ${failCount} 个` : ''}`)
+    message.success(
+      `成功挂载 ${successCount} 个存储点${failCount > 0 ? `，失败 ${failCount} 个` : ''}`
+    )
+    if (scanFailedCount > 0) {
+      message.warning(`${scanFailedCount} 个存储点已挂载，但扫描任务未提交`)
+    }
+    sharedStore.restorePathPrefix()
     emit('confirm', successItems)
   } else {
     const firstError = results.find((r) => !r.success)?.error
@@ -482,6 +597,10 @@ const handleMountResults = (response: ApiResponse<BatchAddStorageResponse>) => {
 
 // 确认挂载
 const handleConfirm = () => {
+  if (state.submitLoading) {
+    return
+  }
+
   // 验证数据
   if (hasInvalidRows.value) {
     message.warning('请填写所有挂载路径')
@@ -489,6 +608,7 @@ const handleConfirm = () => {
   }
 
   state.submitLoading = true
+  const currentRequest = ++submitRequestVersion
 
   // 构建请求数据
   const requests = buildRequests()
@@ -496,25 +616,45 @@ const handleConfirm = () => {
   // 批量添加存储挂载（使用后台任务方式）
   return batchAddStorage({ items: requests })
     .then((response) => {
+      if (!isCurrentSubmitRequest(currentRequest)) {
+        return
+      }
+
       handleMountResults(response)
     })
     .catch((error) => {
+      if (!isCurrentSubmitRequest(currentRequest)) {
+        return
+      }
+
       console.error('批量挂载失败:', error)
       message.error('批量挂载失败')
     })
     .finally(() => {
-      state.submitLoading = false
+      if (isCurrentSubmitRequest(currentRequest)) {
+        state.submitLoading = false
+      }
     })
 }
 
 // 组件挂载时初始化数据
 onMounted(() => {
+  isComponentMounted = true
+  submitRequestVersion++
+  cloudTokenRequestVersion++
+
   // 如果有默认令牌，并且用户没有自定义设置，则使用默认令牌
   if (props.defaultCloudToken && storageSetting.value.selectedToken === 0) {
     storageSetting.value.selectedToken = props.defaultCloudToken
   }
   initTableData()
   fetchCloudTokens()
+})
+
+onUnmounted(() => {
+  isComponentMounted = false
+  invalidatePendingWork()
+  sharedStore.restorePathPrefix()
 })
 
 defineExpose({

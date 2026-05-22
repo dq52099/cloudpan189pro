@@ -2,8 +2,10 @@ import { defineStore } from 'pinia'
 import { ref, reactive } from 'vue'
 import { getSystemInfo } from '@/api/setting'
 import { localStg } from '@/utils/storage'
+import type { ApiResponse } from '@/utils/api'
 
 type SystemInfo = Models.SystemInfo
+type SystemRefreshResult = ApiResponse<SystemInfo> | void
 
 // 默认系统信息
 const defaultSystemInfo: SystemInfo = {
@@ -20,6 +22,8 @@ export const useSystemStore = defineStore('system', () => {
   const systemInfo = reactive<SystemInfo>(defaultSystemInfo)
   const loading = ref(false)
   const error = ref<string | null>(null)
+  const loaded = ref(false)
+  let refreshPromise: Promise<SystemRefreshResult> | null = null
 
   const load = () => {
     const _systemInfo = localStg.get('systemInfo')
@@ -33,11 +37,19 @@ export const useSystemStore = defineStore('system', () => {
     Object.assign(systemInfo, _systemInfo)
   }
 
-  const refresh = () => {
-    return getSystemInfo()
+  const refresh = (): Promise<SystemRefreshResult> => {
+    if (refreshPromise) {
+      return refreshPromise
+    }
+
+    loading.value = true
+    error.value = null
+
+    refreshPromise = getSystemInfo()
       .then((response) => {
-        if (response.data) {
+        if (response.code === 200 && response.data) {
           store(response.data)
+          loaded.value = true
         } else {
           error.value = response.msg || '获取系统信息失败'
         }
@@ -50,7 +62,20 @@ export const useSystemStore = defineStore('system', () => {
       })
       .finally(() => {
         loading.value = false
+        refreshPromise = null
       })
+
+    const promise = refreshPromise
+
+    return promise
+  }
+
+  const ensureLoaded = () => {
+    if (loaded.value) {
+      return Promise.resolve()
+    }
+
+    return refresh().then(() => undefined)
   }
 
   const get = () => systemInfo
@@ -61,6 +86,7 @@ export const useSystemStore = defineStore('system', () => {
 
     load,
     refresh,
+    ensureLoaded,
     get,
   }
 })

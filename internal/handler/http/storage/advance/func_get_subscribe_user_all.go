@@ -33,18 +33,21 @@ func (h *handler) GetSubscribeUserAll() httpcontext.HandlerFunc {
 		req := new(getSubscribeUserAllRequest)
 		if err := ctx.ShouldBindQuery(req); err != nil {
 			ctx.AbortWithInvalidParams(err)
+
 			return
 		}
 
 		userInfo, err := h.cloudBridgeService.GetSubscribeUserInfo(ctx.GetContext(), req.SubscribeUser)
 		if err != nil {
 			ctx.Fail(codeStorageAdvanceQuerySubscribeUserError.WithError(err))
+
 			return
 		}
 
 		list, count, err := h.cloudBridgeService.GetSubscribeUserShareResourceAll(ctx.GetContext(), req.SubscribeUser)
 		if err != nil {
 			ctx.Fail(codeStorageAdvanceQuerySubscribeUserListError.WithError(err))
+
 			return
 		}
 

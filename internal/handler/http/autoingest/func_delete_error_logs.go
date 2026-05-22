@@ -1,6 +1,9 @@
 package autoingest
 
 import (
+	"errors"
+	"io"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 )
 
@@ -23,8 +26,9 @@ type deleteErrorLogsRequest struct {
 func (h *handler) DeleteErrorLogs() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
 		req := new(deleteErrorLogsRequest)
-		if err := ctx.ShouldBindJSON(req); err != nil {
+		if err := ctx.ShouldBindJSON(req); err != nil && !errors.Is(err, io.EOF) {
 			ctx.AbortWithInvalidParams(err)
+
 			return
 		}
 
@@ -33,7 +37,13 @@ func (h *handler) DeleteErrorLogs() httpcontext.HandlerFunc {
 			err   error
 		)
 
-		if req.PlanId != nil && *req.PlanId > 0 {
+		if req.PlanId != nil {
+			if *req.PlanId <= 0 {
+				ctx.AbortWithInvalidParams(errors.New("自动入库计划 ID 必须大于 0"))
+
+				return
+			}
+
 			count, err = h.logService.DeleteErrorLogsByPlanId(ctx.GetContext(), *req.PlanId)
 		} else {
 			count, err = h.logService.DeleteAllErrorLogs(ctx.GetContext())
@@ -41,6 +51,7 @@ func (h *handler) DeleteErrorLogs() httpcontext.HandlerFunc {
 
 		if err != nil {
 			ctx.Fail(codeLogDeleteFailed.WithError(err))
+
 			return
 		}
 

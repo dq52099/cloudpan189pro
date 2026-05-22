@@ -43,20 +43,16 @@
           </template>
           刷新
         </n-button>
-        <n-button
-          type="error"
-          ghost
-          :loading="state.clearing"
-          @click="handleClearLogs"
-          style="margin-left: 8px"
-        >
-          <template #icon>
-            <n-icon>
-              <TrashOutline />
-            </n-icon>
-          </template>
-          清空日志
-        </n-button>
+        <n-dropdown trigger="click" :options="clearLogOptions" @select="handleClearLogs">
+          <n-button type="error" ghost :loading="state.clearing" style="margin-left: 8px">
+            <template #icon>
+              <n-icon>
+                <TrashOutline />
+              </n-icon>
+            </template>
+            清理日志
+          </n-button>
+        </n-dropdown>
       </div>
     </div>
 
@@ -107,11 +103,7 @@
             {{ formatDuration(state.currentTask.duration) }}
           </n-descriptions-item>
           <n-descriptions-item label="进度">
-            {{
-              state.currentTask.total > 0
-                ? `${state.currentTask.completed}/${state.currentTask.total}`
-                : '无进度信息'
-            }}
+            {{ formatProgressText(state.currentTask) }}
           </n-descriptions-item>
           <n-descriptions-item label="文件ID">
             {{ state.currentTask.fileId }}
@@ -175,7 +167,9 @@ import {
   NProgress,
   useMessage,
   useDialog,
+  NDropdown,
   type DataTableColumns,
+  type DropdownOption,
   type PaginationProps,
 } from 'naive-ui'
 import {
@@ -213,9 +207,19 @@ const state = reactive({
 // 消息提示
 const message = useMessage()
 const dialog = useDialog()
+const clearLogOptions: DropdownOption[] = [
+  { label: '清空全部', key: 'all' },
+  { label: '保留最近 7 天', key: '7d' },
+  { label: '保留最近 30 天', key: '30d' },
+  { label: '保留最近 90 天', key: '90d' },
+]
 
 const AUTO_REFRESH_INTERVAL = 3000
 let refreshTimer: ReturnType<typeof setInterval> | null = null
+let isComponentMounted = false
+let listRequestId = 0
+let clearRequestId = 0
+let listRequestInFlight = false
 
 // 状态选项（使用常量定义）
 const statusOptions = TASK_STATUS_OPTIONS
@@ -272,6 +276,10 @@ const filterAllowsActiveTasks = () => {
 }
 
 const ensureAutoRefresh = () => {
+  if (!isComponentMounted) {
+    return
+  }
+
   if (!filterAllowsActiveTasks() || !hasActiveTasks()) {
     stopAutoRefresh()
 
@@ -287,8 +295,23 @@ const ensureAutoRefresh = () => {
   }, AUTO_REFRESH_INTERVAL)
 }
 
+const isLatestListRequest = (requestId: number) => {
+  return isComponentMounted && requestId === listRequestId
+}
+
+const isLatestClearRequest = (requestId: number) => {
+  return isComponentMounted && requestId === clearRequestId
+}
+
 const fetchTaskLogList = (silent = false) => {
-  if (!silent) {
+  if (silent && listRequestInFlight) {
+    return
+  }
+
+  const requestId = ++listRequestId
+  listRequestInFlight = true
+
+  if (!silent && isComponentMounted) {
     state.loading = true
   }
 
@@ -314,14 +337,29 @@ const fetchTaskLogList = (silent = false) => {
 
   getFileLogList(params)
     .then((response) => {
-      if (response.data) {
+      if (!isLatestListRequest(requestId)) {
+        return
+      }
+
+      if (response.code === 200 && response.data) {
         state.tableData = response.data.data || []
         paginationReactive.itemCount = response.data.total || 0
         syncCurrentTask()
         ensureAutoRefresh()
+
+        return
+      }
+
+      stopAutoRefresh()
+      if (!silent) {
+        message.error(response.msg || '获取任务日志失败')
       }
     })
     .catch((error) => {
+      if (!isLatestListRequest(requestId)) {
+        return
+      }
+
       console.error('获取任务日志失败:', error)
       stopAutoRefresh()
       if (!silent) {
@@ -329,8 +367,9 @@ const fetchTaskLogList = (silent = false) => {
       }
     })
     .finally(() => {
-      if (!silent) {
+      if (isLatestListRequest(requestId)) {
         state.loading = false
+        listRequestInFlight = false
       }
     })
 }
@@ -357,28 +396,50 @@ const handleRefresh = () => {
 }
 
 // 清空日志
-const handleClearLogs = () => {
+const handleClearLogs = (key: string | number) => {
+  const duration = key === 'all' ? undefined : String(key)
+  const selectedLabel =
+    clearLogOptions.find((option) => option.key === key)?.label?.toString() || '清理日志'
+
   dialog.warning({
-    title: '清空任务日志',
-    content: '确定要清空所有任务日志吗？此操作不可撤销。',
-    positiveText: '确认清空',
+    title: selectedLabel,
+    content: duration
+      ? `确定要删除 ${selectedLabel.replace('保留', '')}以外的任务日志吗？此操作不可撤销。`
+      : '确定要清空所有任务日志吗？此操作不可撤销。',
+    positiveText: '确认清理',
     negativeText: '取消',
     onPositiveClick: () => {
+      if (state.clearing || !isComponentMounted) {
+        return
+      }
+
+      const requestId = ++clearRequestId
       state.clearing = true
-      clearTaskLogs()
+      clearTaskLogs(duration ? { duration } : undefined)
         .then((res) => {
+          if (!isLatestClearRequest(requestId)) {
+            return
+          }
+
           if (res.code === 200) {
-            message.success('任务日志已清空')
+            message.success(`任务日志已清理${res.data ? `，删除 ${res.data} 条` : ''}`)
+            paginationReactive.page = 1
             fetchTaskLogList()
           } else {
             message.error(res.msg || '清空失败')
           }
         })
         .catch((err) => {
+          if (!isLatestClearRequest(requestId)) {
+            return
+          }
+
           message.error(err?.message || '清空失败')
         })
         .finally(() => {
-          state.clearing = false
+          if (isLatestClearRequest(requestId)) {
+            state.clearing = false
+          }
         })
     },
   })
@@ -409,6 +470,60 @@ const getTypeTagType = (type: string) => {
 const getTypeText = (type: string) => {
   const map = TASK_TYPE_TEXT_MAP as Record<string, string>
   return map[type] || type
+}
+
+const getFailedCount = (task: Models.FileTaskLog) => {
+  return Math.max(0, task.failed || 0)
+}
+
+const getCompletedCount = (task: Models.FileTaskLog) => {
+  return Math.max(0, task.completed || 0)
+}
+
+const getProcessedCount = (task: Models.FileTaskLog) => {
+  const total = Math.max(0, task.total || 0)
+  const processed = getCompletedCount(task) + getFailedCount(task)
+  if (total <= 0) {
+    return processed
+  }
+
+  return Math.min(total, processed)
+}
+
+const getProgressPercentage = (task: Models.FileTaskLog) => {
+  const total = Math.max(0, task.total || 0)
+  if (total <= 0) {
+    return 0
+  }
+
+  return Math.round((getProcessedCount(task) / total) * 100)
+}
+
+const formatProgressText = (task: Models.FileTaskLog) => {
+  const total = Math.max(0, task.total || 0)
+  if (total <= 0) {
+    return '无进度信息'
+  }
+
+  const completed = getCompletedCount(task)
+  const failed = getFailedCount(task)
+  if (failed > 0) {
+    return `成功 ${completed} / 总 ${total}，失败 ${failed}`
+  }
+
+  return `${completed}/${total}`
+}
+
+const getProgressStatus = (task: Models.FileTaskLog) => {
+  if (getFailedCount(task) > 0 || task.status === 'failed') {
+    return 'error'
+  }
+
+  if (task.status === 'completed') {
+    return 'success'
+  }
+
+  return 'info'
 }
 
 // 格式化时长
@@ -512,14 +627,23 @@ const columns: DataTableColumns<Models.FileTaskLog> = [
     align: 'center',
     render(row) {
       if (row.total <= 0) return '无进度信息'
-      const percentage = Math.round((row.completed / row.total) * 100)
-      return h(NProgress, {
-        type: 'line',
-        percentage,
-        showIndicator: true,
-        status: row.status === 'failed' ? 'error' : row.status === 'completed' ? 'success' : 'info',
-        height: 8,
-      })
+
+      return h('div', { class: 'progress-cell' }, [
+        h(NProgress, {
+          type: 'line',
+          percentage: getProgressPercentage(row),
+          showIndicator: true,
+          status: getProgressStatus(row),
+          height: 8,
+        }),
+        h(
+          'span',
+          {
+            class: ['progress-summary', getFailedCount(row) > 0 ? 'is-failed' : ''],
+          },
+          formatProgressText(row)
+        ),
+      ])
     },
   },
   {
@@ -565,10 +689,15 @@ const columns: DataTableColumns<Models.FileTaskLog> = [
 
 // 初始化：仅在被挂载时请求，配合 Tabs v-if 从而避免多余请求
 onMounted(() => {
+  isComponentMounted = true
   fetchTaskLogList()
 })
 
 onUnmounted(() => {
+  isComponentMounted = false
+  listRequestId++
+  clearRequestId++
+  listRequestInFlight = false
   stopAutoRefresh()
 })
 </script>
@@ -619,6 +748,24 @@ onUnmounted(() => {
 .task-logs-table :deep(.n-data-table-td) {
   text-align: center;
   padding: 12px 8px;
+}
+
+.progress-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 120px;
+}
+
+.progress-summary {
+  color: var(--n-text-color-3);
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.progress-summary.is-failed {
+  color: var(--n-error-color);
 }
 
 .task-detail {

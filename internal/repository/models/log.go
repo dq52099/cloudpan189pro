@@ -37,6 +37,7 @@ type FileTaskLog struct {
 	// 进度显示
 	Completed int64 `gorm:"column:completed;type:bigint;default:0" json:"completed"` // 已完成数量
 	Total     int64 `gorm:"column:total;type:bigint;default:0" json:"total"`         // 总数量
+	Failed    int64 `gorm:"column:failed;type:bigint;default:0" json:"failed"`       // 失败数量
 
 	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
 	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"updatedAt"`

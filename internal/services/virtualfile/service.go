@@ -62,7 +62,8 @@ func dbNeedsLocalLock(svc bootstrap.ServiceContext) bool {
 		return true
 	}
 
-	switch db.Dialector.Name() {
+	dialector := db.Dialector
+	switch dialector.Name() {
 	case "sqlite", "sqlite3":
 		return true
 	default:

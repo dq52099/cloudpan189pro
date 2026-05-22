@@ -92,7 +92,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   NButton,
@@ -136,18 +136,27 @@ const breadcrumbs = ref<BreadcrumbItem[]>([])
 const showSearch = ref(false)
 // 新增：选中的文件ID列表
 const selectedRowKeys = ref<number[]>([])
+let isComponentMounted = true
+let fileOpenRequestId = 0
 
 // 计算属性
 const canGoBack = computed(() => breadcrumbs.value.length > 0)
 
 // 方法
+const isCurrentFileOpenRequest = (requestId: number) => {
+  return isComponentMounted && fileOpenRequestId === requestId
+}
+
 const loadPath = (path: string) => {
+  const requestId = ++fileOpenRequestId
   loading.value = true
   // 切换路径时清空选中状态
   selectedRowKeys.value = []
 
   openFile(path)
     .then((response) => {
+      if (!isCurrentFileOpenRequest(requestId)) return
+
       if (response.code === 200 && response.data) {
         fileInfo.value = response.data
         currentPath.value = path
@@ -157,11 +166,15 @@ const loadPath = (path: string) => {
       }
     })
     .catch((error) => {
+      if (!isCurrentFileOpenRequest(requestId)) return
+
       console.error('加载文件失败:', error)
       message.error('加载文件失败')
     })
     .finally(() => {
-      loading.value = false
+      if (isCurrentFileOpenRequest(requestId)) {
+        loading.value = false
+      }
     })
 }
 
@@ -269,6 +282,11 @@ watch(
   },
   { immediate: true }
 )
+
+onUnmounted(() => {
+  isComponentMounted = false
+  fileOpenRequestId += 1
+})
 </script>
 
 <style scoped>

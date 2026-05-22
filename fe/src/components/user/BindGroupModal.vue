@@ -1,5 +1,12 @@
 <template>
-  <n-modal v-model:show="visible" preset="dialog" title="绑定用户组">
+  <n-modal
+    v-model:show="visible"
+    preset="dialog"
+    title="绑定用户组"
+    :closable="!loading"
+    :mask-closable="!loading"
+    :close-on-esc="!loading"
+  >
     <div style="margin: 20px 0">
       <n-alert type="info" style="margin-bottom: 20px">
         正在为用户 <strong>{{ userInfo?.username }}</strong> 绑定用户组
@@ -20,6 +27,7 @@
           placeholder="请选择用户组"
           :options="groupOptions"
           :loading="groupLoading"
+          :disabled="loading"
           clearable
         />
       </n-form-item>
@@ -27,15 +35,17 @@
 
     <template #action>
       <n-space>
-        <n-button @click="handleCancel">取消</n-button>
-        <n-button type="primary" :loading="loading" @click="handleConfirm"> 确认绑定 </n-button>
+        <n-button :disabled="loading" @click="handleCancel">取消</n-button>
+        <n-button type="primary" :loading="loading" :disabled="loading" @click="handleConfirm">
+          确认绑定
+        </n-button>
       </n-space>
     </template>
   </n-modal>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import {
   NModal,
   NForm,
@@ -71,7 +81,13 @@ const message = useMessage()
 // 控制弹窗显示
 const visible = computed({
   get: () => props.show,
-  set: (value) => emit('update:show', value),
+  set: (value) => {
+    if (!value && loading.value) {
+      return
+    }
+
+    emit('update:show', value)
+  },
 })
 
 // 表单相关
@@ -84,6 +100,8 @@ const form = reactive({
 
 // 用户组选项
 const groupOptions = ref<SelectOption[]>([])
+let operationVersion = 0
+let isComponentMounted = false
 
 // 表单验证规则
 const formRules: FormRules = {
@@ -91,11 +109,36 @@ const formRules: FormRules = {
 }
 
 // 获取用户组列表
-const fetchUserGroups = () => {
+const isCurrentOperation = (version: number) => {
+  return isComponentMounted && operationVersion === version
+}
+
+const invalidatePendingWork = () => {
+  operationVersion++
+}
+
+const getErrorMessage = (error: unknown) => {
+  if (typeof error !== 'object' || error === null) {
+    return undefined
+  }
+
+  const response = (error as { response?: { data?: { msg?: unknown } } }).response
+  return typeof response?.data?.msg === 'string' ? response.data.msg : undefined
+}
+
+const fetchUserGroups = (currentOperation = operationVersion) => {
+  if (!isComponentMounted) {
+    return
+  }
+
   groupLoading.value = true
 
   getUserGroupList({ noPaginate: true })
     .then((response) => {
+      if (!isCurrentOperation(currentOperation)) {
+        return
+      }
+
       if (response.code === 200 && response.data) {
         // 添加默认用户组选项
         const options: SelectOption[] = [
@@ -116,20 +159,30 @@ const fetchUserGroups = () => {
         }
 
         groupOptions.value = options
+
+        return
       }
+
+      message.error(response.msg || '获取用户组列表失败')
     })
     .catch((error) => {
+      if (!isCurrentOperation(currentOperation)) {
+        return
+      }
+
       console.error('获取用户组列表失败:', error)
       message.error('获取用户组列表失败')
     })
     .finally(() => {
-      groupLoading.value = false
+      if (isCurrentOperation(currentOperation)) {
+        groupLoading.value = false
+      }
     })
 }
 
 // 重置表单
 const resetForm = () => {
-  form.groupId = props.userInfo?.groupId || undefined
+  form.groupId = props.userInfo?.groupId ?? undefined
   formRef.value?.restoreValidation()
 }
 
@@ -138,59 +191,89 @@ watch(
   () => props.show,
   (newVal) => {
     if (newVal) {
+      operationVersion++
+      const currentOperation = operationVersion
+
       resetForm()
-      fetchUserGroups()
+
+      fetchUserGroups(currentOperation)
+
+      return
     }
+
+    invalidatePendingWork()
+    loading.value = false
+    groupLoading.value = false
   }
 )
 
 // 取消操作
 const handleCancel = () => {
+  if (loading.value) return
+
   visible.value = false
 }
 
 // 确认绑定用户组
-const handleConfirm = () => {
-  if (!formRef.value || !props.userInfo) return
+const handleConfirm = async () => {
+  if (loading.value || !formRef.value || !props.userInfo) return
 
-  // 验证表单
-  formRef.value
-    .validate()
-    .then(() => {
-      loading.value = true
+  const currentOperation = operationVersion
+  loading.value = true
 
-      const requestData: BindGroupRequest = {
-        userId: props.userInfo!.id,
-        groupId: form.groupId,
-      }
+  try {
+    // 验证表单
+    await formRef.value.validate()
 
-      // 调用绑定用户组API
-      return bindUserGroup(requestData)
-    })
-    .then((response) => {
-      if (response.code === 200) {
-        message.success('用户组绑定成功')
-        visible.value = false
-        emit('success')
-      } else {
-        message.error(response.msg || '用户组绑定失败')
-      }
-    })
-    .catch((error) => {
-      console.error('绑定用户组失败:', error)
-      if (error?.response?.data?.msg) {
-        message.error(error.response.data.msg)
-      } else {
-        message.error('绑定用户组失败，请稍后重试')
-      }
-    })
-    .finally(() => {
+    if (!isCurrentOperation(currentOperation) || !visible.value || !props.userInfo) {
+      return
+    }
+
+    const requestData: BindGroupRequest = {
+      userId: props.userInfo.id,
+      groupId: form.groupId,
+    }
+
+    // 调用绑定用户组API
+    const response = await bindUserGroup(requestData)
+
+    if (!isCurrentOperation(currentOperation) || !visible.value) {
+      return
+    }
+
+    if (response.code === 200) {
+      message.success('用户组绑定成功')
+      visible.value = false
+      emit('success')
+    } else {
+      message.error(response.msg || '用户组绑定失败')
+    }
+  } catch (error) {
+    if (!isCurrentOperation(currentOperation) || !visible.value) {
+      return
+    }
+
+    if (Array.isArray(error)) {
+      return
+    }
+
+    console.error('绑定用户组失败:', error)
+    message.error(getErrorMessage(error) || '绑定用户组失败，请稍后重试')
+  } finally {
+    if (isCurrentOperation(currentOperation)) {
       loading.value = false
-    })
+    }
+  }
 }
 
 // 组件挂载时获取用户组列表
 onMounted(() => {
+  isComponentMounted = true
   fetchUserGroups()
+})
+
+onUnmounted(() => {
+  isComponentMounted = false
+  invalidatePendingWork()
 })
 </script>

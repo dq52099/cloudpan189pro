@@ -76,6 +76,7 @@ import { formatDateTime } from '@/utils/time'
 const tableData = ref<Models.UserGroup[]>([])
 const loading = ref(false)
 const searchKeyword = ref('')
+let userGroupListRequestId = 0
 
 // 添加用户组相关
 const showAddModal = ref(false)
@@ -100,12 +101,10 @@ const paginationReactive = reactive<PaginationProps>({
   pageSizes: [10, 20, 50, 100],
   prefix: ({ itemCount }) => `共 ${itemCount} 条`,
   onChange: (page: number) => {
-    console.log('分页切换到:', page)
     paginationReactive.page = page
     fetchUserGroupList()
   },
   onUpdatePageSize: (pageSize: number) => {
-    console.log('每页大小切换到:', pageSize)
     paginationReactive.pageSize = pageSize
     paginationReactive.page = 1
     fetchUserGroupList()
@@ -114,6 +113,7 @@ const paginationReactive = reactive<PaginationProps>({
 
 // 获取用户组列表
 const fetchUserGroupList = () => {
+  const currentRequestId = ++userGroupListRequestId
   loading.value = true
 
   const params = {
@@ -122,23 +122,23 @@ const fetchUserGroupList = () => {
     name: searchKeyword.value || undefined,
   }
 
-  console.log('请求参数:', params)
-
   getUserGroupList(params)
     .then((response) => {
-      console.log('API响应:', response)
+      if (currentRequestId !== userGroupListRequestId) return
 
       if (response.code === 200 && response.data) {
         tableData.value = response.data.data || []
         paginationReactive.itemCount = response.data.total || 0
-        console.log('表格数据:', tableData.value)
-        console.log('总数据量:', paginationReactive.itemCount)
       }
     })
     .catch((error) => {
+      if (currentRequestId !== userGroupListRequestId) return
+
       console.error('获取用户组列表失败:', error)
     })
     .finally(() => {
+      if (currentRequestId !== userGroupListRequestId) return
+
       loading.value = false
     })
 }
@@ -147,7 +147,6 @@ const fetchUserGroupList = () => {
 const handleSearch = () => {
   paginationReactive.page = 1 // 搜索时重置到第一页
   fetchUserGroupList()
-  console.log('搜索关键词:', searchKeyword.value)
 }
 
 // 重置
@@ -326,7 +325,6 @@ const columns: DataTableColumns<Models.UserGroup> = [
 
 // 初始化
 onMounted(() => {
-  console.log('页面挂载，开始获取数据')
   fetchUserGroupList()
 })
 </script>

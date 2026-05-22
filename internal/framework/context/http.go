@@ -249,6 +249,7 @@ func (c Context) formatRequestBody(body interface{}, maxSize int) string {
 	}
 
 	var bodyStr string
+
 	switch v := body.(type) {
 	case string:
 		bodyStr = v

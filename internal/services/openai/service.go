@@ -14,6 +14,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const maxOpenAIResponseSize = 5 << 20
+
 type Service interface {
 	GenerateUpgradeKeyword(title, category string) (string, error)
 }
@@ -70,12 +72,14 @@ func NewService(logger *zap.Logger, apiKey, baseURL, model string) Service {
 	if s.config.APIKey == "" {
 		s.config.APIKey = os.Getenv("OPENAI_API_KEY")
 	}
+
 	if s.config.BaseURL == "" {
 		s.config.BaseURL = os.Getenv("OPENAI_BASE_URL")
 		if s.config.BaseURL == "" {
 			s.config.BaseURL = "https://api.openai.com"
 		}
 	}
+
 	if s.config.Model == "" {
 		s.config.Model = os.Getenv("OPENAI_MODEL")
 		if s.config.Model == "" {
@@ -124,6 +128,7 @@ func (s *service) GenerateUpgradeKeyword(title, category string) (string, error)
 	}
 
 	apiURL := buildOpenAIURL(s.config.BaseURL, "/chat/completions")
+
 	reqHTTP, err := http.NewRequestWithContext(context.Background(), "POST", apiURL, bytes.NewReader(jsonBody))
 	if err != nil {
 		return "", err
@@ -136,20 +141,26 @@ func (s *service) GenerateUpgradeKeyword(title, category string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	body, err := readOpenAIResponseBody(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("读取 OpenAI 响应失败: %w", err)
+	}
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("OpenAI API returned status: %d, body: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("openai API returned status: %d, body: %s", resp.StatusCode, string(body))
 	}
 
 	var result ChatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		return "", err
 	}
 
 	if len(result.Choices) == 0 {
-		return "", fmt.Errorf("No response from OpenAI")
+		return "", fmt.Errorf("no response from OpenAI")
 	}
 
 	keyword := strings.TrimSpace(result.Choices[0].Message.Content)
@@ -158,6 +169,19 @@ func (s *service) GenerateUpgradeKeyword(title, category string) (string, error)
 	s.logger.Info("Generated upgrade keyword", zap.String("title", title), zap.String("keyword", keyword))
 
 	return keyword, nil
+}
+
+func readOpenAIResponseBody(body io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(body, maxOpenAIResponseSize+1))
+	if err != nil {
+		return nil, err
+	}
+
+	if len(data) > maxOpenAIResponseSize {
+		return nil, fmt.Errorf("OpenAI 响应体过大，已拒绝")
+	}
+
+	return data, nil
 }
 
 // buildOpenAIURL 构造 OpenAI 兼容接口 URL。

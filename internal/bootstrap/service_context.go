@@ -86,6 +86,7 @@ func newServiceContext(c *configs.RuntimeConfig) (ServiceContext, error) {
 	// 从 SQLite 迁移数据到 PostgreSQL
 	if ShouldMigrateData(c.Config) {
 		fmt.Println("检测到 SQLite 数据，正在迁移到 PostgreSQL...")
+
 		if err := MigrateFromSQLite(c.Config); err != nil {
 			fmt.Printf("数据迁移失败: %v\n", err)
 		} else {

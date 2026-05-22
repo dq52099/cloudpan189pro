@@ -4,6 +4,8 @@
     preset="dialog"
     :title="props.updateMode ? '更新扫码令牌' : '扫码登录'"
     :mask-closable="false"
+    :closable="!isBusy"
+    :close-on-esc="!isBusy"
   >
     <div class="qrcode-login-container">
       <!-- 二维码显示区域 -->
@@ -28,7 +30,7 @@
             <CloseCircleOutline />
           </n-icon>
           <p>二维码生成失败</p>
-          <n-button type="primary" @click="initQrcode">重新生成</n-button>
+          <n-button type="primary" :disabled="isBusy" @click="initQrcode">重新生成</n-button>
         </div>
       </div>
 
@@ -55,7 +57,13 @@
             <CloseCircleOutline />
           </n-icon>
           <span>二维码已过期</span>
-          <n-button type="primary" size="small" @click="initQrcode" style="margin-left: 8px">
+          <n-button
+            type="primary"
+            size="small"
+            :disabled="isBusy"
+            @click="initQrcode"
+            style="margin-left: 8px"
+          >
             重新生成
           </n-button>
         </div>
@@ -69,13 +77,16 @@
 
     <template #action>
       <n-space>
-        <n-button @click="handleCancel">取消</n-button>
-        <n-button type="primary" @click="initQrcode" :loading="loading"> 重新生成二维码 </n-button>
+        <n-button :disabled="isBusy" @click="handleCancel">取消</n-button>
+        <n-button type="primary" :loading="loading" :disabled="checkLoading" @click="initQrcode">
+          重新生成二维码
+        </n-button>
         <n-button
           v-if="qrcodeUrl && countdown > 0"
           type="success"
           @click="handleCheckLogin"
           :loading="checkLoading"
+          :disabled="loading"
         >
           我已扫码登录
         </n-button>
@@ -114,9 +125,11 @@ const qrcodeUrl = ref('')
 const countdown = ref(0)
 const statusMessage = ref('')
 const statusType = ref<'success' | 'info' | 'warning' | 'error'>('info')
+const successPending = ref(false)
 
-// 定时器
-let countdownTimer: number | null = null
+let operationVersion = 0
+let countdownTimer: ReturnType<typeof setInterval> | null = null
+let successCloseTimer: ReturnType<typeof setTimeout> | null = null
 
 // 消息提示
 const message = useMessage()
@@ -124,8 +137,16 @@ const message = useMessage()
 // 计算属性
 const showModal = computed({
   get: () => props.show,
-  set: (value) => emit('update:show', value),
+  set: (value) => {
+    if (!value && isBusy.value) {
+      return
+    }
+
+    emit('update:show', value)
+  },
 })
+
+const isBusy = computed(() => loading.value || checkLoading.value || successPending.value)
 
 // 监听弹窗显示状态
 watch(showModal, (newVal) => {
@@ -133,27 +154,48 @@ watch(showModal, (newVal) => {
     // 弹窗打开时初始化二维码
     initQrcode()
   } else {
-    // 弹窗关闭时清理定时器
-    clearTimers()
+    invalidatePendingWork()
     resetState()
   }
 })
 
+const isCurrentOperation = (version: number) => {
+  return showModal.value && operationVersion === version
+}
+
+const invalidatePendingWork = () => {
+  operationVersion++
+  clearTimers()
+}
+
 // 初始化二维码
 const initQrcode = () => {
+  if (!showModal.value || isBusy.value) {
+    return
+  }
+
+  operationVersion++
+  const currentOperation = operationVersion
+
   loading.value = true
+  checkLoading.value = false
+  successPending.value = false
   statusMessage.value = ''
   clearTimers()
 
   initQrcodeApi()
     .then((response) => {
+      if (!isCurrentOperation(currentOperation)) {
+        return
+      }
+
       if (response.code === 200 && response.data) {
         qrcodeUuid.value = response.data.uuid
         // 构建二维码URL，这里假设后端返回的是uuid，需要构建完整的登录URL
         qrcodeUrl.value = `https://cloud.189.cn/api/portal/loginUrl.action?redirectURL=https://cloud.189.cn&uuid=${response.data.uuid}`
 
         // 开始倒计时（120秒）
-        startCountdown(120)
+        startCountdown(120, currentOperation)
 
         statusMessage.value =
           '二维码生成成功，请使用天翼云盘APP扫码登录，扫码后点击"我已扫码登录"按钮'
@@ -163,40 +205,56 @@ const initQrcode = () => {
       }
     })
     .catch((error) => {
+      if (!isCurrentOperation(currentOperation)) {
+        return
+      }
+
       console.error('初始化二维码失败:', error)
       statusMessage.value = '二维码生成失败，请重试'
       statusType.value = 'error'
       qrcodeUrl.value = ''
     })
     .finally(() => {
-      loading.value = false
+      if (isCurrentOperation(currentOperation)) {
+        loading.value = false
+      }
     })
 }
 
 // 开始倒计时
-const startCountdown = (seconds: number) => {
+const startCountdown = (seconds: number, currentOperation: number) => {
   countdown.value = seconds
 
   countdownTimer = setInterval(() => {
+    if (!isCurrentOperation(currentOperation)) {
+      clearTimers()
+
+      return
+    }
+
     countdown.value--
 
     if (countdown.value <= 0) {
-      clearInterval(countdownTimer!)
-      countdownTimer = null
+      clearCountdownTimer()
       statusMessage.value = '二维码已过期，请重新生成'
       statusType.value = 'warning'
     }
-  }, 1000) as unknown as number
+  }, 1000)
 }
 
 // 手动检查登录状态
 const handleCheckLogin = () => {
+  if (loading.value || checkLoading.value || successPending.value) {
+    return
+  }
+
   if (!qrcodeUuid.value) {
     message.error('二维码ID不存在，请重新生成二维码')
     return
   }
 
   checkLoading.value = true
+  const currentOperation = operationVersion
 
   const checkData = {
     uuid: qrcodeUuid.value,
@@ -205,15 +263,24 @@ const handleCheckLogin = () => {
 
   checkQrcode(checkData)
     .then((response) => {
+      if (!isCurrentOperation(currentOperation)) {
+        return
+      }
+
       if (response.code === 200) {
         // 登录成功
         clearTimers()
+        successPending.value = true
         statusMessage.value = '登录成功！'
         statusType.value = 'success'
         message.success('扫码登录成功')
 
         // 延迟关闭弹窗并触发成功回调
-        setTimeout(() => {
+        successCloseTimer = setTimeout(() => {
+          if (!isCurrentOperation(currentOperation)) {
+            return
+          }
+
           showModal.value = false
           emit('success')
         }, 1500)
@@ -240,19 +307,34 @@ const handleCheckLogin = () => {
       }
     })
     .catch((error) => {
+      if (!isCurrentOperation(currentOperation)) {
+        return
+      }
+
       console.error('检查二维码状态失败:', error)
       message.error('检查登录状态失败')
     })
     .finally(() => {
-      checkLoading.value = false
+      if (isCurrentOperation(currentOperation)) {
+        checkLoading.value = false
+      }
     })
+}
+
+const clearCountdownTimer = () => {
+  if (countdownTimer) {
+    clearInterval(countdownTimer)
+    countdownTimer = null
+  }
 }
 
 // 清理定时器
 const clearTimers = () => {
-  if (countdownTimer) {
-    clearInterval(countdownTimer)
-    countdownTimer = null
+  clearCountdownTimer()
+
+  if (successCloseTimer) {
+    clearTimeout(successCloseTimer)
+    successCloseTimer = null
   }
 }
 
@@ -263,16 +345,22 @@ const resetState = () => {
   countdown.value = 0
   statusMessage.value = ''
   loading.value = false
+  checkLoading.value = false
+  successPending.value = false
 }
 
 // 取消操作
 const handleCancel = () => {
+  if (isBusy.value) {
+    return
+  }
+
   showModal.value = false
 }
 
 // 组件卸载时清理定时器
 onUnmounted(() => {
-  clearTimers()
+  invalidatePendingWork()
 })
 </script>
 

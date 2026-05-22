@@ -18,6 +18,10 @@ type RefreshConfig struct {
 
 // UpdateRefreshConfig 更新挂载点刷新配置（合并三个方法为一个）
 func (s *service) UpdateRefreshConfig(ctx context.Context, fileId int64, config RefreshConfig) error {
+	if fileId <= 0 {
+		return errInvalidMountPointFileID
+	}
+
 	// 验证参数
 	if err := s.validateRefreshConfig(config); err != nil {
 		return err
@@ -48,13 +52,24 @@ func (s *service) UpdateRefreshConfig(ctx context.Context, fileId int64, config 
 	}
 
 	// 执行更新
-	if err := s.getDB(ctx).Where("file_id = ?", fileId).Updates(updates).Error; err != nil {
+	result := s.getDB(ctx).Where("file_id = ?", fileId).Updates(updates)
+	if result.Error != nil {
 		ctx.Error("更新挂载点刷新配置失败",
-			zap.Error(err),
+			zap.Error(result.Error),
 			zap.Int64("fileId", fileId),
 			zap.Any("config", config))
 
-		return err
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		if err := s.ensureMountPointFileExists(ctx, fileId); err != nil {
+			ctx.Error("更新挂载点刷新配置失败，记录不存在",
+				zap.Int64("fileId", fileId),
+				zap.Any("config", config))
+
+			return err
+		}
 	}
 
 	ctx.Info("更新挂载点刷新配置成功",

@@ -6,11 +6,11 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
-import Plyr from 'plyr'
 import 'plyr/dist/plyr.css'
-import Hls from 'hls.js'
 import { useMessage } from 'naive-ui'
 import { createDownloadUrl, type FileChild } from '@/api/file'
+import type Plyr from 'plyr'
+import type Hls from 'hls.js'
 
 const props = defineProps<{
   file: FileChild
@@ -25,6 +25,9 @@ const videoRef = ref<HTMLVideoElement | null>(null)
 const plyr = ref<Plyr | null>(null)
 const hls = ref<Hls | null>(null)
 const sourceUrl = ref('')
+let sourceRequestId = 0
+let videoErrorHandler: (() => void) | null = null
+let isComponentMounted = false
 
 const autoplay = computed(() => !!props.autoplay)
 const muted = computed(() => !!props.muted)
@@ -32,29 +35,37 @@ const preload = computed(() => props.preload || 'metadata')
 
 const isHlsByName = (name: string) => name.toLowerCase().endsWith('.m3u8')
 const isHlsByUrl = (url: string) => url.toLowerCase().includes('.m3u8')
+const isCurrentSource = (requestId: number) => isComponentMounted && requestId === sourceRequestId
 
 // 初始化播放源并构建播放器
-const initSource = () => {
-  sourceUrl.value = ''
+const initSource = async () => {
+  if (!isComponentMounted) return
 
-  createDownloadUrl({ fileId: props.file.id })
-    .then((res) => {
-      if (res.code === 200 && res.data?.downloadUrl) {
-        sourceUrl.value = res.data.downloadUrl
-        setupPlayer()
-      } else {
-        message.error(res.msg || '获取播放链接失败')
-      }
-    })
-    .catch((e) => {
-      console.error('createDownloadUrl error:', e)
-      message.error('获取播放链接失败')
-    })
+  const requestId = ++sourceRequestId
+  sourceUrl.value = ''
+  destroyPlayer()
+
+  try {
+    const res = await createDownloadUrl({ fileId: props.file.id })
+    if (!isCurrentSource(requestId)) return
+
+    if (res.code === 200 && res.data?.downloadUrl) {
+      sourceUrl.value = res.data.downloadUrl
+      await setupPlayer(requestId)
+    } else {
+      message.error(res.msg || '获取播放链接失败')
+    }
+  } catch (e) {
+    if (!isCurrentSource(requestId)) return
+
+    console.error('createDownloadUrl error:', e)
+    message.error('获取播放链接失败')
+  }
 }
 
-const setupPlayer = () => {
+const setupPlayer = async (requestId: number) => {
   const video = videoRef.value
-  if (!video || !sourceUrl.value) return
+  if (!video || !sourceUrl.value || !isCurrentSource(requestId)) return
 
   // 清理已有实例
   destroyPlayer()
@@ -63,44 +74,64 @@ const setupPlayer = () => {
   const useHls = isHlsByUrl(sourceUrl.value) || isHlsByName(name)
 
   // HLS 优先：hls.js（非 Safari），Safari 原生 HLS
-  if (useHls && Hls.isSupported()) {
-    hls.value = new Hls({
+  if (useHls) {
+    const HlsCtor = (await import('hls.js/light')).default
+    if (!isCurrentSource(requestId)) return
+
+    if (!HlsCtor.isSupported()) {
+      video.src = sourceUrl.value
+      await buildPlyr(requestId)
+      if (!isCurrentSource(requestId)) return
+
+      playIfNeeded(video)
+      return
+    }
+
+    hls.value = new HlsCtor({
       // 可根据需要调整缓冲策略
       maxBufferLength: 30,
       liveDurationInfinity: true,
     })
     hls.value.loadSource(sourceUrl.value)
     hls.value.attachMedia(video)
-    hls.value.on(Hls.Events.MANIFEST_PARSED, () => {
-      buildPlyr()
-      if (autoplay.value) {
-        video.play().catch(() => {})
-      }
+    hls.value.on(HlsCtor.Events.MANIFEST_PARSED, () => {
+      if (!isCurrentSource(requestId)) return
+
+      buildPlyr(requestId).then(() => {
+        if (isCurrentSource(requestId)) {
+          playIfNeeded(video)
+        }
+      })
     })
-    hls.value.on(Hls.Events.ERROR, (_event, data) => {
-      if (data?.fatal) {
+    hls.value.on(HlsCtor.Events.ERROR, (_event, data) => {
+      if (isCurrentSource(requestId) && data?.fatal) {
         message.error('HLS 播放失败')
       }
     })
   } else {
     // 普通视频 / Safari 原生 HLS
     video.src = sourceUrl.value
-    buildPlyr()
-    if (autoplay.value) {
-      video.play().catch(() => {})
-    }
+    await buildPlyr(requestId)
+    if (!isCurrentSource(requestId)) return
+
+    playIfNeeded(video)
   }
+
+  if (!isCurrentSource(requestId)) return
 
   // 初始设置
   video.preload = preload.value
   video.muted = muted.value
 }
 
-const buildPlyr = () => {
+const buildPlyr = async (requestId: number) => {
   const video = videoRef.value
-  if (!video) return
+  if (!video || !isCurrentSource(requestId)) return
 
-  plyr.value = new Plyr(video, {
+  const PlyrCtor = (await import('plyr')).default
+  if (!isCurrentSource(requestId)) return
+
+  plyr.value = new PlyrCtor(video, {
     controls: [
       'play-large',
       'play',
@@ -120,12 +151,20 @@ const buildPlyr = () => {
   })
 
   // 简单错误提示
-  video.addEventListener('error', () => {
-    message.error('视频播放出错')
-  })
+  videoErrorHandler = () => {
+    if (isCurrentSource(requestId)) {
+      message.error('视频播放出错')
+    }
+  }
+  video.addEventListener('error', videoErrorHandler)
 }
 
 const destroyPlayer = () => {
+  const video = videoRef.value
+  if (video && videoErrorHandler) {
+    video.removeEventListener('error', videoErrorHandler)
+    videoErrorHandler = null
+  }
   if (plyr.value) {
     plyr.value.destroy()
     plyr.value = null
@@ -133,6 +172,12 @@ const destroyPlayer = () => {
   if (hls.value) {
     hls.value.destroy()
     hls.value = null
+  }
+}
+
+const playIfNeeded = (video: HTMLVideoElement) => {
+  if (autoplay.value) {
+    video.play().catch(() => {})
   }
 }
 
@@ -144,10 +189,13 @@ watch(
 )
 
 onMounted(() => {
+  isComponentMounted = true
   initSource()
 })
 
 onUnmounted(() => {
+  isComponentMounted = false
+  sourceRequestId++
   destroyPlayer()
 })
 </script>

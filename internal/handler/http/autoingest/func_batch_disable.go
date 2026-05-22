@@ -25,19 +25,37 @@ func (h *handler) BatchDisable() httpcontext.HandlerFunc {
 		req := new(BatchDisableRequest)
 		if err := ctx.ShouldBindJSON(req); err != nil {
 			ctx.AbortWithInvalidParams(err)
+
 			return
 		}
+
+		requestIDs, err := normalizeBatchIDs(req.IDs)
+		if err != nil {
+			ctx.AbortWithInvalidParams(err)
+
+			return
+		}
+
+		plans, err := h.planService.ListByIDs(ctx.GetContext(), requestIDs)
+		if err != nil {
+			ctx.Fail(codePlanListFailed.WithError(err))
+
+			return
+		}
+
+		accessiblePlans, initialFailCount := filterAccessiblePlans(ctx, requestIDs, plans)
 
 		var (
 			wg         sync.WaitGroup
 			successCnt int
-			failCnt    int
+			failCnt    = initialFailCount
 			mu         sync.Mutex
 			sem        = make(chan struct{}, maxBatchConcurrency)
 		)
 
-		for _, id := range req.IDs {
+		for _, plan := range accessiblePlans {
 			wg.Add(1)
+
 			sem <- struct{}{}
 
 			go func(planId int64) {
@@ -48,13 +66,14 @@ func (h *handler) BatchDisable() httpcontext.HandlerFunc {
 					mu.Lock()
 					failCnt++
 					mu.Unlock()
+
 					return
 				}
 
 				mu.Lock()
 				successCnt++
 				mu.Unlock()
-			}(id)
+			}(plan.ID)
 		}
 
 		wg.Wait()

@@ -15,6 +15,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	defaultDoubanBaseURL  = "https://movie.douban.com"
+	maxDoubanResponseSize = 5 << 20
+)
+
 type Service interface {
 	GetPopularMovies() ([]Subject, error)
 	GetMoviesByTag(tag string) ([]Subject, error)
@@ -52,7 +57,7 @@ func NewService(logger *zap.Logger) Service {
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		baseURL: "https://movie.douban.com",
+		baseURL: defaultDoubanBaseURL,
 	}
 }
 
@@ -64,7 +69,8 @@ func (s *service) GetMoviesByTag(tag string) ([]Subject, error) {
 	if tag == "" {
 		tag = "热门"
 	}
-	apiURL := fmt.Sprintf("https://movie.douban.com/j/search_subjects?type=movie&tag=%s&page_limit=50&page_start=0", url.QueryEscape(tag))
+
+	apiURL := fmt.Sprintf("%s/j/search_subjects?type=movie&tag=%s&page_limit=50&page_start=0", s.baseURL, url.QueryEscape(tag))
 
 	cookieClient := &http.Client{
 		Timeout: 30 * time.Second,
@@ -73,13 +79,22 @@ func (s *service) GetMoviesByTag(tag string) ([]Subject, error) {
 		},
 	}
 
-	firstReq, _ := http.NewRequestWithContext(context.Background(), "GET", "https://movie.douban.com/", nil)
+	firstReq, err := http.NewRequestWithContext(context.Background(), "GET", s.baseURL+"/", nil)
+	if err != nil {
+		return nil, err
+	}
+
 	firstReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 	firstReq.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	firstReq.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
 	resp0, err := cookieClient.Do(firstReq)
+
+	var cookies []*http.Cookie
 	if err == nil {
-		resp0.Body.Close()
+		cookies = resp0.Cookies()
+		_ = resp0.Body.Close()
+	} else {
+		s.logger.Warn("failed to fetch douban cookies", zap.Error(err))
 	}
 
 	req, err := http.NewRequestWithContext(context.Background(), "GET", apiURL, nil)
@@ -90,11 +105,11 @@ func (s *service) GetMoviesByTag(tag string) ([]Subject, error) {
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
-	req.Header.Set("Referer", "https://movie.douban.com/")
+	req.Header.Set("Referer", s.baseURL+"/")
 	req.Header.Set("Connection", "keep-alive")
 	req.Header.Set("Cache-Control", "no-cache")
 
-	for _, cookie := range resp0.Cookies() {
+	for _, cookie := range cookies {
 		req.AddCookie(cookie)
 	}
 
@@ -102,14 +117,16 @@ func (s *service) GetMoviesByTag(tag string) ([]Subject, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Douban API returned status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("douban API returned status: %d", resp.StatusCode)
 	}
 
 	var result SearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeLimitedDoubanJSON(resp.Body, &result); err != nil {
 		return nil, err
 	}
 
@@ -139,7 +156,7 @@ var (
 )
 
 func (s *service) GetTop250(start, count int) ([]Subject, error) {
-	apiURL := fmt.Sprintf("https://movie.douban.com/top250?start=%d&filter=", start)
+	apiURL := fmt.Sprintf("%s/top250?start=%d&filter=", s.baseURL, start)
 
 	req, err := http.NewRequestWithContext(context.Background(), "GET", apiURL, nil)
 	if err != nil {
@@ -147,19 +164,21 @@ func (s *service) GetTop250(start, count int) ([]Subject, error) {
 	}
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	req.Header.Set("Referer", "https://movie.douban.com")
+	req.Header.Set("Referer", s.baseURL)
 
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Douban API returned status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("douban API returned status: %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedDoubanResponse(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("读取豆瓣响应失败: %w", err)
 	}
@@ -189,20 +208,25 @@ func parseDoubanTop250HTML(body string) []Subject {
 		if urlMatches := top250URLRegex.FindStringSubmatch(block); len(urlMatches) > 1 {
 			subject.URL = urlMatches[1]
 		}
+
 		if idMatches := top250IDRegex.FindStringSubmatch(block); len(idMatches) > 1 {
 			subject.ID = idMatches[1]
 		}
+
 		if coverMatches := top250CoverRegex.FindStringSubmatch(block); len(coverMatches) > 1 {
 			subject.Cover = coverMatches[1]
 		}
+
 		if titleMatches := top250TitleRegex.FindStringSubmatch(block); len(titleMatches) > 1 {
 			subject.Title = strings.TrimSpace(titleMatches[1])
 		}
+
 		if ratingMatches := top250RatingRegex.FindStringSubmatch(block); len(ratingMatches) > 1 {
 			if rating, err := strconv.ParseFloat(ratingMatches[1], 64); err == nil {
 				subject.Rating = rating
 			}
 		}
+
 		if infoMatches := top250InfoRegex.FindStringSubmatch(block); len(infoMatches) > 1 {
 			if yearMatches := top250YearRegex.FindStringSubmatch(infoMatches[1]); len(yearMatches) > 1 {
 				subject.Year = yearMatches[1]
@@ -219,8 +243,30 @@ func parseDoubanTop250HTML(body string) []Subject {
 	return subjects
 }
 
+func readLimitedDoubanResponse(body io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(body, maxDoubanResponseSize+1))
+	if err != nil {
+		return nil, err
+	}
+
+	if len(data) > maxDoubanResponseSize {
+		return nil, fmt.Errorf("douban 响应体过大，已拒绝")
+	}
+
+	return data, nil
+}
+
+func decodeLimitedDoubanJSON(body io.Reader, target interface{}) error {
+	data, err := readLimitedDoubanResponse(body)
+	if err != nil {
+		return err
+	}
+
+	return json.Unmarshal(data, target)
+}
+
 func (s *service) GetPlaying() ([]Subject, error) {
-	apiURL := "https://movie.douban.com/j/search_subjects?type=movie&tag=正在热映&page_limit=50"
+	apiURL := fmt.Sprintf("%s/j/search_subjects?type=movie&tag=%s&page_limit=50", s.baseURL, url.QueryEscape("正在热映"))
 
 	req, err := http.NewRequestWithContext(context.Background(), "GET", apiURL, nil)
 	if err != nil {
@@ -228,20 +274,22 @@ func (s *service) GetPlaying() ([]Subject, error) {
 	}
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	req.Header.Set("Referer", "https://movie.douban.com")
+	req.Header.Set("Referer", s.baseURL)
 
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Douban API returned status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("douban API returned status: %d", resp.StatusCode)
 	}
 
 	var result SearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeLimitedDoubanJSON(resp.Body, &result); err != nil {
 		return nil, err
 	}
 
@@ -255,7 +303,7 @@ func (s *service) GetPlaying() ([]Subject, error) {
 }
 
 func (s *service) GetComing() ([]Subject, error) {
-	apiURL := "https://movie.douban.com/j/search_subjects?type=movie&tag=即将上映&page_limit=50"
+	apiURL := fmt.Sprintf("%s/j/search_subjects?type=movie&tag=%s&page_limit=50", s.baseURL, url.QueryEscape("即将上映"))
 
 	req, err := http.NewRequestWithContext(context.Background(), "GET", apiURL, nil)
 	if err != nil {
@@ -263,20 +311,22 @@ func (s *service) GetComing() ([]Subject, error) {
 	}
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	req.Header.Set("Referer", "https://movie.douban.com")
+	req.Header.Set("Referer", s.baseURL)
 
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Douban API returned status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("douban API returned status: %d", resp.StatusCode)
 	}
 
 	var result SearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeLimitedDoubanJSON(resp.Body, &result); err != nil {
 		return nil, err
 	}
 
@@ -302,5 +352,6 @@ func extractYear(s string) string {
 	if _, err := strconv.Atoi(s); err == nil && len(s) == 4 {
 		return s
 	}
+
 	return s
 }

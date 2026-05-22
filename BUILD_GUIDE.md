@@ -5,7 +5,8 @@
 ### 1. 构建前端
 ```bash
 cd fe
-npm run build
+corepack pnpm@9.15.9 install --frozen-lockfile
+corepack pnpm@9.15.9 build
 ```
 
 ### 2. 编译后端
@@ -54,13 +55,14 @@ type logs\share.log
 直接在项目根目录运行：
 
 ```bat
-cd fe && npm run build && cd .. && go build -o output/share.exe ./cmd/main.go && taskkill //F //IM share.exe 2>nul & timeout /t 1 /nobreak >nul & output/share.exe > logs/share.log 2>&1
+cd fe && corepack pnpm@9.15.9 install --frozen-lockfile && corepack pnpm@9.15.9 build && cd .. && go build -o output/share.exe ./cmd/main.go && taskkill //F //IM share.exe 2>nul & timeout /t 1 /nobreak >nul & output/share.exe > logs/share.log 2>&1
 ```
 
 或者分步执行：
 ```bat
 cd fe
-npm run build
+corepack pnpm@9.15.9 install --frozen-lockfile
+corepack pnpm@9.15.9 build
 cd ..
 go build -o output/share.exe ./cmd/main.go
 taskkill //F //IM share.exe 2>nul
@@ -72,7 +74,7 @@ output/share.exe > logs/share.log 2>&1
 
 ```bash
 # 构建前端 -> 编译后端 -> 重启服务
-cd fe && npm run build && cd .. && go build -o output/share.exe ./cmd/main.go && taskkill //F //IM share.exe 2>nul & sleep 1 && ./output/share.exe > logs/share.log 2>&1 &
+cd fe && corepack pnpm@9.15.9 install --frozen-lockfile && corepack pnpm@9.15.9 build && cd .. && go build -o output/share.exe ./cmd/main.go && taskkill //F //IM share.exe 2>nul & sleep 1 && ./output/share.exe > logs/share.log 2>&1 &
 ```
 
 ---
@@ -92,7 +94,8 @@ cd fe && npm run build && cd .. && go build -o output/share.exe ./cmd/main.go &&
 cd fe
 
 # 构建生产版本
-npm run build
+corepack pnpm@9.15.9 install --frozen-lockfile
+corepack pnpm@9.15.9 build
 ```
 
 **验证构建成功**：
@@ -132,7 +135,8 @@ echo "=== 开始构建 ==="
 # 1. 构建前端
 echo "[1/3] 构建前端..."
 cd fe
-npm run build
+corepack pnpm@9.15.9 install --frozen-lockfile
+corepack pnpm@9.15.9 build
 cd ..
 
 # 2. 构建后端

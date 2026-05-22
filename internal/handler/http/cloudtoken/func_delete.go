@@ -38,6 +38,8 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 
 		if count, err := h.mountPointService.Count(ctx.GetContext(), &mountPointSvi.ListRequest{
 			TokenId: &req.ID,
+			UserID:  req.UserID,
+			IsAdmin: req.IsAdmin,
 		}); err != nil {
 			ctx.Fail(codeQueryFailed.WithError(err))
 

@@ -4,12 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
+)
+
+const (
+	defaultTMDBBaseURL  = "https://api.themoviedb.org/3"
+	maxTMDBResponseSize = 5 << 20
 )
 
 type Service interface {
@@ -88,6 +95,8 @@ type service struct {
 }
 
 func NewService(logger *zap.Logger, apiKey, baseURL, proxyURL, proxyType string) Service {
+	baseURL = normalizeTMDBBaseURL(baseURL)
+
 	s := &service{
 		config: &Config{
 			APIKey:    apiKey,
@@ -101,7 +110,7 @@ func NewService(logger *zap.Logger, apiKey, baseURL, proxyURL, proxyType string)
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		baseURL: "https://api.themoviedb.org/3",
+		baseURL: baseURL,
 	}
 
 	if s.config.APIKey == "" {
@@ -111,6 +120,15 @@ func NewService(logger *zap.Logger, apiKey, baseURL, proxyURL, proxyType string)
 	s.setupProxy()
 
 	return s
+}
+
+func normalizeTMDBBaseURL(baseURL string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		return defaultTMDBBaseURL
+	}
+
+	return baseURL
 }
 
 func (s *service) setupProxy() {
@@ -126,6 +144,7 @@ func (s *service) setupProxy() {
 	proxyURL, err := url.Parse(s.config.ProxyURL)
 	if err != nil {
 		s.logger.Warn("Failed to parse proxy URL", zap.String("proxy", s.config.ProxyURL), zap.Error(err))
+
 		return
 	}
 
@@ -148,12 +167,26 @@ func min(a, b int) int {
 	if a < b {
 		return a
 	}
+
 	return b
+}
+
+func decodeLimitedTMDBResponse(body io.Reader, target interface{}) error {
+	data, err := io.ReadAll(io.LimitReader(body, maxTMDBResponseSize+1))
+	if err != nil {
+		return err
+	}
+
+	if len(data) > maxTMDBResponseSize {
+		return fmt.Errorf("tmdb 响应体过大，已拒绝")
+	}
+
+	return json.Unmarshal(data, target)
 }
 
 func (s *service) GetPopularMovies(page int) ([]Movie, error) {
 	if s.config.APIKey == "" {
-		return nil, fmt.Errorf("TMDB API key is not set")
+		return nil, fmt.Errorf("tmdb API key is not set")
 	}
 
 	apiURL := fmt.Sprintf("%s/movie/popular?api_key=%s&language=%s&region=%s&page=%d",
@@ -168,14 +201,16 @@ func (s *service) GetPopularMovies(page int) ([]Movie, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("TMDB API returned status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("tmdb API returned status: %d", resp.StatusCode)
 	}
 
 	var result PopularMoviesResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeLimitedTMDBResponse(resp.Body, &result); err != nil {
 		return nil, err
 	}
 
@@ -184,7 +219,7 @@ func (s *service) GetPopularMovies(page int) ([]Movie, error) {
 
 func (s *service) GetPopularTVs(page int) ([]TV, error) {
 	if s.config.APIKey == "" {
-		return nil, fmt.Errorf("TMDB API key is not set")
+		return nil, fmt.Errorf("tmdb API key is not set")
 	}
 
 	apiURL := fmt.Sprintf("%s/tv/popular?api_key=%s&language=%s&region=%s&page=%d",
@@ -199,14 +234,16 @@ func (s *service) GetPopularTVs(page int) ([]TV, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("TMDB API returned status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("tmdb API returned status: %d", resp.StatusCode)
 	}
 
 	var result PopularTVsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeLimitedTMDBResponse(resp.Body, &result); err != nil {
 		return nil, err
 	}
 
@@ -215,7 +252,7 @@ func (s *service) GetPopularTVs(page int) ([]TV, error) {
 
 func (s *service) GetGenreList() ([]Genre, error) {
 	if s.config.APIKey == "" {
-		return nil, fmt.Errorf("TMDB API key is not set")
+		return nil, fmt.Errorf("tmdb API key is not set")
 	}
 
 	apiURL := fmt.Sprintf("%s/genre/movie/list?api_key=%s&language=%s",
@@ -230,60 +267,25 @@ func (s *service) GetGenreList() ([]Genre, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("TMDB API returned status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("tmdb API returned status: %d", resp.StatusCode)
 	}
 
 	var result GenreListResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeLimitedTMDBResponse(resp.Body, &result); err != nil {
 		return nil, err
 	}
 
 	return result.Genres, nil
 }
 
-var genreIDMap = map[string]int{
-	"movie_28":    28,
-	"movie_12":    12,
-	"movie_16":    16,
-	"movie_35":    35,
-	"movie_80":    80,
-	"movie_99":    99,
-	"movie_18":    18,
-	"movie_10751": 10751,
-	"movie_14":    14,
-	"movie_36":    36,
-	"movie_27":    27,
-	"movie_10402": 10402,
-	"movie_9648":  9648,
-	"movie_878":   878,
-	"movie_10770": 10770,
-	"movie_53":    53,
-	"movie_10752": 10752,
-	"movie_37":    37,
-	"tv_10759":    10759,
-	"tv_16":       16,
-	"tv_35":       35,
-	"tv_80":       80,
-	"tv_99":       99,
-	"tv_18":       18,
-	"tv_10751":    10751,
-	"tv_10762":    10762,
-	"tv_9648":     9648,
-	"tv_10763":    10763,
-	"tv_10764":    10764,
-	"tv_10765":    10765,
-	"tv_10766":    10766,
-	"tv_10767":    10767,
-	"tv_10768":    10768,
-	"tv_37":       37,
-}
-
 func (s *service) GetMoviesByGenre(genreID int, page int) ([]Movie, error) {
 	if s.config.APIKey == "" {
-		return nil, fmt.Errorf("TMDB API key is not set")
+		return nil, fmt.Errorf("tmdb API key is not set")
 	}
 
 	apiURL := fmt.Sprintf("%s/discover/movie?api_key=%s&language=%s&region=%s&with_genres=%d&sort_by=release_date.desc&page=%d",
@@ -298,14 +300,16 @@ func (s *service) GetMoviesByGenre(genreID int, page int) ([]Movie, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("TMDB API returned status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("tmdb API returned status: %d", resp.StatusCode)
 	}
 
 	var result PopularMoviesResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeLimitedTMDBResponse(resp.Body, &result); err != nil {
 		return nil, err
 	}
 
@@ -314,7 +318,7 @@ func (s *service) GetMoviesByGenre(genreID int, page int) ([]Movie, error) {
 
 func (s *service) GetTVsByGenre(genreID int, page int) ([]TV, error) {
 	if s.config.APIKey == "" {
-		return nil, fmt.Errorf("TMDB API key is not set")
+		return nil, fmt.Errorf("tmdb API key is not set")
 	}
 
 	apiURL := fmt.Sprintf("%s/discover/tv?api_key=%s&language=%s&region=%s&with_genres=%d&sort_by=first_air_date.desc&page=%d",
@@ -329,14 +333,16 @@ func (s *service) GetTVsByGenre(genreID int, page int) ([]TV, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("TMDB API returned status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("tmdb API returned status: %d", resp.StatusCode)
 	}
 
 	var result PopularTVsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeLimitedTMDBResponse(resp.Body, &result); err != nil {
 		return nil, err
 	}
 

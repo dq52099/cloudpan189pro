@@ -1,21 +1,24 @@
 import { createApp, watchEffect } from 'vue'
-import naive from 'naive-ui'
 import App from './App.vue'
 import router from './router/index'
-import { pinia, useSystemStore } from './stores'
+import { pinia, useSystemStore, useUserStore } from './stores'
+import { registerNaiveComponents } from './plugins/naive'
 
 import './style.css'
 
 const app = createApp(App)
 
 app.use(pinia)
-app.use(router)
-app.use(naive)
 
 // 动态设置页面标题：基于系统设置的 title
 const systemStore = useSystemStore()
+const userStore = useUserStore()
 // 先从本地存储加载一次，避免首屏闪烁
 systemStore.load()
+userStore.load()
+
+app.use(router)
+registerNaiveComponents(app)
 
 const setDocTitle = (t?: string) => {
   document.title = t && t.trim().length > 0 ? t : '云盘189分享'
@@ -29,6 +32,9 @@ systemStore
   .refresh()
   .then(() => {
     setDocTitle(systemStore.get().title)
+    if (!systemStore.get().initialized) {
+      router.replace('/@init')
+    }
   })
   .catch(() => {})
 

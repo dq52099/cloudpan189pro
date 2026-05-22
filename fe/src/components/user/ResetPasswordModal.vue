@@ -1,5 +1,12 @@
 <template>
-  <n-modal v-model:show="visible" preset="dialog" title="重置用户密码">
+  <n-modal
+    v-model:show="visible"
+    preset="dialog"
+    title="重置用户密码"
+    :closable="!loading"
+    :mask-closable="!loading"
+    :close-on-esc="!loading"
+  >
     <!-- 隐藏的假输入框，用于欺骗浏览器自动填充 -->
     <div style="position: absolute; left: -9999px; opacity: 0; pointer-events: none">
       <input type="text" name="fake-username" autocomplete="username" />
@@ -31,6 +38,7 @@
           autocomplete="off"
           :name="`new-password-${Date.now()}`"
           readonly
+          :disabled="loading"
           @focus="handlePasswordFocus"
         />
       </n-form-item>
@@ -44,21 +52,24 @@
           autocomplete="off"
           :name="`confirm-password-${Date.now()}`"
           readonly
+          :disabled="loading"
           @focus="handleConfirmPasswordFocus"
         />
       </n-form-item>
     </n-form>
     <template #action>
       <n-space>
-        <n-button @click="handleCancel">取消</n-button>
-        <n-button type="primary" :loading="loading" @click="handleConfirm"> 确认重置 </n-button>
+        <n-button :disabled="loading" @click="handleCancel">取消</n-button>
+        <n-button type="primary" :loading="loading" :disabled="loading" @click="handleConfirm">
+          确认重置
+        </n-button>
       </n-space>
     </template>
   </n-modal>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import {
   NModal,
   NForm,
@@ -92,7 +103,13 @@ const message = useMessage()
 // 控制弹窗显示
 const visible = computed({
   get: () => props.show,
-  set: (value) => emit('update:show', value),
+  set: (value) => {
+    if (!value && loading.value) {
+      return
+    }
+
+    emit('update:show', value)
+  },
 })
 
 // 表单相关
@@ -102,6 +119,8 @@ const form = reactive({
   password: '',
   confirmPassword: '',
 })
+
+let operationVersion = 0
 
 // 表单验证规则
 const formRules: FormRules = {
@@ -135,13 +154,27 @@ watch(
   () => props.show,
   (newVal) => {
     if (newVal) {
+      operationVersion++
       resetForm()
+
+      return
     }
+
+    invalidatePendingWork()
   }
 )
 
+const isCurrentOperation = (version: number) => visible.value && operationVersion === version
+
+const invalidatePendingWork = () => {
+  operationVersion++
+  loading.value = false
+}
+
 // 取消操作
 const handleCancel = () => {
+  if (loading.value) return
+
   visible.value = false
 }
 
@@ -163,12 +196,20 @@ const handleConfirmPasswordFocus = (event: FocusEvent) => {
 
 // 确认重置密码
 const handleConfirm = () => {
+  if (loading.value) return
+
   if (!formRef.value || !props.userInfo) return
+
+  const currentOperation = operationVersion
 
   // 验证表单
   formRef.value
     .validate()
     .then(() => {
+      if (!isCurrentOperation(currentOperation) || !props.userInfo) {
+        return null
+      }
+
       loading.value = true
 
       const requestData: ModifyPasswordRequest = {
@@ -180,6 +221,10 @@ const handleConfirm = () => {
       return modifyUserPassword(requestData)
     })
     .then((response) => {
+      if (!response || !isCurrentOperation(currentOperation)) {
+        return
+      }
+
       if (response.code === 200) {
         message.success('密码重置成功')
         visible.value = false
@@ -189,6 +234,10 @@ const handleConfirm = () => {
       }
     })
     .catch((error) => {
+      if (!isCurrentOperation(currentOperation)) {
+        return
+      }
+
       console.error('重置密码失败:', error)
       if (error?.response?.data?.msg) {
         message.error(error.response.data.msg)
@@ -197,7 +246,13 @@ const handleConfirm = () => {
       }
     })
     .finally(() => {
-      loading.value = false
+      if (isCurrentOperation(currentOperation)) {
+        loading.value = false
+      }
     })
 }
+
+onUnmounted(() => {
+  invalidatePendingWork()
+})
 </script>

@@ -223,11 +223,12 @@
         ></template>
         返回上一步
       </n-button>
-      <n-button @click="handleCancel">取消</n-button>
+      <n-button :disabled="bindLoading" @click="handleCancel">取消</n-button>
       <n-button
         v-if="currentStep === 3"
         type="primary"
-        :disabled="!fileState.selectedFile"
+        :loading="bindLoading"
+        :disabled="!fileState.selectedFile || bindLoading"
         @click="handleConfirm"
       >
         绑定挂载点
@@ -237,7 +238,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, h } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, h } from 'vue'
 import {
   NIcon,
   NText,
@@ -312,11 +313,88 @@ const fileState = reactive({
   treeData: new Map<string, FileNode[]>(),
 })
 
+const bindLoading = ref(false)
+let isComponentMounted = false
+let operationVersion = 0
+let tokenRequestId = 0
+let familyRequestId = 0
+let fileRequestId = 0
+const activeFileRequestIds = new Map<string, number>()
+
+const isCurrentOperation = (version: number) => {
+  return isComponentMounted && operationVersion === version
+}
+
+const invalidatePendingWork = () => {
+  operationVersion++
+  activeFileRequestIds.clear()
+  bindLoading.value = false
+}
+
+const isCurrentTokenRequest = (requestId: number, currentOperation: number) => {
+  return isCurrentOperation(currentOperation) && tokenRequestId === requestId
+}
+
+const isCurrentFamilyRequest = (
+  requestId: number,
+  currentOperation: number,
+  cloudToken: number
+) => {
+  return (
+    isCurrentOperation(currentOperation) &&
+    familyRequestId === requestId &&
+    tokenState.selectedTokenId === cloudToken
+  )
+}
+
+const isCurrentFileRequest = (
+  parentId: string,
+  requestId: number,
+  currentOperation: number,
+  cloudToken: number,
+  familyId: string
+) => {
+  return (
+    isCurrentOperation(currentOperation) &&
+    activeFileRequestIds.get(parentId) === requestId &&
+    tokenState.selectedTokenId === cloudToken &&
+    familyState.selectedFamilyId === familyId
+  )
+}
+
+const resetFamilyState = () => {
+  familyState.loading = false
+  familyState.families = []
+  familyState.selectedFamilyId = null
+}
+
+const resetFileState = () => {
+  fileState.loading = false
+  fileState.treeLoading = false
+  fileState.files = []
+  fileState.selectedFile = null
+  fileState.currentParentId = ''
+  fileState.breadcrumbs = []
+  fileState.selectedKeys = []
+  fileState.expandedKeys = []
+  fileState.treeData.clear()
+}
+
 // 获取令牌列表
 const fetchTokenList = () => {
+  if (!isComponentMounted) {
+    return
+  }
+
+  const currentOperation = operationVersion
+  const currentRequestId = ++tokenRequestId
   tokenState.loading = true
   getCloudTokenList({ noPaginate: true })
     .then((response) => {
+      if (!isCurrentTokenRequest(currentRequestId, currentOperation)) {
+        return
+      }
+
       if (response.code === 200 && response.data) {
         tokenState.tokens = response.data.data || []
       } else {
@@ -324,16 +402,27 @@ const fetchTokenList = () => {
       }
     })
     .catch((error) => {
+      if (!isCurrentTokenRequest(currentRequestId, currentOperation)) {
+        return
+      }
+
       console.error('获取令牌列表失败:', error)
       message.error('获取令牌列表失败')
     })
     .finally(() => {
-      tokenState.loading = false
+      if (isCurrentTokenRequest(currentRequestId, currentOperation)) {
+        tokenState.loading = false
+      }
     })
 }
 
 // 选择令牌
 const handleSelectToken = (tokenId: number) => {
+  if (tokenState.selectedTokenId !== tokenId) {
+    invalidatePendingWork()
+    resetFamilyState()
+    resetFileState()
+  }
   tokenState.selectedTokenId = tokenId
 }
 
@@ -350,10 +439,17 @@ const handleNextToFamilySelection = () => {
 // 获取家庭列表
 const fetchFamilyList = () => {
   if (!tokenState.selectedTokenId) return
+  const currentOperation = operationVersion
+  const currentRequestId = ++familyRequestId
+  const currentCloudToken = tokenState.selectedTokenId
   familyState.loading = true
-  const params: GetFamilyListQuery = { cloudToken: tokenState.selectedTokenId }
+  const params: GetFamilyListQuery = { cloudToken: currentCloudToken }
   getFamilyList(params)
     .then((response) => {
+      if (!isCurrentFamilyRequest(currentRequestId, currentOperation, currentCloudToken)) {
+        return
+      }
+
       if (response.code === 200 && response.data) {
         familyState.families = response.data.familyInfoResp || []
       } else {
@@ -361,16 +457,26 @@ const fetchFamilyList = () => {
       }
     })
     .catch((error) => {
+      if (!isCurrentFamilyRequest(currentRequestId, currentOperation, currentCloudToken)) {
+        return
+      }
+
       console.error('获取家庭列表失败:', error)
       message.error('获取家庭列表失败')
     })
     .finally(() => {
-      familyState.loading = false
+      if (isCurrentFamilyRequest(currentRequestId, currentOperation, currentCloudToken)) {
+        familyState.loading = false
+      }
     })
 }
 
 // 选择家庭
 const handleSelectFamily = (familyId: string) => {
+  if (familyState.selectedFamilyId !== familyId) {
+    invalidatePendingWork()
+    resetFileState()
+  }
   familyState.selectedFamilyId = familyId
 }
 
@@ -402,6 +508,12 @@ const handleNextToFileSelection = () => {
 // 获取家庭文件列表
 const fetchFamilyFiles = (parentId: string = '') => {
   if (!tokenState.selectedTokenId || !familyState.selectedFamilyId) return
+  const currentOperation = operationVersion
+  const currentRequestId = ++fileRequestId
+  const currentCloudToken = tokenState.selectedTokenId
+  const currentFamilyId = familyState.selectedFamilyId
+  activeFileRequestIds.set(parentId, currentRequestId)
+
   if (parentId === '') {
     fileState.loading = true
   } else {
@@ -410,12 +522,24 @@ const fetchFamilyFiles = (parentId: string = '') => {
   const params: GetFamilyFilesQuery = {
     pageNum: 1,
     pageSize: 100,
-    cloudToken: tokenState.selectedTokenId,
-    familyId: familyState.selectedFamilyId,
+    cloudToken: currentCloudToken,
+    familyId: currentFamilyId,
     parentId: parentId,
   }
   getFamilyFiles(params)
     .then((response) => {
+      if (
+        !isCurrentFileRequest(
+          parentId,
+          currentRequestId,
+          currentOperation,
+          currentCloudToken,
+          currentFamilyId
+        )
+      ) {
+        return
+      }
+
       if (response.code === 200 && response.data) {
         const files = response.data.data || []
         if (parentId === '') {
@@ -428,14 +552,36 @@ const fetchFamilyFiles = (parentId: string = '') => {
       }
     })
     .catch((error) => {
+      if (
+        !isCurrentFileRequest(
+          parentId,
+          currentRequestId,
+          currentOperation,
+          currentCloudToken,
+          currentFamilyId
+        )
+      ) {
+        return
+      }
+
       console.error('获取家庭文件列表失败:', error)
       message.error('获取家庭文件列表失败')
     })
     .finally(() => {
-      if (parentId === '') {
-        fileState.loading = false
-      } else {
-        fileState.treeLoading = false
+      if (
+        isCurrentFileRequest(
+          parentId,
+          currentRequestId,
+          currentOperation,
+          currentCloudToken,
+          currentFamilyId
+        )
+      ) {
+        if (parentId === '') {
+          fileState.loading = false
+        } else {
+          fileState.treeLoading = false
+        }
       }
     })
 }
@@ -560,11 +706,20 @@ const handleBackToFamilySelection = () => {
 
 // 取消
 const handleCancel = () => {
+  if (bindLoading.value) {
+    return
+  }
+
+  invalidatePendingWork()
   emit('cancel')
 }
 
 // 确认挂载
 const handleConfirm = () => {
+  if (bindLoading.value) {
+    return
+  }
+
   if (!fileState.selectedFile || !tokenState.selectedTokenId) {
     message.warning('请选择文件夹和令牌')
     return
@@ -579,11 +734,22 @@ const handleConfirm = () => {
       familyId: familyState.selectedFamilyId!,
     },
   ]
+  const currentOperation = operationVersion
+  bindLoading.value = true
   mountPointBind
     .show(itemsToMount, { defaultCloudToken: tokenState.selectedTokenId || undefined })
     .then((payload) => {
+      if (!isCurrentOperation(currentOperation)) {
+        return
+      }
+
       if (payload && payload.length > 0) {
         handleMountBindSuccess()
+      }
+    })
+    .finally(() => {
+      if (isCurrentOperation(currentOperation)) {
+        bindLoading.value = false
       }
     })
 }
@@ -593,7 +759,13 @@ const handleMountBindSuccess = () => {
   emit('confirm', { success: true })
 }
 onMounted(() => {
+  isComponentMounted = true
   fetchTokenList()
+})
+
+onUnmounted(() => {
+  isComponentMounted = false
+  invalidatePendingWork()
 })
 </script>
 

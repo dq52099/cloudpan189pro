@@ -34,7 +34,9 @@ func isDuplicateEntryError(err error) bool {
 	if err == nil {
 		return false
 	}
+
 	msg := err.Error()
+
 	return strings.Contains(msg, "UNIQUE constraint failed") ||
 		strings.Contains(msg, "Duplicate entry") ||
 		strings.Contains(msg, "duplicate key value violates unique constraint")
@@ -71,6 +73,7 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 		if concurrentCount <= 0 {
 			concurrentCount = 4
 		}
+
 		if concurrentCount > maxConcurrentItems {
 			logger.Warn("订阅并发数超过上限，已截断",
 				zap.Int("requested", concurrentCount),
@@ -78,12 +81,13 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 			)
 			concurrentCount = maxConcurrentItems
 		}
+
 		maxRetryCount := plan.MaxRetryCount
 		if maxRetryCount <= 0 {
 			maxRetryCount = 3
 		}
 
-		var nextOffset = plan.Offset
+		nextOffset := plan.Offset
 
 		if plan.SourceType != autoingest.SourceTypeSubscribe {
 			logger.Error("计划类型错误", zap.String("source_type", plan.SourceType.String()))
@@ -94,10 +98,13 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 		addition := new(models.AutoIngestPlanSubscribeAddition)
 		if err := plan.Addition.Unmarshal(addition); err != nil {
 			logger.Error("解析订阅附加信息失败", zap.Error(err), zap.Int64("plan_id", plan.ID))
+
 			return err
 		}
+
 		if addition.UpUserId == "" {
 			logger.Error("订阅附加信息缺少 UpUserId", zap.Int64("plan_id", plan.ID))
+
 			return errors.New("订阅计划缺少 UpUserId")
 		}
 
@@ -105,9 +112,11 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 			if err := h.autoIngestPlanService.UpdateOffset(ctx.GetContext(), req.PlanId, nextOffset); err != nil {
 				logger.Warn("更新入库计划 offset 失败", zap.Error(err), zap.Int64("plan_id", req.PlanId))
 			}
+
 			if err := h.autoIngestPlanService.IncrAddCount(ctx.GetContext(), req.PlanId, addCount); err != nil {
 				logger.Warn("更新入库成功计数失败", zap.Error(err), zap.Int64("plan_id", req.PlanId))
 			}
+
 			if err := h.autoIngestPlanService.IncrFailedCount(ctx.GetContext(), req.PlanId, failedCount); err != nil {
 				logger.Warn("更新入库失败计数失败", zap.Error(err), zap.Int64("plan_id", req.PlanId))
 			}
@@ -143,10 +152,6 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 				}
 
 				itemOffset := item.ShareTime.Unix()
-				if itemOffset > nextOffset {
-					nextOffset = itemOffset
-				}
-
 				if itemOffset <= plan.Offset {
 					if !hasTop {
 						shouldNext = false
@@ -155,12 +160,14 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 					// 重试时扫描已存在目录
 					if req.IsRetry {
 						fullPath := path.Join(plan.ParentPath, item.Name)
+
 						existingFile, err := h.virtualFileService.QueryByPath(ctx.GetContext(), fullPath)
 						if err == nil && existingFile != nil {
 							scanReq := &topic.FileScanFileRequest{
 								FileId: existingFile.ID,
 								Deep:   true,
 							}
+
 							scanBody, _ := json.Marshal(scanReq)
 							if err = h.taskEngine.PushMessage(
 								ctx.GetContext().
@@ -187,7 +194,9 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 					logger.Warn("待处理项达到上限，本次先处理一部分",
 						zap.Int("max", maxPendingItemsPerRefresh),
 					)
+
 					shouldNext = false
+
 					break
 				}
 			}
@@ -199,17 +208,35 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 
 		logger.Info("开始并发入库", zap.Int("total", len(pendingItems)), zap.Int("concurrent", concurrentCount))
 
+		enqueueScanTask := func(fullPath string, fileID int64) error {
+			taskReq := &topic.FileScanFileRequest{
+				FileId: fileID,
+				Deep:   true,
+			}
+
+			body, _ := json.Marshal(taskReq)
+
+			return h.taskEngine.PushMessage(
+				ctx.GetContext().
+					WithValue(consts.CtxKeyFullPath, fullPath).
+					WithValue(consts.CtxKeyInvokeHandlerName, "入库执行器"),
+				taskReq.Topic(), body,
+			)
+		}
+
 		var (
 			wg               sync.WaitGroup
 			itemChan         = make(chan pendingItem, len(pendingItems))
 			mu               sync.Mutex
 			localAddCount    int64
 			localFailedCount int64
+			localMaxOffset   = plan.Offset
 		)
 
 		for _, item := range pendingItems {
 			itemChan <- item
 		}
+
 		close(itemChan)
 
 		for i := 0; i < concurrentCount; i++ {
@@ -219,6 +246,8 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 
 				for pItem := range itemChan {
 					fullPath := path.Join(plan.ParentPath, pItem.item.Name)
+					handled := false
+					failedRecorded := false
 
 					for retry := 0; retry <= maxRetryCount; retry++ {
 						if retry > 0 {
@@ -228,17 +257,46 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 						exists, err := h.virtualFileService.QueryByPath(ctx.GetContext(), fullPath)
 						if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 							logger.Error("查询虚拟文件路径失败 跳过本次自动入库", zap.String("path", fullPath), zap.Error(err))
+							mu.Lock()
+							localFailedCount++
+							mu.Unlock()
+
+							failedRecorded = true
+
 							break
 						}
 
 						if exists != nil {
+							if exists.CloudId == pItem.item.ID {
+								logger.Debug("文件已入库，跳过重复资源", zap.String("path", fullPath), zap.String("cloud_id", pItem.item.ID))
+
+								if err = enqueueScanTask(fullPath, exists.ID); err != nil {
+									logger.Error("下发已存在文件扫描任务失败", zap.Error(err))
+									mu.Lock()
+									localFailedCount++
+									mu.Unlock()
+
+									failedRecorded = true
+
+									break
+								}
+
+								handled = true
+
+								break
+							}
+
 							if plan.OnConflict == autoingest.OnConflictRename {
 								fullPath = path.Join(plan.ParentPath, fmt.Sprintf("%s_%d", pItem.item.Name, time.Now().Unix()))
+
 								continue
 							}
 							// abandon: 跳过，继续处理下一个文件
 							logger.Debug("文件已存在，跳过入库", zap.String("path", fullPath))
-							continue
+
+							handled = true
+
+							break
 						}
 
 						id, err := h.storageFacadeService.CreateStorage(ctx.GetContext(),
@@ -263,10 +321,74 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 						)
 						if err != nil {
 							if isDuplicateEntryError(err) {
+								exists, queryErr := h.virtualFileService.QueryByPath(ctx.GetContext(), fullPath)
+								if queryErr != nil {
+									if errors.Is(queryErr, gorm.ErrRecordNotFound) && retry < maxRetryCount {
+										logger.Warn("入库遇到唯一约束冲突但未查询到目标路径，正在重试",
+											zap.String("path", fullPath),
+											zap.Error(err),
+											zap.Int("retry", retry+1),
+										)
+
+										continue
+									}
+
+									logger.Error("入库遇到唯一约束冲突后查询目标路径失败", zap.String("path", fullPath), zap.Error(queryErr))
+									mu.Lock()
+									localFailedCount++
+									mu.Unlock()
+
+									failedRecorded = true
+
+									break
+								}
+
+								if exists != nil && exists.CloudId == pItem.item.ID {
+									logger.Debug("入库竞态后发现资源已存在，补发扫描任务", zap.String("path", fullPath), zap.String("cloud_id", pItem.item.ID))
+
+									if err = enqueueScanTask(fullPath, exists.ID); err != nil {
+										logger.Error("下发已存在文件扫描任务失败", zap.Error(err))
+										mu.Lock()
+										localFailedCount++
+										mu.Unlock()
+
+										failedRecorded = true
+
+										break
+									}
+
+									handled = true
+
+									break
+								}
+
+								if exists != nil && plan.OnConflict == autoingest.OnConflictRename {
+									fullPath = path.Join(plan.ParentPath, fmt.Sprintf("%s_%d", pItem.item.Name, time.Now().Unix()))
+
+									continue
+								}
+
+								if exists != nil {
+									logger.Debug("入库竞态后目标路径已存在，按放弃策略跳过", zap.String("path", fullPath))
+
+									handled = true
+
+									break
+								}
+
+								logger.Error("入库遇到唯一约束冲突但目标路径不存在", zap.String("path", fullPath), zap.Error(err))
+								mu.Lock()
+								localFailedCount++
+								mu.Unlock()
+
+								failedRecorded = true
+
 								break
 							}
+
 							if retry < maxRetryCount {
 								logger.Warn("入库失败，正在重试", zap.String("path", fullPath), zap.Error(err), zap.Int("retry", retry+1))
+
 								continue
 							}
 
@@ -274,6 +396,8 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 							mu.Lock()
 							localFailedCount++
 							mu.Unlock()
+
+							failedRecorded = true
 
 							if _, logErr := h.autoIngestLogService.Create(ctx.GetContext(),
 								req.PlanId, autoingest.LogLevelError,
@@ -297,6 +421,21 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 								WithValue(consts.CtxKeyInvokeHandlerName, "入库执行器"),
 							taskReq.Topic(), body); err != nil {
 							logger.Error("下发文件扫描任务失败", zap.Error(err))
+
+							mu.Lock()
+							localFailedCount++
+							mu.Unlock()
+
+							failedRecorded = true
+
+							if _, logErr := h.autoIngestLogService.Create(ctx.GetContext(),
+								req.PlanId, autoingest.LogLevelError,
+								fmt.Sprintf("新增入库失败：%s, 错误信息：下发文件扫描任务失败: %s", fullPath, err.Error()),
+							); logErr != nil {
+								logger.Error("创建入库日志失败", zap.Error(logErr))
+							}
+
+							break
 						}
 
 						if _, logErr := h.autoIngestLogService.Create(ctx.GetContext(),
@@ -310,7 +449,31 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 						localAddCount++
 						mu.Unlock()
 
+						handled = true
+
 						break
+					}
+
+					if !handled && !failedRecorded {
+						logger.Error("入库失败，无法生成不冲突的目标路径", zap.String("path", fullPath))
+						mu.Lock()
+						localFailedCount++
+						mu.Unlock()
+
+						if _, logErr := h.autoIngestLogService.Create(ctx.GetContext(),
+							req.PlanId, autoingest.LogLevelError,
+							fmt.Sprintf("新增入库失败：%s, 错误信息：无法生成不冲突的目标路径", fullPath),
+						); logErr != nil {
+							logger.Error("创建入库日志失败", zap.Error(logErr))
+						}
+					}
+
+					if handled {
+						mu.Lock()
+						if pItem.itemOffset > localMaxOffset {
+							localMaxOffset = pItem.itemOffset
+						}
+						mu.Unlock()
 					}
 				}
 			}(i)
@@ -319,7 +482,11 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 		wg.Wait()
 
 		addCount = localAddCount
+
 		failedCount = localFailedCount
+		if failedCount == 0 {
+			nextOffset = localMaxOffset
+		}
 
 		logger.Info("并发入库完成", zap.Int64("add_count", addCount), zap.Int64("failed_count", failedCount))
 

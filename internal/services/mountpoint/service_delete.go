@@ -15,25 +15,56 @@ type DeleteRequest struct {
 }
 
 func (s *service) Delete(ctx context.Context, req *DeleteRequest) error {
-	// 非管理员只能删除自己创建的挂载点
-	if !req.IsAdmin && req.CreatorUserID > 0 {
-		result := s.getDB(ctx).Debug().Unscoped().Where("file_id = ? AND creator_user_id = ?", req.FileId, req.CreatorUserID).Delete(&models.MountPoint{})
-		if result.Error != nil {
-			ctx.Error("删除挂载点失败", zap.Error(result.Error), zap.Int64("fileId", req.FileId))
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			ctx.Error("删除挂载点失败，无权限或不存在", zap.Int64("fileId", req.FileId), zap.Int64("creator_user_id", req.CreatorUserID))
-			return errors.Wrap(gorm.ErrRecordNotFound, "挂载点不存在或无权限删除")
-		}
-		return nil
+	if req == nil || req.FileId <= 0 {
+		return errInvalidMountPointFileID
 	}
 
-	// 管理员可以删除任何挂载点
-	if err := s.getDB(ctx).Debug().Unscoped().Where("file_id = ?", req.FileId).Delete(&models.MountPoint{}).Error; err != nil {
-		ctx.Error("删除挂载点失败", zap.Error(err), zap.Int64("fileId", req.FileId))
+	if !req.IsAdmin && req.CreatorUserID <= 0 {
+		return errInvalidMountPointUserID
+	}
+
+	if err := s.getDB(ctx).Transaction(func(tx *gorm.DB) error {
+		query := tx.Unscoped().Model(&models.MountPoint{}).Where("file_id = ?", req.FileId)
+		if !req.IsAdmin {
+			// 非管理员只能删除自己创建的挂载点
+			query = query.Where("creator_user_id = ?", req.CreatorUserID)
+		}
+
+		var mountPoints []*models.MountPoint
+		if err := query.Find(&mountPoints).Error; err != nil {
+			return err
+		}
+
+		if len(mountPoints) == 0 {
+			if !req.IsAdmin {
+				return errors.Wrap(gorm.ErrRecordNotFound, "挂载点不存在或无权限删除")
+			}
+
+			return errors.Wrap(gorm.ErrRecordNotFound, "挂载点不存在")
+		}
+
+		mountPointIDs := mountPointIDList(mountPoints)
+
+		result := tx.Unscoped().Where("id IN ?", mountPointIDs).Delete(&models.MountPoint{})
+		if result.Error != nil {
+			return result.Error
+		}
+
+		if result.RowsAffected != int64(len(mountPointIDs)) {
+			return errors.Wrap(gorm.ErrRecordNotFound, "挂载点未删除")
+		}
+
+		return deleteUserTokenBindingsByMountPointIDs(tx, mountPointIDs)
+	}); err != nil {
+		if !req.IsAdmin {
+			ctx.Error("删除挂载点失败，无权限或不存在", zap.Error(err), zap.Int64("fileId", req.FileId), zap.Int64("creator_user_id", req.CreatorUserID))
+		} else {
+			ctx.Error("删除挂载点失败", zap.Error(err), zap.Int64("fileId", req.FileId))
+		}
+
 		return err
 	}
+
 	return nil
 }
 
@@ -44,38 +75,134 @@ type BatchDeleteRequest struct {
 }
 
 func (s *service) BatchDelete(ctx context.Context, req *BatchDeleteRequest) error {
-	if len(req.FileIds) == 0 {
+	if req == nil || len(req.FileIds) == 0 {
 		return nil
 	}
 
-	var db *gorm.DB
-	// 非管理员只能删除自己创建的挂载点
-	if !req.IsAdmin && req.CreatorUserID > 0 {
-		db = s.getDB(ctx).Debug().Unscoped().Where("file_id IN ? AND creator_user_id = ?", req.FileIds, req.CreatorUserID).Delete(&models.MountPoint{})
-	} else {
-		// 管理员可以删除任何挂载点
-		db = s.getDB(ctx).Debug().Unscoped().Where("file_id IN ?", req.FileIds).Delete(&models.MountPoint{})
+	fileIDs, err := normalizeFileIDs(req.FileIds)
+	if err != nil {
+		return err
 	}
 
-	if db.Error != nil {
-		ctx.Error("批量删除挂载点失败", zap.Error(db.Error), zap.Int64s("fileIds", req.FileIds))
-		return db.Error
+	if !req.IsAdmin && req.CreatorUserID <= 0 {
+		return errInvalidMountPointUserID
+	}
+
+	if err := s.getDB(ctx).Transaction(func(tx *gorm.DB) error {
+		query := tx.Unscoped().Model(&models.MountPoint{}).Where("file_id IN ?", fileIDs)
+		if !req.IsAdmin {
+			// 非管理员只能删除自己创建的挂载点
+			query = query.Where("creator_user_id = ?", req.CreatorUserID)
+		}
+
+		var mountPoints []*models.MountPoint
+		if err := query.Find(&mountPoints).Error; err != nil {
+			return err
+		}
+
+		if !allFileIDsMatched(fileIDs, mountPoints) {
+			return errors.Wrap(gorm.ErrRecordNotFound, "部分挂载点不存在或无权限删除")
+		}
+
+		mountPointIDs := mountPointIDList(mountPoints)
+
+		result := tx.Unscoped().Where("id IN ?", mountPointIDs).Delete(&models.MountPoint{})
+		if result.Error != nil {
+			return result.Error
+		}
+
+		if result.RowsAffected != int64(len(mountPointIDs)) {
+			return errors.Wrap(gorm.ErrRecordNotFound, "部分挂载点未删除")
+		}
+
+		return deleteUserTokenBindingsByMountPointIDs(tx, mountPointIDs)
+	}); err != nil {
+		ctx.Error("批量删除挂载点失败", zap.Error(err), zap.Int64s("fileIds", fileIDs))
+
+		return err
 	}
 
 	ctx.Info("批量删除挂载点执行完成",
-		zap.Int64s("fileIds", req.FileIds),
-		zap.Int64("deleted_rows", db.RowsAffected))
+		zap.Int64s("fileIds", fileIDs),
+		zap.Int("deleted_rows", len(fileIDs)))
 
 	return nil
 }
 
-func (s *service) ClearAll(ctx context.Context) (int64, error) {
-	db := s.svc.GetDB(ctx).Exec("DELETE FROM mount_points")
-	if db.Error != nil {
-		ctx.Error("清空所有挂载点失败", zap.Error(db.Error))
-		return 0, db.Error
+func normalizeFileIDs(fileIDs []int64) ([]int64, error) {
+	seen := make(map[int64]struct{}, len(fileIDs))
+
+	result := make([]int64, 0, len(fileIDs))
+	for _, fileID := range fileIDs {
+		if fileID <= 0 {
+			return nil, errInvalidMountPointFileID
+		}
+
+		if _, ok := seen[fileID]; ok {
+			continue
+		}
+
+		seen[fileID] = struct{}{}
+		result = append(result, fileID)
 	}
 
-	ctx.Info("清空所有挂载点完成", zap.Int64("deleted_rows", db.RowsAffected))
-	return db.RowsAffected, nil
+	return result, nil
+}
+
+func allFileIDsMatched(fileIDs []int64, mountPoints []*models.MountPoint) bool {
+	matched := make(map[int64]struct{}, len(mountPoints))
+	for _, mountPoint := range mountPoints {
+		matched[mountPoint.FileId] = struct{}{}
+	}
+
+	for _, fileID := range fileIDs {
+		if _, ok := matched[fileID]; !ok {
+			return false
+		}
+	}
+
+	return true
+}
+
+func mountPointIDList(mountPoints []*models.MountPoint) []int64 {
+	ids := make([]int64, 0, len(mountPoints))
+	for _, mountPoint := range mountPoints {
+		ids = append(ids, mountPoint.ID)
+	}
+
+	return ids
+}
+
+func deleteUserTokenBindingsByMountPointIDs(tx *gorm.DB, mountPointIDs []int64) error {
+	if len(mountPointIDs) == 0 {
+		return nil
+	}
+
+	return tx.
+		Model(new(models.UserMountPointToken)).
+		Where("mount_point_id IN ?", mountPointIDs).
+		Delete(new(models.UserMountPointToken)).Error
+}
+
+func (s *service) ClearAll(ctx context.Context) (int64, error) {
+	var deletedRows int64
+
+	if err := s.svc.GetDB(ctx).Transaction(func(tx *gorm.DB) error {
+		db := tx.Exec("DELETE FROM mount_points")
+		if db.Error != nil {
+			return db.Error
+		}
+
+		deletedRows = db.RowsAffected
+
+		return tx.Exec("DELETE FROM user_mount_point_tokens").Error
+	}); err != nil {
+		ctx.Error("清空所有挂载点失败", zap.Error(err))
+
+		return 0, err
+	}
+
+	ctx.Info("清空所有挂载点完成", zap.Int64("deleted_rows", deletedRows))
+
+	return deletedRows, nil
 }

@@ -3,6 +3,7 @@ package tmdb
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,6 +18,14 @@ func TestNewService(t *testing.T) {
 		assert.NotNil(t, svc)
 		assert.NotNil(t, svc.GetConfig())
 		assert.Equal(t, "test-api-key", svc.GetConfig().APIKey)
+		assert.Equal(t, defaultTMDBBaseURL, svc.GetConfig().BaseURL)
+	})
+
+	t.Run("创建服务使用自定义BaseURL", func(t *testing.T) {
+		svc := NewService(logger, "test-api-key", "https://tmdb.example.test/3/", "", "")
+		assert.NotNil(t, svc)
+		assert.Equal(t, "https://tmdb.example.test/3", svc.GetConfig().BaseURL)
+		assert.Equal(t, "https://tmdb.example.test/3", svc.(*service).baseURL)
 	})
 
 	t.Run("创建服务带HTTP代理", func(t *testing.T) {
@@ -46,7 +55,7 @@ func TestGetPopularMovies(t *testing.T) {
 			// 返回模拟响应
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{
+			_, _ = w.Write([]byte(`{
 				"page": 1,
 				"results": [
 					{
@@ -65,7 +74,6 @@ func TestGetPopularMovies(t *testing.T) {
 		defer server.Close()
 
 		svc := NewService(logger, "test-api-key", server.URL, "", "").(*service)
-		svc.baseURL = server.URL
 
 		movies, err := svc.GetPopularMovies(1)
 		assert.NoError(t, err)
@@ -90,11 +98,26 @@ func TestGetPopularMovies(t *testing.T) {
 		defer server.Close()
 
 		svc := NewService(logger, "test-api-key", server.URL, "", "").(*service)
-		svc.baseURL = server.URL
 
 		movies, err := svc.GetPopularMovies(1)
 		assert.Error(t, err)
 		assert.Nil(t, movies)
+	})
+
+	t.Run("超大响应返回错误", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(strings.Repeat("x", maxTMDBResponseSize+1)))
+		}))
+		defer server.Close()
+
+		svc := NewService(logger, "test-api-key", server.URL, "", "")
+
+		movies, err := svc.GetPopularMovies(1)
+		assert.Error(t, err)
+		assert.Nil(t, movies)
+		assert.Contains(t, err.Error(), "响应体过大")
 	})
 }
 
@@ -107,7 +130,7 @@ func TestGetPopularTVs(t *testing.T) {
 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{
+			_, _ = w.Write([]byte(`{
 				"page": 1,
 				"results": [
 					{
@@ -126,7 +149,6 @@ func TestGetPopularTVs(t *testing.T) {
 		defer server.Close()
 
 		svc := NewService(logger, "test-api-key", server.URL, "", "").(*service)
-		svc.baseURL = server.URL
 
 		tvs, err := svc.GetPopularTVs(1)
 		assert.NoError(t, err)

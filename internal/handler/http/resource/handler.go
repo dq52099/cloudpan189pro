@@ -102,14 +102,18 @@ type SummaryResponse struct {
 // countWithLog 统计记录数，失败时记录日志但不中断（资源概览允许部分失败）。
 func (h *handler) countWithLog(model interface{}, where string, args []interface{}, label string) int64 {
 	var count int64
+
 	q := h.db.Model(model)
 	if where != "" {
 		q = q.Where(where, args...)
 	}
+
 	if err := q.Count(&count).Error; err != nil {
 		h.logger.Warn("资源概览统计失败", zap.String("label", label), zap.Error(err))
+
 		return 0
 	}
+
 	return count
 }
 
@@ -120,7 +124,7 @@ func (h *handler) Summary() httpcontext.HandlerFunc {
 		// 用户统计
 		resp.Users.Total = h.countWithLog(&models.User{}, "", nil, "users_total")
 		resp.Users.Active = h.countWithLog(&models.User{}, "status = ?", []interface{}{1}, "users_active")
-		resp.Users.Disabled = h.countWithLog(&models.User{}, "status = ?", []interface{}{0}, "users_disabled")
+		resp.Users.Disabled = h.countWithLog(&models.User{}, "status = ?", []interface{}{2}, "users_disabled")
 
 		resp.UserGroups = h.countWithLog(&models.UserGroup{}, "", nil, "user_groups")
 

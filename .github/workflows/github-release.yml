@@ -14,6 +14,7 @@ on:
 env:
   PROJECT_NAME: cloudpan189-share
   MODULE_NAME: github.com/xxcheng123/cloudpan189-share
+  CONFIG_PACKAGE: github.com/xxcheng123/cloudpan189-share/internal/configs
   BINARY_NAME: share
   GO_VERSION: '1.25'
   NODE_VERSION: '22'
@@ -227,10 +228,10 @@ jobs:
           
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build \
             -ldflags="-s -w \
-                      -X ${{ env.MODULE_NAME }}/configs.Commit=${{ env.VAR_COMMIT }} \
-                      -X ${{ env.MODULE_NAME }}/configs.BuildDate=${{ env.VAR_BUILD_DATE }} \
-                      -X ${{ env.MODULE_NAME }}/configs.GitSummary=${{ env.VAR_GIT_SUMMARY }} \
-                      -X ${{ env.MODULE_NAME }}/configs.GitBranch=${{ env.VAR_GIT_BRANCH }}" \
+                      -X ${{ env.CONFIG_PACKAGE }}.Commit=${{ env.VAR_COMMIT }} \
+                      -X ${{ env.CONFIG_PACKAGE }}.BuildDate=${{ env.VAR_BUILD_DATE }} \
+                      -X ${{ env.CONFIG_PACKAGE }}.GitSummary=${{ env.VAR_GIT_SUMMARY }} \
+                      -X ${{ env.CONFIG_PACKAGE }}.GitBranch=${{ env.VAR_GIT_BRANCH }}" \
             -trimpath \
             -o output/${{ env.BINARY_NAME }}-${{ matrix.suffix }}${{ matrix.ext }} \
             ./cmd/main.go

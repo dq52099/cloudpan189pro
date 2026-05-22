@@ -26,27 +26,18 @@ function createStorage<T extends object>(type: StorageDriver, storagePrefix: str
      */
     get<K extends keyof T>(key: K): T[K] | null {
       const json = stg.getItem(`${storagePrefix}${key as string}`)
-      if (json) {
-        let storageData: T[K] | null = null
-
-        try {
-          storageData = JSON.parse(json)
-        } catch (error) {
-          // todo 解析失败时，删除该键值对
-          console.error('解析session失败:', error)
-          stg.removeItem(`${storagePrefix}${key as string}`)
-
-          return null
-        }
-
-        if (storageData) {
-          return storageData as T[K]
-        }
+      if (json === null) {
+        return null
       }
 
-      stg.removeItem(`${storagePrefix}${key as string}`)
+      try {
+        return JSON.parse(json) as T[K]
+      } catch (error) {
+        console.error('解析session失败:', error)
+        stg.removeItem(`${storagePrefix}${key as string}`)
 
-      return null
+        return null
+      }
     },
     remove(key: keyof T) {
       stg.removeItem(`${storagePrefix}${key as string}`)

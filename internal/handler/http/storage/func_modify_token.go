@@ -65,15 +65,34 @@ func (h *handler) ModifyToken() httpcontext.HandlerFunc {
 				// 检查用户组是否有权限
 				userGroupId := ctx.GetInt64(consts.CtxKeyUserGroupId)
 				if userGroupId > 0 {
-					groupFileIds, _ := h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
+					groupFileIds, err := h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
+					if err != nil {
+						ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
+
+						return
+					}
+
 					for _, fid := range groupFileIds {
 						if fid == mp.FileId {
 							hasAccess = true
+
 							break
 						}
 					}
 				}
 			}
+
+			if !hasAccess && h.userMountPointTokenService != nil {
+				tokenID, err := h.userMountPointTokenService.GetTokenID(ctx.GetContext(), userID, mp.ID)
+				if err != nil {
+					ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
+
+					return
+				}
+
+				hasAccess = tokenID > 0
+			}
+
 			if !hasAccess {
 				ctx.Fail(busCodeStorageMountPointNotFound)
 
@@ -83,20 +102,13 @@ func (h *handler) ModifyToken() httpcontext.HandlerFunc {
 
 		// 验证云盘令牌是否存在（必须是用户自己的令牌）
 		if req.TokenID != 0 {
-			token, err := h.cloudTokenService.Query(ctx.GetContext(), req.TokenID)
+			_, err := h.cloudTokenService.QueryAccessible(ctx.GetContext(), req.TokenID, userID, isAdmin)
 			if err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					ctx.Fail(busCodeStorageCloudTokenNotExist.WithError(err))
 				} else {
 					ctx.Fail(busCodeStorageQueryCloudTokenError.WithError(err))
 				}
-
-				return
-			}
-
-			// 非管理员：只能绑定自己的令牌
-			if !isAdmin && token.UserID != userID {
-				ctx.Fail(busCodeStorageCloudTokenNotExist.WithMessage("只能绑定自己的令牌"))
 
 				return
 			}

@@ -33,6 +33,7 @@ func (h *handler) GetShareInfo() httpcontext.HandlerFunc {
 		req := new(getShareInfoRequest)
 		if err := ctx.ShouldBindQuery(req); err != nil {
 			ctx.AbortWithInvalidParams(err)
+
 			return
 		}
 
@@ -75,11 +76,13 @@ func (h *handler) GetShareInfo() httpcontext.HandlerFunc {
 		shareInfo, err := h.cloudBridgeService.GetShareInfo(ctx.GetContext(), pureShareCode, pureAccessCode)
 		if err != nil {
 			ctx.Fail(codeStorageAdvanceGetShareInfoError.WithError(err))
+
 			return
 		}
 
 		if shareInfo == nil {
 			ctx.Fail(codeStorageAdvanceGetShareInfoError.WithMessage("未查询到分享信息"))
+
 			return
 		}
 

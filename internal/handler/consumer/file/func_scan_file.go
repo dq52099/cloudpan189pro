@@ -60,6 +60,7 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 			release, acquired := acquireScanLock(topFile.ID)
 			if !acquired {
 				logger.Warn("挂载点正在被扫描，跳过本次扫描", zap.Int64("file_id", topFile.ID), zap.String("path", topFile.Name))
+
 				return nil
 			}
 			defer release()
@@ -90,7 +91,10 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 
 		defer func() {
 			if scanErr != nil {
-				_ = h.fileTaskLogService.Failed(ctx.GetContext(), tracker, tracker.WithCost(), utils.WithField("result", scanErr.Error()))
+				if err := h.fileTaskLogService.Failed(ctx.GetContext(), tracker, tracker.WithCost(), utils.WithField("result", scanErr.Error())); err != nil {
+					logger.Error("更新文件任务日志失败", zap.Int64("file_id", req.FileId), zap.Error(err))
+					scanErr = fmt.Errorf("%w; 更新文件任务日志失败: %w", scanErr, err)
+				}
 				// 写入挂载点失败状态（顶层文件才写入）
 				if req.FileId != 0 && topFile.IsTop {
 					if err := h.mountPointService.UpdateLastState(ctx.GetContext(), topFile.ID, "失败: "+scanErr.Error()); err != nil {
@@ -105,6 +109,10 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 					utils.WithField("completed", gorm.Expr("total")),
 				); err != nil {
 					logger.Error("更新文件任务日志失败", zap.Int64("file_id", req.FileId), zap.Error(err))
+
+					scanErr = err
+
+					return
 				}
 				// 写入挂载点成功状态
 				if req.FileId != 0 && topFile.IsTop {
@@ -128,10 +136,16 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 				return make([]*models.VirtualFile, 0), nil
 			}
 
-			_ = h.fileTaskLogService.FlushCount(ctx, tracker, filetasklog.WithTotalCounter(1))
 			defer func() {
-				_ = h.fileTaskLogService.FlushCount(ctx, tracker, filetasklog.WithCompletedOneCounter())
+				counter := filetasklog.WithCompletedOneCounter()
+				if err != nil {
+					counter = filetasklog.WithFailedCounter(1)
+				}
+
+				_ = h.fileTaskLogService.FlushCount(ctx, tracker, counter)
 			}()
+
+			_ = h.fileTaskLogService.FlushCount(ctx, tracker, filetasklog.WithTotalCounter(1))
 
 			// 如果是根目录，直接返回子目录
 			if inputFile.ID == 0 {
@@ -205,6 +219,7 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 
 				if shareId, ok = inputFile.Addition.Int64(consts.FileAdditionKeyShareId); !ok {
 					ctx.Error("获取分享ID失败", zap.Int64("file_id", inputFile.ID))
+
 					return nil, errors.New("获取分享ID失败")
 				}
 
@@ -229,6 +244,7 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 
 				if isFolder, ok = inputFile.Addition.Bool(consts.FileAdditionKeyIsFolder); !ok {
 					ctx.Error("获取分享类型失败", zap.Int64("file_id", inputFile.ID))
+
 					return nil, errors.New("获取分享类型失败")
 				}
 
@@ -411,10 +427,11 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 					ctx.Error("批量删除文件失败", zap.Error(err))
 
 					errs = append(errs, err)
+					_ = h.fileTaskLogService.FlushCount(ctx, tracker, filetasklog.WithFailedCounter(deleteCount))
+				} else {
+					_ = h.fileTaskLogService.FlushCount(ctx, tracker, filetasklog.WithCompletedCounter(deleteCount))
 				}
 			}
-
-			_ = h.fileTaskLogService.FlushCount(ctx, tracker, filetasklog.WithCompletedCounter(deleteCount))
 
 			// 新增文件时会有一个问题 一个目录底下有相同文件名的文件 会导致新增失败
 			// 原来的解决办法：在新增文件时，直接忽略。但是会有一个问题，后面的扫描会一直显示这个文件不存在，会尝试创建，然后因为开启了 pid 和 name 的唯一索引，会创建失败
@@ -438,10 +455,11 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 					ctx.Error("批量创建文件失败", zap.Error(err))
 
 					errs = append(errs, err)
+					_ = h.fileTaskLogService.FlushCount(ctx, tracker, filetasklog.WithFailedCounter(createCount))
+				} else {
+					_ = h.fileTaskLogService.FlushCount(ctx, tracker, filetasklog.WithCompletedCounter(createCount))
 				}
 			}
-
-			_ = h.fileTaskLogService.FlushCount(ctx, tracker, filetasklog.WithCompletedCounter(createCount))
 
 			// 更新文件
 			if len(filesToUpdateMap) > 0 {
@@ -449,13 +467,13 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 					ctx.Error("批量更新文件失败", zap.Error(err))
 
 					errs = append(errs, err)
+					_ = h.fileTaskLogService.FlushCount(ctx, tracker, filetasklog.WithFailedCounter(updateCount))
 				} else {
+					_ = h.fileTaskLogService.FlushCount(ctx, tracker, filetasklog.WithCompletedCounter(updateCount))
 					// 更新成功后同步 STRM，失败只打 warning 不影响扫描主流程
 					h.syncStrmAfterUpdate(ctx, strmUpdates)
 				}
 			}
-
-			_ = h.fileTaskLogService.FlushCount(ctx, tracker, filetasklog.WithCompletedCounter(updateCount))
 
 			if len(errs) > 0 {
 				return nil, errors.New("文件处理失败")
@@ -490,6 +508,8 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 			if apiErr, ok := apierrcode.As(err); ok {
 				return apiErr
 			}
+
+			return err
 		}
 
 		return nil

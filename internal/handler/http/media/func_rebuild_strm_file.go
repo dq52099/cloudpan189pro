@@ -2,6 +2,8 @@ package media
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
@@ -39,23 +41,30 @@ type rebuildStrmResponse struct {
 func (h *handler) RebuildStrmFile() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
 		req := new(rebuildStrmRequest)
-		_ = ctx.ShouldBindJSON(req)
+		if err := ctx.ShouldBindJSON(req); err != nil && !errors.Is(err, io.EOF) {
+			ctx.AbortWithInvalidParams(err)
+
+			return
+		}
 
 		// 检查媒体功能是否启用
 		cfg, err := h.mediaConfigService.Query(ctx.GetContext())
 		if err != nil {
 			ctx.Fail(codeMediaNotEnabled.WithError(err))
+
 			return
 		}
 
 		if !cfg.Enable {
 			ctx.Fail(codeMediaNotEnabled)
+
 			return
 		}
 
 		// 未指定挂载点：下发全量重建任务（消费侧自带挂载点级并发）
 		if len(req.MountPointIDs) == 0 {
 			fullReq := &topic.MediaRebuildStrmFileRequest{}
+
 			body, _ := json.Marshal(fullReq)
 			if err := h.taskEngine.PushMessage(
 				ctx.GetContext().
@@ -64,39 +73,51 @@ func (h *handler) RebuildStrmFile() httpcontext.HandlerFunc {
 			); err != nil {
 				ctx.GetContext().Error("推送 STRM 全量重建任务失败", zap.Error(err))
 				ctx.Fail(codeRebuildFailed.WithError(err))
+
 				return
 			}
 
 			ctx.Success(rebuildStrmResponse{Total: 1, Success: 1, Failed: 0})
+
+			return
+		}
+
+		requestedIDs, err := normalizeRebuildMountPointIDs(req.MountPointIDs)
+		if err != nil {
+			ctx.AbortWithInvalidParams(err)
+
 			return
 		}
 
 		// 指定了挂载点：逐个派发单挂载点重建任务
 		mountpoints, err := h.mountpointService.List(ctx.GetContext(), &mountpointSvi.ListRequest{
 			NoPaginate: true,
+			IsAdmin:    true,
 		})
 		if err != nil {
 			ctx.Fail(codeRebuildFailed.WithError(err))
+
 			return
 		}
 
-		idSet := make(map[int64]struct{}, len(req.MountPointIDs))
-		for _, id := range req.MountPointIDs {
+		idSet := make(map[int64]struct{}, len(requestedIDs))
+		for _, id := range requestedIDs {
 			idSet[id] = struct{}{}
 		}
 
 		successCount := 0
-		totalRequested := 0
+		totalRequested := len(idSet)
+
 		for _, mp := range mountpoints {
-			if _, ok := idSet[mp.FileId]; !ok {
+			if _, ok := idSet[mp.ID]; !ok {
 				continue
 			}
-			totalRequested++
 
 			taskReq := &topic.MediaRebuildStrmFileByMountPointRequest{
 				MountPointFileId: mp.FileId,
 				MountPointPath:   mp.FullPath,
 			}
+
 			body, _ := json.Marshal(taskReq)
 			if err := h.taskEngine.PushMessage(
 				ctx.GetContext().
@@ -105,10 +126,13 @@ func (h *handler) RebuildStrmFile() httpcontext.HandlerFunc {
 				taskReq.Topic(), body,
 			); err != nil {
 				ctx.GetContext().Warn("推送 STRM 单点重建任务失败",
+					zap.Int64("mount_point_id", mp.ID),
 					zap.Int64("file_id", mp.FileId),
 					zap.Error(err))
+
 				continue
 			}
+
 			successCount++
 		}
 
@@ -118,4 +142,24 @@ func (h *handler) RebuildStrmFile() httpcontext.HandlerFunc {
 			Failed:  totalRequested - successCount,
 		})
 	}
+}
+
+func normalizeRebuildMountPointIDs(ids []int64) ([]int64, error) {
+	seen := make(map[int64]struct{}, len(ids))
+	normalized := make([]int64, 0, len(ids))
+
+	for _, id := range ids {
+		if id <= 0 {
+			return nil, errors.New("mountPointIds 必须全部大于 0")
+		}
+
+		if _, ok := seen[id]; ok {
+			continue
+		}
+
+		seen[id] = struct{}{}
+		normalized = append(normalized, id)
+	}
+
+	return normalized, nil
 }

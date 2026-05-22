@@ -82,12 +82,15 @@ func (s *RefreshCloudTokenScheduler) doJob() bool {
 		select {
 		case <-ctx.Done():
 			ctx.Info("云盘令牌刷新执行器停止")
+
 			return false
 		case <-time.After(func() time.Duration {
 			if firstRun {
 				firstRun = false
+
 				return 0 // 立即执行
 			}
+
 			return 6 * time.Hour // 后续每6小时执行一次
 		}()):
 			ctx.Info("开始执行云盘令牌自动刷新检查")
@@ -96,6 +99,7 @@ func (s *RefreshCloudTokenScheduler) doJob() bool {
 			tokens, err := s.getPasswordLoginTokens(ctx)
 			if err != nil {
 				ctx.Error("查询密码登录令牌失败", zap.Error(err))
+
 				continue
 			}
 
@@ -112,6 +116,7 @@ func (s *RefreshCloudTokenScheduler) doJob() bool {
 				if s.isExpiredOrWillExpireInThreeDays(token) {
 					if s.isExpired(token) {
 						expiredCount++
+
 						ctx.Info("检测到已过期的令牌，尝试刷新",
 							zap.Int64("token_id", token.ID),
 							zap.String("token_name", token.Name),
@@ -128,6 +133,7 @@ func (s *RefreshCloudTokenScheduler) doJob() bool {
 						ctx.Warn("令牌刷新失败次数过多，跳过刷新",
 							zap.Int64("token_id", token.ID),
 							zap.String("token_name", token.Name))
+
 						continue
 					}
 
@@ -137,6 +143,7 @@ func (s *RefreshCloudTokenScheduler) doJob() bool {
 							zap.Int64("token_id", token.ID),
 							zap.String("token_name", token.Name),
 							zap.Error(err))
+
 						failedCount++
 
 						// 记录失败次数
@@ -145,6 +152,7 @@ func (s *RefreshCloudTokenScheduler) doJob() bool {
 						ctx.Info("刷新令牌成功",
 							zap.Int64("token_id", token.ID),
 							zap.String("token_name", token.Name))
+
 						refreshedCount++
 
 						// 重置失败次数
@@ -177,6 +185,7 @@ func (s *RefreshCloudTokenScheduler) isExpired(token *models.CloudToken) bool {
 	}
 
 	now := time.Now()
+
 	var expireTime time.Time
 
 	if token.ExpiresIn > 10000000000 { // 超过10年的秒数，可能是毫秒时间戳
@@ -198,6 +207,7 @@ func (s *RefreshCloudTokenScheduler) willExpireInThreeDays(token *models.CloudTo
 	}
 
 	now := time.Now()
+
 	var expireTime time.Time
 
 	if token.ExpiresIn > 10000000000 { // 超过10年的秒数，可能是毫秒时间戳
@@ -226,10 +236,12 @@ func (s *RefreshCloudTokenScheduler) hasTooManyFailures(token *models.CloudToken
 		if times, ok := autoLoginTimes.(float64); ok && times >= 3 {
 			return true
 		}
+
 		if times, ok := autoLoginTimes.(int64); ok && times >= 3 {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -239,10 +251,12 @@ func (s *RefreshCloudTokenScheduler) recordFailure(token *models.CloudToken) {
 
 	// 获取当前失败次数
 	currentTimes := 0
+
 	if autoLoginTimes, ok := token.Addition[models.CloudTokenAdditionAutoLoginTimes]; ok {
 		if times, ok := autoLoginTimes.(float64); ok {
 			currentTimes = int(times)
 		}
+
 		if times, ok := autoLoginTimes.(int64); ok {
 			currentTimes = int(times)
 		}
@@ -253,6 +267,7 @@ func (s *RefreshCloudTokenScheduler) recordFailure(token *models.CloudToken) {
 	if addition == nil {
 		addition = make(map[string]interface{})
 	}
+
 	addition[models.CloudTokenAdditionAutoLoginTimes] = currentTimes + 1
 	addition[models.CloudTokenAdditionAutoLoginResultKey] = fmt.Sprintf("%s, 自动刷新失败", time.Now().Format(time.DateTime))
 
@@ -270,6 +285,7 @@ func (s *RefreshCloudTokenScheduler) resetFailureCount(token *models.CloudToken)
 	if addition == nil {
 		addition = make(map[string]interface{})
 	}
+
 	addition[models.CloudTokenAdditionAutoLoginTimes] = 0
 	addition[models.CloudTokenAdditionAutoLoginResultKey] = fmt.Sprintf("%s, 自动刷新成功", time.Now().Format(time.DateTime))
 
@@ -287,8 +303,10 @@ func (s *RefreshCloudTokenScheduler) refreshToken(ctx context.Context, token *mo
 		Username: token.Username,
 		Password: token.Password,
 		Name:     token.Name,
+		IsAdmin:  true,
 	}
 
 	_, err := s.cloudTokenService.UsernameLogin(ctx, req)
+
 	return err
 }

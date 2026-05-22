@@ -4,6 +4,8 @@
     preset="dialog"
     :title="updateMode ? '更新密码令牌' : '密码登录'"
     :mask-closable="false"
+    :closable="!loading"
+    :close-on-esc="!loading"
   >
     <div class="password-login-container">
       <!-- 登录表单 -->
@@ -28,6 +30,7 @@
             clearable
             autocomplete="nope"
             name="fake-username"
+            :disabled="loading"
             @keyup.enter="handleLogin"
           />
         </n-form-item>
@@ -43,6 +46,7 @@
             clearable
             autocomplete="nope"
             name="fake-password"
+            :disabled="loading"
             @keyup.enter="handleLogin"
           />
         </n-form-item>
@@ -52,6 +56,7 @@
             v-model:value="form.name"
             placeholder="请输入令牌名称（可选）"
             clearable
+            :disabled="loading"
             @keyup.enter="handleLogin"
           />
         </n-form-item>
@@ -77,15 +82,17 @@
 
     <template #action>
       <n-space>
-        <n-button @click="handleCancel">取消</n-button>
-        <n-button type="primary" @click="handleLogin" :loading="loading"> 登录 </n-button>
+        <n-button :disabled="loading" @click="handleCancel">取消</n-button>
+        <n-button type="primary" :loading="loading" :disabled="loading" @click="handleLogin">
+          登录
+        </n-button>
       </n-space>
     </template>
   </n-modal>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, nextTick } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onUnmounted } from 'vue'
 import {
   NModal,
   NForm,
@@ -129,6 +136,10 @@ const form = reactive({
   name: '',
 })
 
+let operationVersion = 0
+let autofillResetTimer: ReturnType<typeof setTimeout> | null = null
+let successCloseTimer: ReturnType<typeof setTimeout> | null = null
+
 // 表单验证规则
 const rules = computed<FormRules>(() => {
   if (props.updateMode) {
@@ -160,24 +171,72 @@ const message = useMessage()
 // 计算属性
 const showModal = computed({
   get: () => props.show,
-  set: (value) => emit('update:show', value),
+  set: (value) => {
+    if (!value && loading.value) {
+      return
+    }
+
+    emit('update:show', value)
+  },
 })
 
 // 监听弹窗显示状态
 watch(showModal, (newVal) => {
   if (newVal) {
+    operationVersion++
+    const currentOperation = operationVersion
+
     // 弹窗打开时重置状态
     resetState()
     // 延迟清空输入框，防止自动填充
     nextTick(() => {
-      setTimeout(() => {
+      if (!isCurrentOperation(currentOperation)) {
+        return
+      }
+
+      clearAutofillResetTimer()
+      autofillResetTimer = setTimeout(() => {
+        if (!isCurrentOperation(currentOperation)) {
+          return
+        }
+
         form.username = ''
         form.password = ''
         form.name = ''
       }, 100)
     })
+
+    return
   }
+
+  invalidatePendingWork()
+  resetState()
 })
+
+const isCurrentOperation = (version: number) => {
+  return showModal.value && operationVersion === version
+}
+
+const clearAutofillResetTimer = () => {
+  if (autofillResetTimer) {
+    clearTimeout(autofillResetTimer)
+    autofillResetTimer = null
+  }
+}
+
+const clearTimers = () => {
+  clearAutofillResetTimer()
+
+  if (successCloseTimer) {
+    clearTimeout(successCloseTimer)
+    successCloseTimer = null
+  }
+}
+
+const invalidatePendingWork = () => {
+  operationVersion++
+  clearTimers()
+}
 
 // 重置状态
 const resetState = () => {
@@ -193,15 +252,28 @@ const resetState = () => {
 
 // 处理登录
 const handleLogin = () => {
+  if (loading.value) {
+    return
+  }
+
+  const currentOperation = operationVersion
   formRef.value?.validate((errors) => {
+    if (!isCurrentOperation(currentOperation)) {
+      return
+    }
+
     if (!errors) {
-      performLogin()
+      performLogin(currentOperation)
     }
   })
 }
 
 // 执行登录
-const performLogin = () => {
+const performLogin = (currentOperation: number) => {
+  if (!showModal.value || loading.value) {
+    return
+  }
+
   loading.value = true
   statusMessage.value = ''
 
@@ -214,6 +286,10 @@ const performLogin = () => {
 
   usernameLogin(loginData)
     .then((response) => {
+      if (!isCurrentOperation(currentOperation)) {
+        return
+      }
+
       if (response.code === 200) {
         // 登录成功
         statusMessage.value = '登录成功！'
@@ -221,7 +297,12 @@ const performLogin = () => {
         message.success('密码登录成功')
 
         // 延迟关闭弹窗并触发成功回调
-        setTimeout(() => {
+        clearTimers()
+        successCloseTimer = setTimeout(() => {
+          if (!isCurrentOperation(currentOperation)) {
+            return
+          }
+
           showModal.value = false
           emit('success')
         }, 1500)
@@ -233,20 +314,34 @@ const performLogin = () => {
       }
     })
     .catch((error) => {
+      if (!isCurrentOperation(currentOperation)) {
+        return
+      }
+
       console.error('密码登录失败:', error)
       statusMessage.value = '登录失败，请检查网络连接或稍后重试'
       statusType.value = 'error'
       message.error('登录失败')
     })
     .finally(() => {
-      loading.value = false
+      if (isCurrentOperation(currentOperation)) {
+        loading.value = false
+      }
     })
 }
 
 // 取消操作
 const handleCancel = () => {
+  if (loading.value) {
+    return
+  }
+
   showModal.value = false
 }
+
+onUnmounted(() => {
+  invalidatePendingWork()
+})
 </script>
 
 <style scoped>

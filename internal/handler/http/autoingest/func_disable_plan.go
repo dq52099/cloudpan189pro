@@ -1,7 +1,10 @@
 package autoingest
 
 import (
+	"errors"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	"gorm.io/gorm"
 )
 
 type disablePlanRequest struct {
@@ -28,6 +31,23 @@ func (h *handler) DisablePlan() httpcontext.HandlerFunc {
 		if err := ctx.ShouldBindJSON(req); err != nil {
 			ctx.AbortWithInvalidParams(err)
 
+			return
+		}
+
+		plan, err := h.planService.Query(ctx.GetContext(), req.ID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(codePlanNotFound.WithError(err))
+
+				return
+			}
+
+			ctx.Fail(codePlanQueryFailed.WithError(err))
+
+			return
+		}
+
+		if !ensurePlanAccess(ctx, plan) {
 			return
 		}
 

@@ -7,7 +7,22 @@ export function useFamilyMount() {
 
   const show = (): Promise<{ success: boolean }> => {
     return new Promise((resolve) => {
-      const modalInstance = modal.create({
+      let settled = false
+      let modalInstance: ReturnType<typeof modal.create>
+
+      const settle = (payload: { success: boolean }) => {
+        if (settled) return
+        settled = true
+        resolve(payload)
+      }
+
+      const closeWithCancel = () => {
+        if (settled) return
+        settle({ success: false })
+        modalInstance.destroy()
+      }
+
+      modalInstance = modal.create({
         title: '家庭文件夹挂载',
         preset: 'dialog',
         style: {
@@ -17,17 +32,18 @@ export function useFamilyMount() {
         content: () =>
           h(FamilyMountModal, {
             onConfirm: (payload) => {
-              resolve(payload)
+              settle(payload)
               modalInstance.destroy()
             },
             onCancel: () => {
-              resolve({ success: false })
-              modalInstance.destroy()
+              closeWithCancel()
             },
           }),
         action: () => null, // 动作按钮已在内容组件中处理
-        closable: true,
+        closable: false,
         maskClosable: false,
+        closeOnEsc: false,
+        onClose: closeWithCancel,
       })
     })
   }

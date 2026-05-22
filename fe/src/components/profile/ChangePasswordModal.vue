@@ -1,5 +1,12 @@
 <template>
-  <n-modal v-model:show="showModal" preset="dialog" title="修改密码">
+  <n-modal
+    v-model:show="showModal"
+    preset="dialog"
+    title="修改密码"
+    :closable="!loading"
+    :mask-closable="!loading"
+    :close-on-esc="!loading"
+  >
     <n-form
       ref="formRef"
       :model="passwordForm"
@@ -15,6 +22,7 @@
           placeholder="请输入当前密码"
           show-password-on="mousedown"
           maxlength="50"
+          :disabled="loading"
         />
       </n-form-item>
       <n-form-item label="新密码" path="password">
@@ -24,6 +32,7 @@
           placeholder="请输入新密码"
           show-password-on="mousedown"
           maxlength="50"
+          :disabled="loading"
         />
       </n-form-item>
       <n-form-item label="确认新密码" path="confirmPassword">
@@ -33,20 +42,23 @@
           placeholder="请再次输入新密码"
           show-password-on="mousedown"
           maxlength="50"
+          :disabled="loading"
         />
       </n-form-item>
     </n-form>
     <template #action>
       <n-space>
-        <n-button @click="handleCancel">取消</n-button>
-        <n-button type="primary" :loading="loading" @click="handleSubmit"> 确认修改 </n-button>
+        <n-button :disabled="loading" @click="handleCancel">取消</n-button>
+        <n-button type="primary" :loading="loading" :disabled="loading" @click="handleSubmit">
+          确认修改
+        </n-button>
       </n-space>
     </template>
   </n-modal>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue'
+import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import {
   NModal,
   NForm,
@@ -80,13 +92,25 @@ const authStore = useAuthStore()
 const router = useRouter()
 
 // 控制弹窗显示
-const showModal = ref(false)
+const showModal = computed({
+  get: () => props.show,
+  set: (value: boolean) => {
+    if (!value && loading.value) {
+      return
+    }
+
+    emit('update:show', value)
+  },
+})
 
 // 表单引用
 const formRef = ref<FormInst | null>(null)
 
 // 加载状态
 const loading = ref(false)
+let operationVersion = 0
+let isComponentMounted = true
+let logoutTimer: ReturnType<typeof setTimeout> | null = null
 
 // 密码表单
 const passwordForm = reactive({
@@ -134,63 +158,101 @@ const passwordRules: FormRules = {
   ],
 }
 
+const clearLogoutTimer = () => {
+  if (logoutTimer) {
+    clearTimeout(logoutTimer)
+    logoutTimer = null
+  }
+}
+
+const isCurrentOperation = (version: number) => {
+  return isComponentMounted && operationVersion === version
+}
+
+const invalidatePendingWork = () => {
+  operationVersion++
+  loading.value = false
+}
+
 // 监听props变化
 watch(
   () => props.show,
   (newVal) => {
-    showModal.value = newVal
     if (newVal) {
+      operationVersion++
+      loading.value = false
+      clearLogoutTimer()
       // 打开弹窗时重置表单
       resetForm()
+
+      return
     }
+
+    invalidatePendingWork()
   },
   { immediate: true }
 )
 
-// 监听弹窗状态变化
-watch(showModal, (newVal) => {
-  emit('update:show', newVal)
-})
-
 // 提交表单
 const handleSubmit = async () => {
-  if (!formRef.value) return
+  if (loading.value || !formRef.value) return
 
-  await formRef.value.validate()
+  const currentOperation = operationVersion
   loading.value = true
+
+  try {
+    await formRef.value.validate()
+  } catch {
+    if (isCurrentOperation(currentOperation)) {
+      loading.value = false
+    }
+
+    return
+  }
 
   const data: ModifyOwnPasswordRequest = {
     oldPassword: passwordForm.oldPassword,
     password: passwordForm.password,
   }
 
-  modifyOwnPassword(data)
-    .then((response) => {
-      if (response.code === 200) {
-        message.success('密码修改成功，请重新登录')
-        showModal.value = false
-        emit('success')
+  try {
+    const response = await modifyOwnPassword(data)
+    if (!isCurrentOperation(currentOperation)) {
+      return
+    }
 
-        // 延迟1秒后退出登录，让用户看到成功提示
-        setTimeout(() => {
-          authStore.logout()
-          router.push('/@login')
-        }, 1000)
-      } else {
-        message.error(response.msg || '密码修改失败')
-      }
-    })
-    .catch((error) => {
-      console.error('修改密码失败:', error)
-      message.error('密码修改失败')
-    })
-    .finally(() => {
+    if (response.code === 200) {
+      message.success('密码修改成功，请重新登录')
+      showModal.value = false
+      emit('success')
+
+      // 延迟1秒后退出登录，让用户看到成功提示
+      logoutTimer = setTimeout(() => {
+        logoutTimer = null
+        authStore.logout()
+        router.push('/@login')
+      }, 1000)
+    } else {
+      message.error(response.msg || '密码修改失败')
+    }
+  } catch (error) {
+    if (!isCurrentOperation(currentOperation)) {
+      return
+    }
+
+    console.error('修改密码失败:', error)
+    message.error('密码修改失败')
+  } finally {
+    if (isCurrentOperation(currentOperation)) {
       loading.value = false
-    })
+    }
+  }
 }
 
 // 取消操作
 const handleCancel = () => {
+  if (loading.value) return
+
   showModal.value = false
 }
 
@@ -201,4 +263,10 @@ const resetForm = () => {
   passwordForm.confirmPassword = ''
   formRef.value?.restoreValidation()
 }
+
+onUnmounted(() => {
+  isComponentMounted = false
+  invalidatePendingWork()
+  clearLogoutTimer()
+})
 </script>

@@ -76,6 +76,7 @@ declare namespace Models {
     userId: number
     completed: number
     total: number
+    failed: number
     createdAt: string
     updatedAt: string
   }

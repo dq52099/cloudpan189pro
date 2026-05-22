@@ -45,11 +45,11 @@ make clean-all          # 完整清理
 
 ```bash
 cd fe
-npm run dev           # 开发服务器
-npm run build         # 构建 (vue-tsc && vite build)
-npm run lint          # ESLint (自动修复)
-npm run format        # Prettier 格式化
-npm run lint:css      # Stylelint CSS 检查
+corepack pnpm@9.15.9 dev       # 开发服务器
+corepack pnpm@9.15.9 build     # 构建 (vue-tsc && vite build)
+corepack pnpm@9.15.9 lint      # ESLint (自动修复)
+corepack pnpm@9.15.9 format    # Prettier 格式化
+corepack pnpm@9.15.9 lint:css  # Stylelint CSS 检查
 ```
 
 ### 测试环境变量

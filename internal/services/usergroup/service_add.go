@@ -1,6 +1,8 @@
 package usergroup
 
 import (
+	"strings"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"go.uber.org/zap"
@@ -15,12 +17,21 @@ type AddResponse struct {
 }
 
 func (s *service) Add(ctx context.Context, req *AddRequest) (resp *AddResponse, err error) {
+	if req == nil {
+		return nil, errInvalidUserGroupName
+	}
+
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		return nil, errInvalidUserGroupName
+	}
+
 	group := models.UserGroup{
-		Name: req.Name,
+		Name: name,
 	}
 
 	if err = s.getDB(ctx).Create(&group).Error; err != nil {
-		ctx.Error("用户组创建失败", zap.String("name", req.Name), zap.Error(err))
+		ctx.Error("用户组创建失败", zap.String("name", name), zap.Error(err))
 
 		return nil, err
 	}

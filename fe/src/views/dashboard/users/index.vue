@@ -83,6 +83,7 @@ import { formatDateTime } from '@/utils/time'
 const tableData = ref<Models.UserInfo[]>([])
 const loading = ref(false)
 const searchKeyword = ref('')
+let userListRequestId = 0
 
 // 添加用户相关
 const showAddModal = ref(false)
@@ -107,12 +108,10 @@ const paginationReactive = reactive<PaginationProps>({
   pageSizes: [10, 20, 50, 100],
   prefix: ({ itemCount }) => `共 ${itemCount} 条`,
   onChange: (page: number) => {
-    console.log('分页切换到:', page)
     paginationReactive.page = page
     fetchUserList()
   },
   onUpdatePageSize: (pageSize: number) => {
-    console.log('每页大小切换到:', pageSize)
     paginationReactive.pageSize = pageSize
     paginationReactive.page = 1
     fetchUserList()
@@ -121,6 +120,7 @@ const paginationReactive = reactive<PaginationProps>({
 
 // 获取用户列表
 const fetchUserList = () => {
+  const currentRequestId = ++userListRequestId
   loading.value = true
 
   const params = {
@@ -129,23 +129,23 @@ const fetchUserList = () => {
     username: searchKeyword.value || undefined,
   }
 
-  console.log('请求参数:', params)
-
   getUserList(params)
     .then((response) => {
-      console.log('API响应:', response)
+      if (currentRequestId !== userListRequestId) return
 
       if (response.code === 200 && response.data) {
         tableData.value = response.data.data || []
         paginationReactive.itemCount = response.data.total || 0
-        console.log('表格数据:', tableData.value)
-        console.log('总数据量:', paginationReactive.itemCount)
       }
     })
     .catch((error) => {
+      if (currentRequestId !== userListRequestId) return
+
       console.error('获取用户列表失败:', error)
     })
     .finally(() => {
+      if (currentRequestId !== userListRequestId) return
+
       loading.value = false
     })
 }
@@ -154,7 +154,6 @@ const fetchUserList = () => {
 const handleSearch = () => {
   paginationReactive.page = 1 // 搜索时重置到第一页
   fetchUserList()
-  console.log('搜索关键词:', searchKeyword.value)
 }
 
 // 重置
@@ -402,7 +401,6 @@ const columns: DataTableColumns<Models.UserInfo> = [
 
 // 初始化
 onMounted(() => {
-  console.log('页面挂载，开始获取数据')
   fetchUserList()
 })
 </script>

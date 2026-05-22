@@ -38,6 +38,7 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 		req := new(batchModifyTokenRequest)
 		if err := ctx.ShouldBindJSON(req); err != nil {
 			ctx.AbortWithInvalidParams(err)
+
 			return
 		}
 
@@ -45,19 +46,22 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
 		userGroupID := ctx.GetInt64(consts.CtxKeyUserGroupId)
 
+		requestIDs, err := normalizeBatchIDs(req.IDs)
+		if err != nil {
+			ctx.AbortWithInvalidParams(err)
+
+			return
+		}
+
 		if req.TokenID != 0 {
-			token, err := h.cloudTokenService.Query(ctx.GetContext(), req.TokenID)
+			_, err := h.cloudTokenService.QueryAccessible(ctx.GetContext(), req.TokenID, userID, isAdmin)
 			if err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					ctx.Fail(busCodeStorageCloudTokenNotExist.WithError(err))
 				} else {
 					ctx.Fail(busCodeStorageQueryCloudTokenError.WithError(err))
 				}
-				return
-			}
 
-			if !isAdmin && token.UserID != userID {
-				ctx.Fail(busCodeStorageCloudTokenNotExist.WithMessage("只能绑定自己的令牌"))
 				return
 			}
 		}
@@ -65,15 +69,24 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 		// 校验每个挂载点是否在当前用户的可见范围内（非管理员）
 		if !isAdmin {
 			var groupFileIds []int64
+
 			if userGroupID > 0 {
-				groupFileIds, _ = h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupID)
+				groupFileIDs, err := h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupID)
+				if err != nil {
+					ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
+
+					return
+				}
+
+				groupFileIds = groupFileIDs
 			}
+
 			groupFileSet := make(map[int64]struct{}, len(groupFileIds))
 			for _, fid := range groupFileIds {
 				groupFileSet[fid] = struct{}{}
 			}
 
-			for _, id := range req.IDs {
+			for _, id := range requestIDs {
 				mp, err := h.mountPointService.Query(ctx.GetContext(), id)
 				if err != nil {
 					if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -81,21 +94,39 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 					} else {
 						ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
 					}
+
 					return
 				}
+
 				if mp.CreatorUserID == userID {
 					continue
 				}
+
 				if _, ok := groupFileSet[mp.FileId]; ok {
 					continue
 				}
+
+				if h.userMountPointTokenService != nil {
+					tokenID, err := h.userMountPointTokenService.GetTokenID(ctx.GetContext(), userID, mp.ID)
+					if err != nil {
+						ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
+
+						return
+					}
+
+					if tokenID > 0 {
+						continue
+					}
+				}
+
 				ctx.Fail(busCodeStorageMountPointNotFound.WithMessage(fmt.Sprintf("无权操作挂载点 %d", id)))
+
 				return
 			}
 		}
 
 		taskReq := &topic.FileBatchModifyTokenRequest{
-			IDs:         req.IDs,
+			IDs:         requestIDs,
 			TokenID:     req.TokenID,
 			UserID:      userID,
 			IsAdmin:     isAdmin,
@@ -105,6 +136,7 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 		body, err := json.Marshal(taskReq)
 		if err != nil {
 			ctx.Fail(busCodeStorageSendTaskFail.WithError(err))
+
 			return
 		}
 
@@ -114,6 +146,7 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 			body,
 		); err != nil {
 			ctx.Fail(busCodeStorageSendTaskFail.WithError(err))
+
 			return
 		}
 
@@ -124,11 +157,12 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 
 		ctx.GetContext().Info(
 			"批量修改令牌已提交",
-			zap.Int("count", len(req.IDs)),
+			zap.Int("count", len(requestIDs)),
+			zap.Int("original_count", len(req.IDs)),
 			zap.Int64("token_id", req.TokenID),
 			zap.Int64("user_id", userID),
 		)
 
-		ctx.Success(fmt.Sprintf("批量%s令牌任务已提交，共 %d 个挂载点", actionText, len(req.IDs)))
+		ctx.Success(fmt.Sprintf("批量%s令牌任务已提交，共 %d 个挂载点", actionText, len(requestIDs)))
 	}
 }

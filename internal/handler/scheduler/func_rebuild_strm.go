@@ -115,6 +115,7 @@ func (s *RebuildStrmScheduler) tick() {
 		schedule, err := cron.ParseStandard(cronExpr)
 		if err != nil {
 			s.ctx.Error("解析cron表达式失败", zap.String("cron", cronExpr), zap.Error(err))
+
 			return
 		}
 
@@ -133,6 +134,7 @@ func (s *RebuildStrmScheduler) tick() {
 	schedule, err := cron.ParseStandard(s.currentCron)
 	if err != nil {
 		s.ctx.Error("解析cron表达式失败", zap.String("cron", s.currentCron), zap.Error(err))
+
 		return
 	}
 
@@ -161,6 +163,7 @@ func (s *RebuildStrmScheduler) doRebuild() {
 	body, err := json.Marshal(taskReq)
 	if err != nil {
 		logger.Error("序列化STRM定时重建任务失败", zap.Error(err))
+
 		return
 	}
 

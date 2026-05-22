@@ -15,6 +15,10 @@ import (
 )
 
 func (s *service) Query(ctx context.Context, fid int64) (*models.VirtualFile, error) {
+	if fid <= 0 {
+		return nil, errInvalidVirtualFileID
+	}
+
 	file := new(models.VirtualFile)
 
 	if err := s.getDB(ctx).Where("id = ?", fid).First(file).Error; err != nil {
@@ -32,6 +36,10 @@ func (s *service) QueryByPath(ctx context.Context, path string) (*models.Virtual
 		return nil, err
 	}
 
+	if len(paths) == 0 {
+		return nil, errors.Wrap(gorm.ErrRecordNotFound, "文件不存在")
+	}
+
 	var pid int64
 
 	var m *models.VirtualFile
@@ -41,7 +49,7 @@ func (s *service) QueryByPath(ctx context.Context, path string) (*models.Virtual
 
 		// 查询时使用 sanitize 后的名字
 		queryName := utils.SanitizeFileName(name)
-		if err = s.getDB(ctx).Model(new(models.VirtualFile)).Where("name", queryName).Where("parent_id", pid).First(m).Error; err != nil {
+		if err = s.getDB(ctx).Model(new(models.VirtualFile)).Where("name = ?", queryName).Where("parent_id = ?", pid).First(m).Error; err != nil {
 			return nil, err
 		}
 
@@ -82,7 +90,8 @@ func (s *service) FindOrCreateAncestors(ctx context.Context, path string) (int64
 
 		// 查询时使用 sanitize 后的名字
 		queryName := utils.SanitizeFileName(name)
-		err = s.getDB(ctx).Model(new(models.VirtualFile)).Where("name", queryName).Where("parent_id", pid).First(m).Error
+
+		err = s.getDB(ctx).Model(new(models.VirtualFile)).Where("name = ?", queryName).Where("parent_id = ?", pid).First(m).Error
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				// 不存在则创建

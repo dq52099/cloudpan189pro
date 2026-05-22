@@ -21,15 +21,19 @@ export const useAuthStore = defineStore('auth', () => {
   const accessToken = ref<string>('')
   const refreshToken = ref<string>('')
   const expireTime = ref<number>(0)
-  const isLogin = computed(() => !!accessToken.value && expireTime.value > Date.now())
+  const isAccessTokenValid = computed(() => !!accessToken.value && expireTime.value > Date.now())
+  const hasRefreshToken = computed(() => !!refreshToken.value)
+  const isLogin = computed(() => isAccessTokenValid.value || hasRefreshToken.value)
   // 需要刷新token（距离过期时间小于60分钟）
   const requireRefreshToken = computed(
-    () => expireTime.value - Date.now() < TOKEN_AUTO_REFRESH_THRESHOLD
+    () =>
+      hasRefreshToken.value &&
+      (!isAccessTokenValid.value || expireTime.value - Date.now() < TOKEN_AUTO_REFRESH_THRESHOLD)
   )
 
   const loading = ref<boolean>(false)
 
-  const refreshLock = ref<boolean>(false)
+  let refreshPromise: Promise<string | null> | null = null
 
   accessToken.value = localStg.get('token') || ''
   refreshToken.value = localStg.get('refreshToken') || ''
@@ -40,7 +44,7 @@ export const useAuthStore = defineStore('auth', () => {
 
     return loginApi(loginData)
       .then((res) => {
-        if (res.data) {
+        if (res.code === 200 && res.data) {
           storeWithUser(res.data)
         }
 
@@ -52,32 +56,52 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   const logout = () => {
-    userStore.clear()
-    clear()
+    clearSession()
   }
 
-  const doRefreshToken = () => {
-    if (!requireRefreshToken.value) {
-      return
+  const doRefreshToken = async (force = false): Promise<string | null> => {
+    if (!refreshToken.value) {
+      clearSession()
+
+      return null
     }
 
-    if (refreshLock.value) {
-      return
+    if (!force && isAccessTokenValid.value && !requireRefreshToken.value) {
+      return accessToken.value
     }
 
-    refreshLock.value = true
+    if (!force && !requireRefreshToken.value) {
+      return accessToken.value || null
+    }
 
-    refreshTokenApi({
+    if (refreshPromise) {
+      return refreshPromise
+    }
+
+    refreshPromise = refreshTokenApi({
       refreshToken: refreshToken.value,
     })
       .then((res) => {
-        if (res.data) {
+        if (res.code === 200 && res.data) {
           storeWithUser(res.data)
+
+          return res.data.accessToken
         }
+
+        clearSession()
+
+        return null
+      })
+      .catch((error) => {
+        clearSession()
+
+        throw error
       })
       .finally(() => {
-        refreshLock.value = false
+        refreshPromise = null
       })
+
+    return refreshPromise
   }
 
   const storeWithUser = (loginResponse: LoginResponse) => {
@@ -95,12 +119,19 @@ export const useAuthStore = defineStore('auth', () => {
     localStg.set('expireTime', expireTime.value)
   }
 
-  const clear = () => {
-    store({
-      accessToken: '',
-      refreshToken: '',
-      expiresIn: 0,
-    })
+  const clearAuth = () => {
+    accessToken.value = ''
+    refreshToken.value = ''
+    expireTime.value = 0
+
+    localStg.remove('token')
+    localStg.remove('refreshToken')
+    localStg.remove('expireTime')
+  }
+
+  const clearSession = () => {
+    clearAuth()
+    userStore.clear()
   }
 
   const getToken = () => {
@@ -113,6 +144,8 @@ export const useAuthStore = defineStore('auth', () => {
     // refreshTokenValue,
     loading,
     requireRefreshToken,
+    hasRefreshToken,
+    isAccessTokenValid,
 
     // 计算属性
     // isAdmin,

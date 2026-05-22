@@ -120,6 +120,9 @@
         preset="card"
         title="初始化媒体配置"
         style="width: 640px"
+        :closable="!initSubmitting"
+        :mask-closable="!initSubmitting"
+        :close-on-esc="!initSubmitting"
       >
         <n-form :model="initForm" label-placement="left" label-width="130px">
           <n-form-item label="是否启用">
@@ -186,14 +189,29 @@
           </n-form-item>
 
           <n-space justify="end">
-            <n-button @click="showInitModal = false">取消</n-button>
-            <n-button type="primary" @click="handleInit">完成初始化</n-button>
+            <n-button @click="handleCloseInitModal" :disabled="initSubmitting">取消</n-button>
+            <n-button
+              type="primary"
+              :loading="initSubmitting"
+              :disabled="initSubmitting"
+              @click="handleInit"
+            >
+              完成初始化
+            </n-button>
           </n-space>
         </n-form>
       </n-modal>
 
       <!-- 编辑弹窗 -->
-      <n-modal v-model:show="showEditModal" preset="card" title="编辑媒体配置" style="width: 680px">
+      <n-modal
+        v-model:show="showEditModal"
+        preset="card"
+        title="编辑媒体配置"
+        style="width: 680px"
+        :closable="!editSubmitting"
+        :mask-closable="!editSubmitting"
+        :close-on-esc="!editSubmitting"
+      >
         <n-form :model="editForm" label-placement="left" label-width="130px">
           <n-form-item label="存储根路径">
             <n-input
@@ -253,8 +271,15 @@
           </n-form-item>
 
           <n-space justify="end">
-            <n-button @click="showEditModal = false">取消</n-button>
-            <n-button type="primary" @click="handleSaveEdit">保存</n-button>
+            <n-button @click="handleCloseEditModal" :disabled="editSubmitting">取消</n-button>
+            <n-button
+              type="primary"
+              :loading="editSubmitting"
+              :disabled="editSubmitting"
+              @click="handleSaveEdit"
+            >
+              保存
+            </n-button>
           </n-space>
         </n-form>
       </n-modal>
@@ -263,7 +288,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, reactive } from 'vue'
+import { ref, onMounted, onUnmounted, reactive } from 'vue'
 import {
   NForm,
   NFormItem,
@@ -304,6 +329,14 @@ const showEditModal = ref(false)
 const savingEnable = ref(false)
 const clearingMedia = ref(false)
 const rebuildingStrm = ref(false)
+const initSubmitting = ref(false)
+const editSubmitting = ref(false)
+const clearMediaDialogOpen = ref(false)
+const rebuildStrmDialogOpen = ref(false)
+let isComponentMounted = false
+let configRequestId = 0
+let initRequestId = 0
+let editRequestId = 0
 
 const editForm = reactive<ConfigUpdateRequest>({
   storagePath: '',
@@ -379,11 +412,41 @@ const defaultIncludedSuffixes = [
   'flc',
 ].map((s) => `.${s}`)
 
+const isBusinessSuccess = (response: { code: number }) => response.code === 200
+
+const buildInitPayload = (): ConfigInitRequest => ({
+  ...initForm,
+  includedSuffixes: normalizeSuffixes(initForm.includedSuffixes || []),
+})
+
+const buildEditPayload = (): ConfigUpdateRequest => ({
+  ...editForm,
+  includedSuffixes: normalizeSuffixes(editForm.includedSuffixes || []),
+})
+
+const isCurrentConfigRequest = (requestId: number) => {
+  return isComponentMounted && configRequestId === requestId
+}
+
+const isCurrentInitRequest = (requestId: number) => {
+  return isComponentMounted && initRequestId === requestId
+}
+
+const isCurrentEditRequest = (requestId: number) => {
+  return isComponentMounted && editRequestId === requestId
+}
+
 const reload = () => {
+  if (!isComponentMounted) return
+
+  const requestId = ++configRequestId
+
   loading.value = true
   getMediaConfigInfo()
     .then((res) => {
-      if (res.data) {
+      if (!isCurrentConfigRequest(requestId)) return
+
+      if (isBusinessSuccess(res) && res.data) {
         initialized.value = !!res.data.initialized
         config.value = res.data.config
         Object.assign(editForm, res.data.config)
@@ -392,14 +455,20 @@ const reload = () => {
       }
     })
     .catch((err) => {
+      if (!isCurrentConfigRequest(requestId)) return
+
       message.error(err?.message || '获取媒体配置失败')
     })
     .finally(() => {
-      loading.value = false
+      if (isCurrentConfigRequest(requestId)) {
+        loading.value = false
+      }
     })
 }
 
 const handleInit = () => {
+  if (initSubmitting.value) return
+
   // 基础校验
   if (!initForm.storagePath) {
     message.warning('请填写存储根路径')
@@ -410,23 +479,49 @@ const handleInit = () => {
     return
   }
 
-  // 规范化后缀
-  initForm.includedSuffixes = normalizeSuffixes(initForm.includedSuffixes || [])
-  initMediaConfig(initForm)
-    .then(() => {
+  const payload = buildInitPayload()
+  const requestId = ++initRequestId
+
+  initSubmitting.value = true
+  initMediaConfig(payload)
+    .then((res) => {
+      if (!isCurrentInitRequest(requestId)) return
+
+      if (!isBusinessSuccess(res)) {
+        message.error(res.msg || '初始化媒体配置失败')
+
+        return
+      }
       message.success('初始化成功')
       showInitModal.value = false
       reload()
     })
     .catch((err) => {
+      if (!isCurrentInitRequest(requestId)) return
+
       message.error(err?.message || '初始化媒体配置失败')
+    })
+    .finally(() => {
+      if (isCurrentInitRequest(requestId)) {
+        initSubmitting.value = false
+      }
     })
 }
 
+const handleCloseInitModal = () => {
+  if (initSubmitting.value) return
+
+  showInitModal.value = false
+}
+
 const autoDetectBaseURL = () => {
+  if (initSubmitting.value) return
+
   initForm.baseURL = window.location.origin
 }
 const autoDetectConfigBaseURL = () => {
+  if (editSubmitting.value) return
+
   editForm.baseURL = window.location.origin
 }
 
@@ -454,6 +549,8 @@ const handleSuffixCreate = (label: string): string => {
 }
 
 const openInitModal = () => {
+  if (initSubmitting.value) return
+
   if (!initForm.baseURL) {
     initForm.baseURL = window.location.origin
   }
@@ -469,6 +566,8 @@ const openInitModal = () => {
 }
 
 const openEditModal = () => {
+  if (editSubmitting.value) return
+
   // 同步当前配置到编辑表单
   if (config.value) {
     Object.assign(editForm, config.value)
@@ -476,7 +575,15 @@ const openEditModal = () => {
   showEditModal.value = true
 }
 
+const handleCloseEditModal = () => {
+  if (editSubmitting.value) return
+
+  showEditModal.value = false
+}
+
 const handleSaveEdit = () => {
+  if (editSubmitting.value) return
+
   const v = (editForm.baseURL || '').trim()
   if (v.length === 0) {
     message.warning('请输入基础 URL')
@@ -486,53 +593,116 @@ const handleSaveEdit = () => {
     message.warning('基础 URL 必须以 http:// 或 https:// 开头')
     return
   }
-  // 规范化后缀
-  editForm.includedSuffixes = normalizeSuffixes(editForm.includedSuffixes || [])
-  updateMediaConfig(editForm)
-    .then(() => {
+
+  const payload = buildEditPayload()
+  const requestId = ++editRequestId
+
+  editSubmitting.value = true
+  updateMediaConfig(payload)
+    .then((res) => {
+      if (!isCurrentEditRequest(requestId)) return
+
+      if (!isBusinessSuccess(res)) {
+        message.error(res.msg || '更新媒体配置失败')
+
+        return
+      }
       message.success('更新媒体配置成功')
       showEditModal.value = false
       reload()
     })
     .catch((err) => {
+      if (!isCurrentEditRequest(requestId)) return
+
       message.error(err?.message || '更新媒体配置失败')
+    })
+    .finally(() => {
+      if (isCurrentEditRequest(requestId)) {
+        editSubmitting.value = false
+      }
     })
 }
 
 // 切换启用状态（与系统设置风格一致）
 const handleToggleEnable = (val: boolean) => {
+  if (savingEnable.value || !isComponentMounted) return
+
+  const previousEnable = !!config.value?.enable
   savingEnable.value = true
   toggleMediaConfig({ enable: val })
-    .then(() => {
+    .then((res) => {
+      if (!isComponentMounted) return
+
+      if (!isBusinessSuccess(res)) {
+        message.error(res.msg || '切换媒体配置启用状态失败')
+        if (config.value) {
+          config.value = { ...config.value, enable: previousEnable }
+        }
+
+        return
+      }
+
+      if (config.value) {
+        config.value = { ...config.value, enable: val }
+      }
       message.success(val ? '已启用媒体配置' : '已禁用媒体配置')
       reload()
     })
     .catch((err) => {
+      if (!isComponentMounted) return
+
       message.error(err?.message || '切换媒体配置启用状态失败')
+      if (config.value) {
+        config.value = { ...config.value, enable: previousEnable }
+      }
     })
     .finally(() => {
-      savingEnable.value = false
+      if (isComponentMounted) {
+        savingEnable.value = false
+      }
     })
 }
 
 // 清理媒体文件
 const handleClearMedia = () => {
+  if (clearingMedia.value || clearMediaDialogOpen.value) return
+
+  clearMediaDialogOpen.value = true
   dialog.warning({
     title: '确认清理媒体文件',
     content: '此操作将清空整个媒体目录，包括所有文件以及自己创建的文件，请确认是否继续？',
     positiveText: '确认清理',
     negativeText: '取消',
+    onAfterLeave: () => {
+      if (!clearingMedia.value) {
+        clearMediaDialogOpen.value = false
+      }
+    },
     onPositiveClick: () => {
+      if (clearingMedia.value) return false
+
       clearingMedia.value = true
-      clearMediaFiles()
-        .then(() => {
+      return clearMediaFiles()
+        .then((res) => {
+          if (!isComponentMounted) return
+
+          if (!isBusinessSuccess(res)) {
+            message.error(res.msg || '清理媒体文件失败')
+
+            return
+          }
           message.success('清理任务已提交，请稍后查看效果')
         })
         .catch((err) => {
+          if (!isComponentMounted) return
+
           message.error(err?.message || '清理媒体文件失败')
         })
         .finally(() => {
-          clearingMedia.value = false
+          if (isComponentMounted) {
+            clearingMedia.value = false
+            clearMediaDialogOpen.value = false
+          }
         })
     },
   })
@@ -540,28 +710,62 @@ const handleClearMedia = () => {
 
 // 重建strm文件
 const handleRebuildStrm = () => {
+  if (rebuildingStrm.value || rebuildStrmDialogOpen.value) return
+
+  rebuildStrmDialogOpen.value = true
   dialog.info({
     title: '确认重建strm文件',
     content: '确认重新生成strm文件吗？只会给还没有创建strm的创建，已创建的不会影响。',
     positiveText: '确认重建',
     negativeText: '取消',
+    onAfterLeave: () => {
+      if (!rebuildingStrm.value) {
+        rebuildStrmDialogOpen.value = false
+      }
+    },
     onPositiveClick: () => {
+      if (rebuildingStrm.value) return false
+
       rebuildingStrm.value = true
-      rebuildStrmFiles()
-        .then(() => {
+      return rebuildStrmFiles()
+        .then((res) => {
+          if (!isComponentMounted) return
+
+          if (!isBusinessSuccess(res)) {
+            message.error(res.msg || '重建strm文件失败')
+
+            return
+          }
           message.success('重建任务已提交，将扫描所有挂载点并重新生成strm文件')
         })
         .catch((err) => {
+          if (!isComponentMounted) return
+
           message.error(err?.message || '重建strm文件失败')
         })
         .finally(() => {
-          rebuildingStrm.value = false
+          if (isComponentMounted) {
+            rebuildingStrm.value = false
+            rebuildStrmDialogOpen.value = false
+          }
         })
     },
   })
 }
 
-onMounted(reload)
+onMounted(() => {
+  isComponentMounted = true
+  reload()
+})
+
+onUnmounted(() => {
+  isComponentMounted = false
+  configRequestId += 1
+  initRequestId += 1
+  editRequestId += 1
+  initSubmitting.value = false
+  editSubmitting.value = false
+})
 </script>
 
 <style scoped>

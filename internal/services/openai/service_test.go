@@ -3,6 +3,7 @@ package openai
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -41,7 +42,7 @@ func TestGenerateUpgradeKeyword(t *testing.T) {
 			// 返回模拟响应
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{
+			_, _ = w.Write([]byte(`{
 				"choices": [
 					{
 						"message": {
@@ -64,7 +65,7 @@ func TestGenerateUpgradeKeyword(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{
+			_, _ = w.Write([]byte(`{
 				"choices": [
 					{
 						"message": {
@@ -104,11 +105,11 @@ func TestGenerateUpgradeKeyword(t *testing.T) {
 		assert.Empty(t, keyword)
 	})
 
-	t.Run("空响应返回错误", func(t *testing.T) {
+	t.Run("成功状态超大响应返回错误", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"choices": []}`))
+			_, _ = w.Write([]byte(strings.Repeat("x", maxOpenAIResponseSize+1)))
 		}))
 		defer server.Close()
 
@@ -117,7 +118,38 @@ func TestGenerateUpgradeKeyword(t *testing.T) {
 		keyword, err := svc.GenerateUpgradeKeyword("测试", "movie")
 		assert.Error(t, err)
 		assert.Empty(t, keyword)
-		assert.Contains(t, err.Error(), "No response")
+		assert.Contains(t, err.Error(), "响应体过大")
+	})
+
+	t.Run("错误状态超大响应返回错误", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(strings.Repeat("x", maxOpenAIResponseSize+1)))
+		}))
+		defer server.Close()
+
+		svc := NewService(logger, "test-api-key", server.URL, "gpt-4o-mini").(*service)
+
+		keyword, err := svc.GenerateUpgradeKeyword("测试", "movie")
+		assert.Error(t, err)
+		assert.Empty(t, keyword)
+		assert.Contains(t, err.Error(), "响应体过大")
+	})
+
+	t.Run("空响应返回错误", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"choices": []}`))
+		}))
+		defer server.Close()
+
+		svc := NewService(logger, "test-api-key", server.URL, "gpt-4o-mini").(*service)
+
+		keyword, err := svc.GenerateUpgradeKeyword("测试", "movie")
+		assert.Error(t, err)
+		assert.Empty(t, keyword)
+		assert.Contains(t, err.Error(), "no response")
 	})
 }
 

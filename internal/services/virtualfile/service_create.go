@@ -22,12 +22,18 @@ func (s *service) BatchCreate(ctx context.Context, parentId int64, files []*mode
 		return 0, errors.New("parent_id is invalid")
 	}
 
-	names := make([]string, 0, len(files))
+	names := make([]string, 0, len(files)*2)
 	for _, file := range files {
+		file.ParentId = parentId
+		file.Name = utils.SanitizeFileName(file.Name)
 		names = append(names, file.Name)
+
+		if renamed := buildVirtualFileDuplicateName(file.Name, file.Rev); renamed != file.Name {
+			names = append(names, renamed)
+		}
 	}
 
-	existNames, err := s.queryHasExist(ctx, parentId, names)
+	existNames, err := s.queryHasExist(ctx, parentId, lo.Uniq(names))
 	if err != nil {
 		return 0, err
 	}
@@ -37,13 +43,17 @@ func (s *service) BatchCreate(ctx context.Context, parentId int64, files []*mode
 	})
 
 	for _, file := range files {
-		file.ParentId = parentId
-		file.Name = utils.SanitizeFileName(file.Name)
-
 		if exist, ok := existNameSet[file.Name]; ok && exist {
-			ctx.Debug("文件已存在 - 重命名", zap.String("file_name", file.Name), zap.String("new_name", fmt.Sprintf("%s(%s)", file.Name, file.Rev)), zap.String("cloud_file_id", file.CloudId))
+			originalName := file.Name
 
-			file.Name = fmt.Sprintf("%s(%s)", file.Name, file.Rev)
+			reservedName, reserveErr := s.reserveVirtualFileName(ctx, parentId, file.Name, file.Rev, existNameSet)
+			if reserveErr != nil {
+				return 0, reserveErr
+			}
+
+			file.Name = reservedName
+
+			ctx.Debug("文件已存在 - 重命名", zap.String("file_name", originalName), zap.String("new_name", file.Name), zap.String("cloud_file_id", file.CloudId))
 		} else {
 			existNameSet[file.Name] = true
 		}
@@ -68,17 +78,29 @@ func (s *service) Create(ctx context.Context, parentId int64, file *models.Virtu
 		return 0, errors.New("parent_id is invalid")
 	}
 
-	existNames, err := s.queryHasExist(ctx, parentId, []string{file.Name})
+	file.ParentId = parentId
+	file.Name = utils.SanitizeFileName(file.Name)
+
+	names := []string{file.Name}
+	if renamed := buildVirtualFileDuplicateName(file.Name, file.Rev); renamed != file.Name {
+		names = append(names, renamed)
+	}
+
+	existNames, err := s.queryHasExist(ctx, parentId, lo.Uniq(names))
 	if err != nil {
 		return 0, err
 	}
 
-	if len(existNames) > 0 {
-		file.Name = fmt.Sprintf("%s(%s)", file.Name, file.Rev)
-	}
+	existNameSet := lo.SliceToMap(existNames, func(item string) (string, bool) {
+		return item, true
+	})
 
-	file.ParentId = parentId
-	file.Name = utils.SanitizeFileName(file.Name)
+	if existNameSet[file.Name] {
+		file.Name, err = s.reserveVirtualFileName(ctx, parentId, file.Name, file.Rev, existNameSet)
+		if err != nil {
+			return 0, err
+		}
+	}
 
 	result := s.withLock(ctx, func(db *gorm.DB) *gorm.DB {
 		return db.Create(file)
@@ -102,6 +124,33 @@ func (s *service) CreateTop(ctx context.Context, parentId int64, file *models.Vi
 	}
 
 	return id, nil
+}
+
+func buildVirtualFileDuplicateName(name string, rev string) string {
+	return utils.SanitizeFileName(fmt.Sprintf("%s(%s)", name, rev))
+}
+
+func (s *service) reserveVirtualFileName(ctx context.Context, parentId int64, name string, rev string, existNameSet map[string]bool) (string, error) {
+	candidate := buildVirtualFileDuplicateName(name, rev)
+
+	for index := 2; ; index++ {
+		if !existNameSet[candidate] {
+			existNames, err := s.queryHasExist(ctx, parentId, []string{candidate})
+			if err != nil {
+				return "", err
+			}
+
+			if len(existNames) == 0 {
+				existNameSet[candidate] = true
+
+				return candidate, nil
+			}
+
+			existNameSet[candidate] = true
+		}
+
+		candidate = utils.SanitizeFileName(fmt.Sprintf("%s(%s-%d)", name, rev, index))
+	}
 }
 
 func (s *service) queryHasExist(ctx context.Context, pid int64, names []string) ([]string, error) {

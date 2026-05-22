@@ -121,16 +121,20 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 		resourceHandler     = resourceHandlerPkg.NewHandler(db, svc.GetLogger("resource"), userService, userGroupService, mountPointService, cloudTokenService, mediaConfigService, mediaFileService, loginLogService, taskEngine)
 	)
 
-	var tmdbService tmdbSvi.Service
-	var doubanService doubanSvi.Service
-	var openaiService interface {
-		GenerateUpgradeKeyword(title, category string) (string, error)
-	}
+	var (
+		tmdbService   tmdbSvi.Service
+		doubanService doubanSvi.Service
+		openaiService interface {
+			GenerateUpgradeKeyword(title, category string) (string, error)
+		}
+	)
+
 	if extServices != nil {
 		tmdbService = extServices.TMDB
 		doubanService = extServices.Douban
 		openaiService = extServices.OpenAI
 	}
+
 	subscriptionHTTPHandler := subscriptionHandler.NewHandler(db, tmdbService, doubanService, storageFacadeService, cloudBridgeService, svc.GetLogger("subscription-http"), openaiService)
 
 	// 为订阅服务注入挂载和分享信息服务（实际挂载能力）

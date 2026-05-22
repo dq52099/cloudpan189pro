@@ -2,6 +2,7 @@ package usergroup
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
@@ -17,6 +18,15 @@ type ModifyNameRequest struct {
 
 // ModifyName 修改用户组名称
 func (s *service) ModifyName(ctx context.Context, req *ModifyNameRequest) error {
+	if req == nil || req.ID <= 0 {
+		return errInvalidUserGroupID
+	}
+
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		return errInvalidUserGroupName
+	}
+
 	var existCount int64
 	if err := s.getDB(ctx).Model(&models.UserGroup{}).
 		Where("name = ? AND id != ?", req.Name, req.ID).
@@ -35,10 +45,10 @@ func (s *service) ModifyName(ctx context.Context, req *ModifyNameRequest) error 
 		Where("id = ?", req.ID).
 		Update("name", req.Name)
 
-	if result.Error != nil {
-		ctx.Error("修改用户组名称失败", zap.Int64("id", req.ID), zap.String("name", req.Name), zap.Error(result.Error))
+	if err := s.checkUserGroupUpdateResult(ctx, result, req.ID); err != nil {
+		ctx.Error("修改用户组名称失败", zap.Int64("id", req.ID), zap.String("name", req.Name), zap.Error(err))
 
-		return result.Error
+		return err
 	}
 
 	return nil

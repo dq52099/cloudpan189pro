@@ -50,6 +50,7 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 		paths, err := utils.SplitPath(fullPath)
 		if err != nil {
 			ctx.Fail(busCodeFilePathSplitError.WithError(err))
+
 			return
 		}
 
@@ -59,6 +60,7 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 			file = models.RootFile()
 		} else if !utils.CheckIsPath(fullPath) {
 			ctx.Fail(busCodeFileInvalidPath)
+
 			return
 		} else if file, err = e.virtualFileService.QueryByPath(ctx.GetContext(), fullPath); err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -66,6 +68,7 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 			} else {
 				ctx.Fail(busCodeFileQueryError.WithError(err))
 			}
+
 			return
 		}
 
@@ -83,13 +86,22 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 
 		// 获取用户组绑定的文件ID
 		var groupFileIds []int64
+
 		if userGroupId > 0 {
-			groupFileIds, _ = e.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
+			groupFileIDs, err := e.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
+			if err != nil {
+				ctx.Fail(busCodeQueryTopIdError.WithError(err))
+
+				return
+			}
+
+			groupFileIds = groupFileIDs
 		}
 
 		accessibleIds, err := e.mountPointService.GetAccessibleMountPointIDs(ctx.GetContext(), userID, isAdmin, groupFileIds)
 		if err != nil {
 			ctx.Fail(busCodeQueryTopIdError.WithError(err))
+
 			return
 		}
 
@@ -102,6 +114,7 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 
 		if len(accessibleIds) == 0 || (!lo.Contains(accessibleIds, file.TopId) && file.OsType != models.OsTypeFolder) {
 			ctx.Unauthorized("无权限访问")
+
 			return
 		}
 
@@ -116,6 +129,7 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 
 			if children, err = e.virtualFileService.List(ctx.GetContext(), childReq); err != nil {
 				ctx.Fail(busCodeFileQueryError.WithError(err))
+
 				return
 			}
 
@@ -126,11 +140,13 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 			values, err := e.verifyService.SignV1(ctx.GetContext(), file.ID)
 			if err != nil {
 				ctx.Fail(busCodeFileSignError.WithError(err))
+
 				return
 			}
 
 			downloadURL := fmt.Sprintf(downloadURLFormat, file.ID, values.Encode())
 			ctx.Redirect(http.StatusFound, fmt.Sprintf("%s%s", shared.BaseURL, downloadURL))
+
 			return
 		}
 

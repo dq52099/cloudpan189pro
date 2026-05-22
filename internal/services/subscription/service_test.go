@@ -1,14 +1,19 @@
 package subscription
 
 import (
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/glebarez/sqlite"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/douban"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/tmdb"
 	"go.uber.org/zap"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -89,6 +94,7 @@ func TestSubscriptionCRUD(t *testing.T) {
 
 	// 测试更新订阅
 	sub.Name = "更新后的订阅"
+
 	err = svc.UpdateSubscription(sub)
 	if err != nil {
 		t.Fatalf("Failed to update subscription: %v", err)
@@ -107,6 +113,234 @@ func TestSubscriptionCRUD(t *testing.T) {
 
 	if len(subs) != 0 {
 		t.Fatalf("Expected 0 subscriptions, got %d", len(subs))
+	}
+}
+
+func TestDeleteSubscriptionReturnsNotFoundWhenMissing(t *testing.T) {
+	db, err := setupTestDB()
+	if err != nil {
+		t.Fatalf("Failed to setup test DB: %v", err)
+	}
+
+	logger := zap.NewNop()
+	config := &SubscriptionConfig{}
+	svc := NewService(db, logger, config)
+
+	err = svc.DeleteSubscription(99999)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected record not found, got %v", err)
+	}
+}
+
+func TestUpdateSubscriptionReturnsNotFoundWhenMissing(t *testing.T) {
+	db, err := setupTestDB()
+	if err != nil {
+		t.Fatalf("Failed to setup test DB: %v", err)
+	}
+
+	logger := zap.NewNop()
+	config := &SubscriptionConfig{}
+	svc := NewService(db, logger, config)
+
+	err = svc.UpdateSubscription(&models.Subscription{
+		ID:       99999,
+		Name:     "不存在的订阅",
+		Source:   "tmdb",
+		Category: "movie",
+		Enable:   true,
+	})
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected record not found, got %v", err)
+	}
+
+	subs, err := svc.GetSubscriptions()
+	if err != nil {
+		t.Fatalf("Failed to get subscriptions: %v", err)
+	}
+
+	if len(subs) != 0 {
+		t.Fatalf("expected missing update not to create subscription, got %d", len(subs))
+	}
+}
+
+func TestUpdateSubscriptionPersistsZeroValues(t *testing.T) {
+	db, err := setupTestDB()
+	if err != nil {
+		t.Fatalf("Failed to setup test DB: %v", err)
+	}
+
+	logger := zap.NewNop()
+	config := &SubscriptionConfig{}
+	svc := NewService(db, logger, config)
+
+	sub := &models.Subscription{
+		Name:              "测试订阅",
+		Source:            "tmdb",
+		Category:          "movie",
+		Keywords:          "old-keyword",
+		ListType:          "popular",
+		MountPath:         "/old",
+		Enable:            true,
+		EnableAutoUpgrade: true,
+		MatchCount:        3,
+		SuccessCount:      2,
+	}
+
+	err = svc.CreateSubscription(sub)
+	if err != nil {
+		t.Fatalf("Failed to create subscription: %v", err)
+	}
+
+	sub.Keywords = ""
+	sub.ListType = ""
+	sub.MountPath = ""
+	sub.Enable = false
+	sub.EnableAutoUpgrade = false
+	sub.MatchCount = 0
+	sub.SuccessCount = 0
+
+	err = svc.UpdateSubscription(sub)
+	if err != nil {
+		t.Fatalf("Failed to update subscription: %v", err)
+	}
+
+	var updated models.Subscription
+	if err := db.First(&updated, sub.ID).Error; err != nil {
+		t.Fatalf("Failed to query updated subscription: %v", err)
+	}
+
+	if updated.Keywords != "" {
+		t.Fatalf("expected keywords cleared, got %q", updated.Keywords)
+	}
+
+	if updated.ListType != "" {
+		t.Fatalf("expected list type cleared, got %q", updated.ListType)
+	}
+
+	if updated.MountPath != "" {
+		t.Fatalf("expected mount path cleared, got %q", updated.MountPath)
+	}
+
+	if updated.Enable {
+		t.Fatal("expected subscription disabled")
+	}
+
+	if updated.EnableAutoUpgrade {
+		t.Fatal("expected auto upgrade disabled")
+	}
+
+	if updated.MatchCount != 0 || updated.SuccessCount != 0 {
+		t.Fatalf("expected counters reset, got match=%d success=%d", updated.MatchCount, updated.SuccessCount)
+	}
+}
+
+func TestUpdateSubscriptionRunProgressReturnsNotFoundWhenMissing(t *testing.T) {
+	db, err := setupTestDB()
+	if err != nil {
+		t.Fatalf("Failed to setup test DB: %v", err)
+	}
+
+	svc := NewService(db, zap.NewNop(), &SubscriptionConfig{}).(*service)
+	now := time.Now()
+
+	err = svc.updateSubscriptionRunProgress(&models.Subscription{
+		ID:        99999,
+		LastRunAt: &now,
+	})
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected record not found, got %v", err)
+	}
+
+	subs, err := svc.GetSubscriptions()
+	if err != nil {
+		t.Fatalf("Failed to get subscriptions: %v", err)
+	}
+
+	if len(subs) != 0 {
+		t.Fatalf("expected missing progress update not to create subscription, got %d", len(subs))
+	}
+}
+
+func TestUpdateSubscriptionMatchProgressOnlyUpdatesProgressFields(t *testing.T) {
+	db, err := setupTestDB()
+	if err != nil {
+		t.Fatalf("Failed to setup test DB: %v", err)
+	}
+
+	svc := NewService(db, zap.NewNop(), &SubscriptionConfig{}).(*service)
+	sub := &models.Subscription{
+		Name:         "原名称",
+		Source:       "tmdb",
+		Category:     "movie",
+		Keywords:     "keyword",
+		SuccessCount: 1,
+	}
+
+	if err := svc.CreateSubscription(sub); err != nil {
+		t.Fatalf("Failed to create subscription: %v", err)
+	}
+
+	matchAt := time.Now()
+	sub.Name = "不应写回"
+	sub.SuccessCount = 5
+	sub.LastMatchAt = &matchAt
+
+	if err := svc.updateSubscriptionMatchProgress(sub); err != nil {
+		t.Fatalf("update match progress: %v", err)
+	}
+
+	var updated models.Subscription
+	if err := db.First(&updated, sub.ID).Error; err != nil {
+		t.Fatalf("Failed to query subscription: %v", err)
+	}
+
+	if updated.Name != "原名称" {
+		t.Fatalf("expected name unchanged, got %q", updated.Name)
+	}
+
+	if updated.SuccessCount != 5 {
+		t.Fatalf("expected success count 5, got %d", updated.SuccessCount)
+	}
+
+	if updated.LastMatchAt == nil {
+		t.Fatal("expected last match time to be set")
+	}
+}
+
+func TestCheckSubscriptionUpdateResultAllowsExistingNoop(t *testing.T) {
+	db, err := setupTestDB()
+	if err != nil {
+		t.Fatalf("Failed to setup test DB: %v", err)
+	}
+
+	svc := NewService(db, zap.NewNop(), &SubscriptionConfig{}).(*service)
+	sub := &models.Subscription{
+		Name:     "测试订阅",
+		Source:   "tmdb",
+		Category: "movie",
+		Enable:   true,
+	}
+
+	if err := svc.CreateSubscription(sub); err != nil {
+		t.Fatalf("Failed to create subscription: %v", err)
+	}
+
+	if err := svc.checkSubscriptionUpdateResult(&gorm.DB{RowsAffected: 0}, sub.ID); err != nil {
+		t.Fatalf("expected existing no-op update to succeed, got %v", err)
+	}
+}
+
+func TestCheckSubscriptionUpdateResultReturnsNotFoundWhenMissing(t *testing.T) {
+	db, err := setupTestDB()
+	if err != nil {
+		t.Fatalf("Failed to setup test DB: %v", err)
+	}
+
+	svc := NewService(db, zap.NewNop(), &SubscriptionConfig{}).(*service)
+
+	err = svc.checkSubscriptionUpdateResult(&gorm.DB{RowsAffected: 0}, 99999)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected record not found, got %v", err)
 	}
 }
 
@@ -156,8 +390,8 @@ func TestMatchResult(t *testing.T) {
 	}
 
 	result, err := svc.MatchAndMount(sub, SearchResult{}, "测试电影", "2024", "movie")
-	if err == nil {
-		t.Fatal("Expected MatchAndMount to fail without ShareURL, got success")
+	if err != nil {
+		t.Fatalf("MatchAndMount should record a failed result without returning an error: %v", err)
 	}
 
 	if result == nil {
@@ -186,6 +420,7 @@ func TestGetMatchHistory(t *testing.T) {
 		Category: "movie",
 		Enable:   true,
 	}
+
 	err = svc.CreateSubscription(sub)
 	if err != nil {
 		t.Fatalf("Failed to create subscription: %v", err)
@@ -212,13 +447,24 @@ func (m *mockTelegramService) SendNotification(title, content string) error {
 	return nil
 }
 
-type mockTMDBService struct{}
+type mockTMDBService struct {
+	movies []tmdb.Movie
+	tvs    []tmdb.TV
+}
 
 func (m *mockTMDBService) GetPopularMovies(page int) ([]tmdb.Movie, error) {
+	if m.movies != nil {
+		return m.movies, nil
+	}
+
 	return []tmdb.Movie{}, nil
 }
 
 func (m *mockTMDBService) GetPopularTVs(page int) ([]tmdb.TV, error) {
+	if m.tvs != nil {
+		return m.tvs, nil
+	}
+
 	return []tmdb.TV{}, nil
 }
 
@@ -301,21 +547,201 @@ func TestSearchPan(t *testing.T) {
 	}
 
 	logger := zap.NewNop()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/search" {
+			t.Fatalf("Expected /api/search path, got %s", r.URL.Path)
+		}
+
+		if r.URL.Query().Get("kw") != "test" {
+			t.Fatalf("Expected kw=test, got %s", r.URL.Query().Get("kw"))
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"code": 0,
+			"message": "ok",
+			"data": {
+				"total": 1,
+				"merged_by_type": {
+					"tianyi": [
+						{
+							"url": "https://cloud.189.cn/t/abcdef",
+							"password": "",
+							"note": "测试资源",
+							"datetime": "2026-05-19",
+							"source": "test",
+							"images": []
+						}
+					]
+				}
+			}
+		}`))
+	}))
+	defer server.Close()
+
 	config := &SubscriptionConfig{
-		PanSearchURL: "https://tg.252035.xyz",
+		PanSearchURL: server.URL,
 	}
 	svc := NewService(db, logger, config)
 
-	// 测试搜索（可能返回空结果，但不应该报错）
 	results, err := svc.SearchPan("test")
 	if err != nil {
-		t.Logf("SearchPan returned error (may be expected): %v", err)
-		// 不失败，因为网络问题可能出错
+		t.Fatalf("SearchPan failed: %v", err)
 	}
 
-	// results 可能为空，但不应该是 nil
-	if results == nil {
-		t.Error("Expected results to be non-nil")
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 result, got %d", len(results))
+	}
+
+	if results[0].Title != "测试资源" || results[0].ShareURL != "https://cloud.189.cn/t/abcdef" {
+		t.Fatalf("Unexpected search result: %+v", results[0])
+	}
+}
+
+func TestSearchPanRejectsOversizedResponse(t *testing.T) {
+	db, err := setupTestDB()
+	if err != nil {
+		t.Fatalf("Failed to setup test DB: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(strings.Repeat("x", maxPanSearchResponseSize+1)))
+	}))
+	defer server.Close()
+
+	logger := zap.NewNop()
+	config := &SubscriptionConfig{
+		PanSearchURL: server.URL,
+	}
+	svc := NewService(db, logger, config)
+
+	_, err = svc.SearchPan("test")
+	if err == nil {
+		t.Fatal("expected oversized response error")
+	}
+
+	if !strings.Contains(err.Error(), "盘搜返回体过大") {
+		t.Fatalf("expected oversized response error, got %v", err)
+	}
+}
+
+func TestProcessSubscriptionSkipsSearchWhenDailyHotHistoryQueryFails(t *testing.T) {
+	db, err := setupTestDB()
+	if err != nil {
+		t.Fatalf("Failed to setup test DB: %v", err)
+	}
+
+	var searchRequests int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&searchRequests, 1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"total":0,"merged_by_type":{}}}`))
+	}))
+	defer server.Close()
+
+	svc := NewService(db, zap.NewNop(), &SubscriptionConfig{
+		PanSearchURL: server.URL,
+		EnableTMDB:   true,
+	}).(*service)
+	svc.SetTMDBService(&mockTMDBService{
+		movies: []tmdb.Movie{{Title: "查询失败电影", ReleaseDate: "2024-01-02"}},
+	})
+
+	sub := &models.Subscription{
+		Name:     "热门订阅",
+		Source:   "tmdb",
+		Category: "movie",
+		Enable:   true,
+	}
+	if err := svc.CreateSubscription(sub); err != nil {
+		t.Fatalf("Failed to create subscription: %v", err)
+	}
+
+	callbackName := "subscription:test_daily_hot_history_query_error"
+	if err := db.Callback().Query().Before("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Schema != nil && tx.Statement.Schema.Table == (&models.DailyHotHistory{}).TableName() {
+			_ = tx.AddError(errors.New("injected daily hot history query failure"))
+		}
+	}); err != nil {
+		t.Fatalf("register query callback: %v", err)
+	}
+	defer func() {
+		if removeErr := db.Callback().Query().Remove(callbackName); removeErr != nil {
+			t.Fatalf("remove query callback: %v", removeErr)
+		}
+	}()
+
+	svc.processSubscription(sub)
+
+	if got := atomic.LoadInt32(&searchRequests); got != 0 {
+		t.Fatalf("expected search not to run after history query failure, got %d requests", got)
+	}
+}
+
+func TestProcessSubscriptionSkipsSearchWhenDailyHotHistoryCreateFails(t *testing.T) {
+	db, err := setupTestDB()
+	if err != nil {
+		t.Fatalf("Failed to setup test DB: %v", err)
+	}
+
+	var searchRequests int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&searchRequests, 1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"total":0,"merged_by_type":{}}}`))
+	}))
+	defer server.Close()
+
+	svc := NewService(db, zap.NewNop(), &SubscriptionConfig{
+		PanSearchURL: server.URL,
+		EnableTMDB:   true,
+	}).(*service)
+	svc.SetTMDBService(&mockTMDBService{
+		movies: []tmdb.Movie{{Title: "写入失败电影", ReleaseDate: "2024-01-02"}},
+	})
+
+	sub := &models.Subscription{
+		Name:     "热门订阅",
+		Source:   "tmdb",
+		Category: "movie",
+		Enable:   true,
+	}
+	if err := svc.CreateSubscription(sub); err != nil {
+		t.Fatalf("Failed to create subscription: %v", err)
+	}
+
+	callbackName := "subscription:test_daily_hot_history_create_error"
+	if err := db.Callback().Create().Before("gorm:create").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Schema != nil && tx.Statement.Schema.Table == (&models.DailyHotHistory{}).TableName() {
+			_ = tx.AddError(errors.New("injected daily hot history create failure"))
+		}
+	}); err != nil {
+		t.Fatalf("register create callback: %v", err)
+	}
+	defer func() {
+		if removeErr := db.Callback().Create().Remove(callbackName); removeErr != nil {
+			t.Fatalf("remove create callback: %v", removeErr)
+		}
+	}()
+
+	svc.processSubscription(sub)
+
+	if got := atomic.LoadInt32(&searchRequests); got != 0 {
+		t.Fatalf("expected search not to run after history create failure, got %d requests", got)
+	}
+
+	var historyCount int64
+	if err := db.Model(&models.DailyHotHistory{}).Count(&historyCount).Error; err != nil {
+		t.Fatalf("count daily hot history: %v", err)
+	}
+
+	if historyCount != 0 {
+		t.Fatalf("expected no history rows after injected create failure, got %d", historyCount)
 	}
 }
 
@@ -384,6 +810,7 @@ func TestRunSubscriptionJob(t *testing.T) {
 		Enable:   true,
 		Keywords: "test",
 	}
+
 	err = svc.CreateSubscription(sub)
 	if err != nil {
 		t.Fatalf("Failed to create subscription: %v", err)
@@ -424,6 +851,7 @@ func TestUpdateSubscriptionTimestamp(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	sub.Name = "更新测试"
+
 	err = svc.UpdateSubscription(sub)
 	if err != nil {
 		t.Fatalf("Failed to update subscription: %v", err)

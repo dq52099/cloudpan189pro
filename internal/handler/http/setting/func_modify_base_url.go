@@ -3,7 +3,6 @@ package setting
 import (
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
-	"github.com/xxcheng123/cloudpan189-share/internal/shared"
 )
 
 type modifyBaseURLRequest struct {
@@ -39,8 +38,6 @@ func (h *handler) ModifyBaseURL() httpcontext.HandlerFunc {
 
 			return
 		}
-
-		shared.BaseURL = req.BaseURL
 
 		ctx.Success()
 	}

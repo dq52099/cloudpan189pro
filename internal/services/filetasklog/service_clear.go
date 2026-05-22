@@ -10,35 +10,42 @@ import (
 )
 
 // Clear 清空全部任务日志
-func (s *service) Clear(ctx context.Context) error {
+func (s *service) Clear(ctx context.Context) (int64, error) {
 	// 使用 ORM 删除整表，避免硬编码表名，也保留 GORM 钩子
-	if err := s.getDB(ctx).Unscoped().Where("1 = 1").Delete(&models.FileTaskLog{}).Error; err != nil {
-		ctx.Error("清空任务日志失败", zap.Error(err))
-		return err
+	result := s.getDB(ctx).Unscoped().Where("1 = 1").Delete(&models.FileTaskLog{})
+	if result.Error != nil {
+		ctx.Error("清空任务日志失败", zap.Error(result.Error))
+
+		return result.RowsAffected, result.Error
 	}
 
-	ctx.Info("清空任务日志成功")
-	return nil
+	ctx.Info("清空任务日志成功", zap.Int64("deleted", result.RowsAffected))
+
+	return result.RowsAffected, nil
 }
 
 // ClearByDuration 按保留时长清理任务日志。
 // 支持常见的简写（1h/1d/7d/30d/90d），也支持 time.ParseDuration 能解析的格式。
-func (s *service) ClearByDuration(ctx context.Context, duration string) error {
+func (s *service) ClearByDuration(ctx context.Context, duration string) (int64, error) {
 	cutoff, err := resolveCutoff(duration)
 	if err != nil {
 		ctx.Warn("无法识别的清理时长", zap.String("duration", duration), zap.Error(err))
-		return err
+
+		return 0, err
 	}
 
-	if err := s.getDB(ctx).Unscoped().
+	result := s.getDB(ctx).Unscoped().
 		Where("created_at < ?", cutoff).
-		Delete(&models.FileTaskLog{}).Error; err != nil {
-		ctx.Error("按时长清理任务日志失败", zap.Error(err))
-		return err
+		Delete(&models.FileTaskLog{})
+	if result.Error != nil {
+		ctx.Error("按时长清理任务日志失败", zap.Error(result.Error))
+
+		return result.RowsAffected, result.Error
 	}
 
-	ctx.Info("按时长清理任务日志成功", zap.String("duration", duration))
-	return nil
+	ctx.Info("按时长清理任务日志成功", zap.String("duration", duration), zap.Int64("deleted", result.RowsAffected))
+
+	return result.RowsAffected, nil
 }
 
 // resolveCutoff 根据 duration 字符串计算清理截止时间。
@@ -64,6 +71,10 @@ func resolveCutoff(duration string) (time.Time, error) {
 	d, err := time.ParseDuration(duration)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("不支持的时长格式: %s", duration)
+	}
+
+	if d <= 0 {
+		return time.Time{}, fmt.Errorf("duration 必须大于 0: %s", duration)
 	}
 
 	return now.Add(-d), nil

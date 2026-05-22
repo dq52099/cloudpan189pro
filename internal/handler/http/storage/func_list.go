@@ -6,7 +6,6 @@ import (
 	"github.com/samber/lo"
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
-	"go.uber.org/zap"
 
 	cloudtokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
 	filetasklogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/filetasklog"
@@ -62,6 +61,7 @@ func (h *handler) List() httpcontext.HandlerFunc {
 		req := new(listRequest)
 		if err := ctx.ShouldBindQuery(req); err != nil {
 			ctx.AbortWithInvalidParams(err)
+
 			return
 		}
 
@@ -72,134 +72,114 @@ func (h *handler) List() httpcontext.HandlerFunc {
 
 		// 获取用户组绑定的文件ID（用于获取用户组分享的挂载点）
 		var groupFileIds []int64
+
 		if userGroupId > 0 {
-			groupFileIds, _ = h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
+			var err error
+
+			groupFileIds, err = h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
+			if err != nil {
+				ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
+
+				return
+			}
 		}
 
 		// 管理员显示所有挂载点，普通用户显示自己创建的+用户组分享的
-		var list []*models.MountPoint
-		var count int64
-		var err error
+		var (
+			list  []*models.MountPoint
+			count int64
+			err   error
+		)
+
 		taskLogMapList := make(map[int64][]*models.FileTaskLog)
 
 		// 当 CurrentPage/PageSize 为 0 时使用默认值，避免后续 slice 越界
 		if req.CurrentPage <= 0 {
 			req.CurrentPage = 1
 		}
+
 		if req.PageSize <= 0 {
 			req.PageSize = 10
 		}
 
+		mountReq := &mountpointSvi.ListRequest{
+			CurrentPage:  req.CurrentPage,
+			PageSize:     req.PageSize,
+			FullPath:     req.Path,
+			UserID:       userID,
+			IsAdmin:      isAdmin,
+			GroupFileIds: groupFileIds,
+		}
+
 		if req.TaskLogStatus != "" {
-			// 带日志筛选：先取出所有符合权限的挂载点
-			// 注意：此分支会在内存中做过滤，存在大规模数据性能隐患（见 TODO）。
-			// 为了避免 OOM，这里限制一次最多处理 maxInMemoryMountPoints 个挂载点。
-			const maxInMemoryMountPoints = 5000
-			allList, err := h.mountPointService.List(ctx.GetContext(), &mountpointSvi.ListRequest{
-				FullPath:     req.Path,
-				NoPaginate:   true,
-				UserID:       userID,
-				IsAdmin:      isAdmin,
-				GroupFileIds: groupFileIds,
-			})
-			if err != nil {
-				ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
+			fileIDList, taskLogErr := h.fileTaskLogService.ListLatestFileIDsByStatus(ctx.GetContext(), req.TaskLogStatus)
+			if taskLogErr != nil {
+				ctx.Fail(busCodeStorageQueryFileTaskLogError.WithError(taskLogErr))
+
 				return
 			}
-			if len(allList) > maxInMemoryMountPoints {
-				ctx.GetContext().Warn("按任务日志状态过滤挂载点数量过大，已截断",
-					zap.Int("total", len(allList)),
-					zap.Int("max", maxInMemoryMountPoints),
-				)
-				allList = allList[:maxInMemoryMountPoints]
-			}
 
-			// 获取所有挂载点的日志
-			fileIdList := make([]int64, 0, len(allList))
-			for _, item := range allList {
-				fileIdList = append(fileIdList, item.FileId)
-			}
-			fileIdList = lo.Uniq(fileIdList)
+			if len(fileIDList) == 0 {
+				list = []*models.MountPoint{}
+				count = 0
+			} else {
+				mountReq.FileIdList = fileIDList
 
-			if len(fileIdList) > 0 {
-				logs, err := h.fileTaskLogService.List(ctx.GetContext(), &filetasklogSvi.ListRequest{
-					PageSize:    10000,
-					CurrentPage: 1,
-					FileIdList:  fileIdList,
-				})
+				list, err = h.mountPointService.List(ctx.GetContext(), mountReq)
 				if err != nil {
-					ctx.Fail(busCodeStorageQueryFileTaskLogError.WithError(err))
+					ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
+
 					return
 				}
 
-				taskLogMapList = make(map[int64][]*models.FileTaskLog)
-				for _, taskLog := range logs {
-					if taskLog.FileId == 0 {
-						continue
-					}
-					taskLogMapList[taskLog.FileId] = append(taskLogMapList[taskLog.FileId], taskLog)
-				}
-			}
+				count, err = h.mountPointService.Count(ctx.GetContext(), mountReq)
+				if err != nil {
+					ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
 
-			// 内存中按日志状态过滤
-			filteredList := make([]*models.MountPoint, 0)
-			for _, item := range allList {
-				logs := taskLogMapList[item.FileId]
-				match := false
-				if len(logs) > 0 {
-					if logs[0].Status == req.TaskLogStatus {
-						match = true
-					}
-				}
-				if match {
-					filteredList = append(filteredList, item)
+					return
 				}
 			}
-
-			// 手动分页
-			start := (req.CurrentPage - 1) * req.PageSize
-			end := start + req.PageSize
-			if start > len(filteredList) {
-				list = []*models.MountPoint{}
-			} else {
-				if end > len(filteredList) {
-					end = len(filteredList)
-				}
-				list = filteredList[start:end]
-			}
-			count = int64(len(filteredList))
 		} else {
 			// 不带日志筛选：直接数据库分页
-			mountReq := &mountpointSvi.ListRequest{
-				CurrentPage:  req.CurrentPage,
-				PageSize:     req.PageSize,
-				FullPath:     req.Path,
-				UserID:       userID,
-				IsAdmin:      isAdmin,
-				GroupFileIds: groupFileIds,
-			}
-
 			list, err = h.mountPointService.List(ctx.GetContext(), mountReq)
 			if err != nil {
 				ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
+
 				return
 			}
 
 			count, err = h.mountPointService.Count(ctx.GetContext(), mountReq)
 			if err != nil {
 				ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
+
 				return
 			}
 		}
 
 		// 获取当前用户对这些挂载点的令牌绑定
 		mountPointIds := make([]int64, 0, len(list))
+		fileIdList := make([]int64, 0, len(list))
+
 		for _, mp := range list {
 			mountPointIds = append(mountPointIds, mp.ID)
+			if mp.FileId > 0 {
+				fileIdList = append(fileIdList, mp.FileId)
+			}
 		}
+
+		fileIdList = lo.Uniq(fileIdList)
+
 		userTokenMap := make(map[int64]int64)
+
 		if len(mountPointIds) > 0 {
-			userTokenMap, _ = h.userMountPointTokenService.GetUserTokens(ctx.GetContext(), userID, mountPointIds)
+			var err error
+
+			userTokenMap, err = h.userMountPointTokenService.GetUserTokens(ctx.GetContext(), userID, mountPointIds)
+			if err != nil {
+				ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
+
+				return
+			}
 		}
 
 		// 列表中的令牌用于当前用户执行绑定/解绑操作，因此只显示当前用户自己的绑定。
@@ -225,56 +205,70 @@ func (h *handler) List() httpcontext.HandlerFunc {
 					cloudTokenList = append(cloudTokenList, item.TokenId)
 				}
 			}
+
 			cloudTokenList = lo.Uniq(cloudTokenList)
 
-			tokenList, err := h.cloudTokenService.List(ctx.GetContext(), &cloudtokenSvi.ListRequest{
-				IdList:     cloudTokenList,
-				NoPaginate: true,
-			})
-			if err != nil {
-				ctx.Fail(busCodeStorageQueryCloudTokenError.WithError(err))
-				return
-			}
+			if len(cloudTokenList) > 0 {
+				tokenList, err := h.cloudTokenService.List(ctx.GetContext(), &cloudtokenSvi.ListRequest{
+					IdList:     cloudTokenList,
+					NoPaginate: true,
+					UserID:     userID,
+					IsAdmin:    isAdmin,
+				})
+				if err != nil {
+					ctx.Fail(busCodeStorageQueryCloudTokenError.WithError(err))
 
-			tokenMap = lo.SliceToMap(tokenList, func(item *models.CloudToken) (int64, string) { return item.ID, item.Name })
+					return
+				}
+
+				tokenMap = lo.SliceToMap(tokenList, func(item *models.CloudToken) (int64, string) { return item.ID, item.Name })
+			} else {
+				tokenMap = make(map[int64]string)
+			}
 		}
 
 		// 补查日志：如果 taskLogMapList 为空（说明走了else分支），则需要查当前页的日志
 		if len(taskLogMapList) == 0 && len(list) > 0 {
-			fileIdList := make([]int64, 0, len(list))
-			for _, item := range list {
-				fileIdList = append(fileIdList, item.FileId)
-			}
-			fileIdList = lo.Uniq(fileIdList)
+			if len(fileIdList) > 0 {
+				taskLogList, err := h.fileTaskLogService.List(ctx.GetContext(), &filetasklogSvi.ListRequest{
+					PageSize:    200,
+					CurrentPage: 1,
+					FileIdList:  fileIdList,
+				})
+				if err != nil {
+					ctx.Fail(busCodeStorageQueryFileTaskLogError.WithError(err))
 
-			taskLogList, err := h.fileTaskLogService.List(ctx.GetContext(), &filetasklogSvi.ListRequest{
-				PageSize:    200,
-				CurrentPage: 1,
-				FileIdList:  fileIdList,
-			})
-			if err != nil {
-				ctx.Fail(busCodeStorageQueryFileTaskLogError.WithError(err))
-				return
-			}
-
-			taskLogMapList = make(map[int64][]*models.FileTaskLog)
-			for _, taskLog := range taskLogList {
-				if taskLog.FileId == 0 {
-					continue
+					return
 				}
-				taskLogMapList[taskLog.FileId] = append(taskLogMapList[taskLog.FileId], taskLog)
+
+				taskLogMapList = make(map[int64][]*models.FileTaskLog)
+
+				for _, taskLog := range taskLogList {
+					if taskLog.FileId == 0 {
+						continue
+					}
+
+					taskLogMapList[taskLog.FileId] = append(taskLogMapList[taskLog.FileId], taskLog)
+				}
 			}
 		}
 
 		// 查询文件数量
 		{
-			fileCountList, err := h.virtualFileService.GroupCountByTopId(ctx.GetContext(), &virtualfile.GroupCountByTopIdRequest{})
-			if err != nil {
-				ctx.Fail(busCodeStorageQueryFileCountError.WithError(err))
-				return
-			}
+			fileCountMap = make(map[int64]int64)
 
-			fileCountMap = lo.SliceToMap(fileCountList, func(item *virtualfile.GroupCountByTopId) (int64, int64) { return item.TopId, item.Count })
+			if len(fileIdList) > 0 {
+				fileCountList, err := h.virtualFileService.GroupCountByTopId(ctx.GetContext(), &virtualfile.GroupCountByTopIdRequest{
+					TopIdList: fileIdList,
+				})
+				if err != nil {
+					ctx.Fail(busCodeStorageQueryFileCountError.WithError(err))
+
+					return
+				}
+
+				fileCountMap = lo.SliceToMap(fileCountList, func(item *virtualfile.GroupCountByTopId) (int64, int64) { return item.TopId, item.Count })
+			}
 		}
 
 		dtoList := make([]*storageDTO, 0, len(list))

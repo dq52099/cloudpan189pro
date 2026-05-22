@@ -33,6 +33,7 @@ func (h *handler) CheckQrcode() httpcontext.HandlerFunc {
 
 		// 设置当前用户ID
 		req.UserID = ctx.GetInt64(consts.CtxKeyUserId)
+		req.IsAdmin = ctx.GetBool(consts.CtxKeyIsAdmin)
 
 		if err := h.cloudTokenService.CheckQrcode(ctx.GetContext(), req); err != nil {
 			ctx.Fail(codeCheckQrcodeFailed.WithError(err))

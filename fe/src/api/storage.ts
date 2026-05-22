@@ -118,11 +118,15 @@ export interface BatchAddStorageRequest {
 export interface BatchAddStorageResponse {
   successCount: number
   failCount: number
+  scanQueuedCount?: number
+  scanFailedCount?: number
   results: {
     localPath: string
     id?: number
     success: boolean
     error?: string
+    scanQueued?: boolean
+    scanError?: string
   }[]
 }
 
@@ -177,6 +181,7 @@ export interface BatchParseItem {
   shareCode?: string
   shareAccessCode?: string
   fileId?: string
+  subscribeUser?: string
 }
 
 // 批量解析请求接口
@@ -223,7 +228,7 @@ export const modifyToken = (data: ModifyTokenRequest): Promise<ApiResponse> => {
 
 // 清空所有存储挂载
 export interface ClearAllStorageRequest {
-  deleteFiles?: boolean // 是否同时删除源文件
+  deleteFiles?: boolean // 是否同时删除本地媒体文件
 }
 
 // 清空所有存储挂载

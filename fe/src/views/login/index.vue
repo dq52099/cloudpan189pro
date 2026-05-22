@@ -108,6 +108,14 @@ const rules = {
   ],
 }
 
+const getErrorMessage = (error: unknown) => {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+
+  return '登录失败，请检查用户名和密码'
+}
+
 const handleLogin = () => {
   formRef.value
     ?.validate()
@@ -121,7 +129,7 @@ const handleLogin = () => {
     })
     .catch((error: unknown) => {
       console.error('登录失败:', error)
-      message.error('登录失败，请检查用户名和密码')
+      message.error(getErrorMessage(error))
     })
     .finally(() => {
       loading.value = false

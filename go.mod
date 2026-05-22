@@ -23,12 +23,10 @@ require (
 	github.com/xxcheng123/multistreamer v1.0.1
 	github.com/zeromicro/go-zero v1.8.5
 	go.uber.org/zap v1.27.0
-	golang.org/x/text v0.22.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gorm.io/datatypes v1.2.6
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.5.9
-	gorm.io/driver/sqlite v1.4.3
 	gorm.io/gorm v1.30.1
 	moul.io/zapgorm2 v1.3.0
 	resty.dev/v3 v3.0.0-beta.3
@@ -73,7 +71,6 @@ require (
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mattn/go-sqlite3 v1.14.16 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
@@ -95,6 +92,7 @@ require (
 	golang.org/x/net v0.35.0 // indirect
 	golang.org/x/sync v0.11.0 // indirect
 	golang.org/x/sys v0.30.0 // indirect
+	golang.org/x/text v0.22.0 // indirect
 	golang.org/x/tools v0.21.1-0.20240508182429-e35e4ccd0d2d // indirect
 	google.golang.org/protobuf v1.36.5 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect

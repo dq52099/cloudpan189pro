@@ -125,9 +125,15 @@ export const deleteErrorLogs = (data: { planId?: number }): Promise<ApiResponse<
   return api.post('/auto_ingest/log/delete_error', data).then((res) => res.data)
 }
 
-// 清空所有日志
-export const clearAutoIngestLogs = (): Promise<ApiResponse<number>> => {
-  return api.post('/auto_ingest/log/clear').then((res) => res.data)
+export interface ClearAutoIngestLogsRequest {
+  duration?: string
+}
+
+// 清理日志
+export const clearAutoIngestLogs = (
+  data?: ClearAutoIngestLogsRequest
+): Promise<ApiResponse<number>> => {
+  return api.post('/auto_ingest/log/clear', data).then((res) => res.data)
 }
 
 // 重试计划（重新获取历史记录）

@@ -188,25 +188,45 @@
     </div>
 
     <!-- 编辑用户 Modal -->
-    <n-modal v-model:show="showUserModal" preset="card" title="编辑用户" style="width: 480px">
+    <n-modal
+      :show="showUserModal"
+      preset="card"
+      title="编辑用户"
+      style="width: 480px"
+      :closable="!savingUser"
+      :mask-closable="!savingUser"
+      :close-on-esc="!savingUser"
+      @update:show="handleUpdateUserModalShow"
+    >
       <n-form :model="editUserForm" label-placement="left">
         <n-form-item label="挂载路径">
-          <n-input v-model:value="editUserForm.mountPath" placeholder="/转存/用户名" />
+          <n-input
+            v-model:value="editUserForm.mountPath"
+            placeholder="/转存/用户名"
+            :disabled="savingUser"
+          />
         </n-form-item>
         <n-form-item label="管理员权限">
-          <n-switch v-model:value="editUserForm.isAdmin" />
+          <n-switch v-model:value="editUserForm.isAdmin" :disabled="savingUser" />
         </n-form-item>
       </n-form>
       <template #footer>
-        <n-button @click="showUserModal = false">取消</n-button>
-        <n-button type="primary" :loading="savingUser" @click="handleSaveUser">保存</n-button>
+        <n-button :disabled="savingUser" @click="handleCloseUserModal">取消</n-button>
+        <n-button
+          type="primary"
+          :loading="savingUser"
+          :disabled="savingUser"
+          @click="handleSaveUser"
+        >
+          保存
+        </n-button>
       </template>
     </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, h } from 'vue'
+import { ref, computed, onMounted, onUnmounted, h } from 'vue'
 import { useMessage } from 'naive-ui'
 import { SearchOutline, RefreshOutline } from '@vicons/ionicons5'
 import {
@@ -228,6 +248,14 @@ const testing = ref(false)
 const loadingUsers = ref(false)
 const sending = ref(false)
 const savingUser = ref(false)
+
+let isPageMounted = false
+let settingRequestId = 0
+let saveSettingRequestId = 0
+let testRequestId = 0
+let userListRequestId = 0
+let userModalVersion = 0
+let sendRequestId = 0
 
 const form = ref<TelegramSetting>({
   enable: false,
@@ -323,65 +351,145 @@ const userColumns = [
 
 import { NButton } from 'naive-ui'
 
+const isSameSetting = (a: TelegramSetting, b: TelegramSetting) => {
+  return (
+    a.enable === b.enable &&
+    a.botToken === b.botToken &&
+    a.proxyURL === b.proxyURL &&
+    a.proxyType === b.proxyType &&
+    a.apiURL === b.apiURL &&
+    a.chatID === b.chatID &&
+    a.defaultMountPath === b.defaultMountPath &&
+    a.enableNotify === b.enableNotify
+  )
+}
+
 const loadSetting = async () => {
+  const requestId = ++settingRequestId
+
   try {
     const res = await getTelegramSetting()
+    if (!isPageMounted || requestId !== settingRequestId) {
+      return
+    }
+
     if (res.code === 200 && res.data) {
       form.value = res.data
+
+      return
     }
+
+    message.error(res.msg || '加载设置失败')
   } catch {
+    if (!isPageMounted || requestId !== settingRequestId) {
+      return
+    }
+
     message.error('加载设置失败')
   }
 }
 
 const handleSave = async () => {
+  if (saving.value) {
+    return
+  }
+
+  const requestId = ++saveSettingRequestId
+  const payload = { ...form.value }
+
   saving.value = true
   try {
-    const res = await updateTelegramSetting(form.value)
+    const res = await updateTelegramSetting(payload)
+    if (!isPageMounted || requestId !== saveSettingRequestId) {
+      return
+    }
+
     if (res.code === 200) {
       message.success('保存成功')
-      loadSetting()
+      if (isSameSetting(form.value, payload)) {
+        loadSetting()
+      }
     } else {
       message.error(res.msg || '保存失败')
     }
   } catch {
+    if (!isPageMounted || requestId !== saveSettingRequestId) {
+      return
+    }
+
     message.error('保存失败')
   } finally {
-    saving.value = false
+    if (isPageMounted && requestId === saveSettingRequestId) {
+      saving.value = false
+    }
   }
 }
 
 const handleTest = async () => {
+  if (testing.value) {
+    return
+  }
+
+  const requestId = ++testRequestId
+
   testing.value = true
   try {
     const res = await testTelegramConnection()
+    if (!isPageMounted || requestId !== testRequestId) {
+      return
+    }
+
     if (res.code === 200) {
       message.success('连接测试成功！')
     } else {
       message.error(res.msg || '连接测试失败')
     }
   } catch {
+    if (!isPageMounted || requestId !== testRequestId) {
+      return
+    }
+
     message.error('连接测试失败')
   } finally {
-    testing.value = false
+    if (isPageMounted && requestId === testRequestId) {
+      testing.value = false
+    }
   }
 }
 
 const loadUsers = async () => {
+  const requestId = ++userListRequestId
+
   loadingUsers.value = true
   try {
     const res = await getTelegramUsers()
+    if (!isPageMounted || requestId !== userListRequestId) {
+      return
+    }
+
     if (res.code === 200) {
       users.value = res.data || []
+
+      return
     }
+
+    message.error(res.msg || '加载用户列表失败')
   } catch {
+    if (!isPageMounted || requestId !== userListRequestId) {
+      return
+    }
+
     message.error('加载用户列表失败')
   } finally {
-    loadingUsers.value = false
+    if (isPageMounted && requestId === userListRequestId) {
+      loadingUsers.value = false
+    }
   }
 }
 
 const openEditUser = (user: TelegramUser) => {
+  userModalVersion += 1
+  savingUser.value = false
   editUserForm.value = {
     userID: user.userID,
     mountPath: user.mountPath,
@@ -390,21 +498,66 @@ const openEditUser = (user: TelegramUser) => {
   showUserModal.value = true
 }
 
+const isCurrentUserModal = (version: number) => {
+  return version === userModalVersion
+}
+
+const handleCloseUserModal = () => {
+  if (savingUser.value) {
+    return
+  }
+
+  userModalVersion += 1
+  savingUser.value = false
+  showUserModal.value = false
+}
+
+const handleUpdateUserModalShow = (show: boolean) => {
+  if (show) {
+    showUserModal.value = true
+
+    return
+  }
+
+  if (savingUser.value) {
+    return
+  }
+
+  handleCloseUserModal()
+}
+
 const handleSaveUser = async () => {
+  if (savingUser.value) {
+    return
+  }
+
+  const modalVersion = userModalVersion
+  const payload = { ...editUserForm.value }
+
   savingUser.value = true
   try {
-    const res = await updateTelegramUser(editUserForm.value)
+    const res = await updateTelegramUser(payload)
+    if (!isPageMounted || !isCurrentUserModal(modalVersion)) {
+      return
+    }
+
     if (res.code === 200) {
       message.success('保存成功')
-      showUserModal.value = false
+      handleCloseUserModal()
       loadUsers()
     } else {
       message.error(res.msg || '保存失败')
     }
   } catch {
+    if (!isPageMounted || !isCurrentUserModal(modalVersion)) {
+      return
+    }
+
     message.error('保存失败')
   } finally {
-    savingUser.value = false
+    if (isPageMounted && isCurrentUserModal(modalVersion)) {
+      savingUser.value = false
+    }
   }
 }
 
@@ -415,25 +568,55 @@ const handleSend = async () => {
     message.warning('请输入消息内容')
     return
   }
+  if (sending.value) {
+    return
+  }
+
+  const requestId = ++sendRequestId
+  const payload = { message: sendMessage.value }
+
   sending.value = true
   try {
-    const res = await sendTelegramMessage({ message: sendMessage.value })
+    const res = await sendTelegramMessage(payload)
+    if (!isPageMounted || requestId !== sendRequestId) {
+      return
+    }
+
     if (res.code === 200) {
       message.success('发送成功')
-      sendMessage.value = ''
+      if (sendMessage.value === payload.message) {
+        sendMessage.value = ''
+      }
     } else {
       message.error(res.msg || '发送失败')
     }
   } catch {
+    if (!isPageMounted || requestId !== sendRequestId) {
+      return
+    }
+
     message.error('发送失败')
   } finally {
-    sending.value = false
+    if (isPageMounted && requestId === sendRequestId) {
+      sending.value = false
+    }
   }
 }
 
 onMounted(() => {
+  isPageMounted = true
   loadSetting()
   loadUsers()
+})
+
+onUnmounted(() => {
+  isPageMounted = false
+  settingRequestId += 1
+  saveSettingRequestId += 1
+  testRequestId += 1
+  userListRequestId += 1
+  userModalVersion += 1
+  sendRequestId += 1
 })
 </script>
 

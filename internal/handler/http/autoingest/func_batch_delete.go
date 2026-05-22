@@ -27,12 +27,20 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 		req := new(BatchDeleteRequest)
 		if err := ctx.ShouldBindJSON(req); err != nil {
 			ctx.AbortWithInvalidParams(err)
+
 			return
 		}
 
 		// 获取当前用户信息用于权限控制
 		userID := ctx.GetInt64(consts.CtxKeyUserId)
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
+
+		requestIDs, err := normalizeBatchIDs(req.IDs)
+		if err != nil {
+			ctx.AbortWithInvalidParams(err)
+
+			return
+		}
 
 		var (
 			wg         sync.WaitGroup
@@ -42,8 +50,9 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 			sem        = make(chan struct{}, maxBatchConcurrency)
 		)
 
-		for _, id := range req.IDs {
+		for _, id := range requestIDs {
 			wg.Add(1)
+
 			sem <- struct{}{}
 
 			go func(planId int64) {
@@ -60,6 +69,7 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 					mu.Lock()
 					failCnt++
 					mu.Unlock()
+
 					return
 				}
 

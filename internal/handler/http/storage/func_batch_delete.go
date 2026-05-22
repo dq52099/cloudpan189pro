@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
@@ -41,6 +42,7 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 		req := new(batchDeleteRequest)
 		if err := ctx.ShouldBindJSON(req); err != nil {
 			ctx.AbortWithInvalidParams(err)
+
 			return
 		}
 
@@ -49,18 +51,29 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
 
 		// 查询所有挂载点并按权限过滤；缓存已查到的对象避免二次查询
-		validMountPoints := make([]*models.MountPoint, 0, len(req.IDs))
-		for _, id := range req.IDs {
+		requestIDs, err := normalizeBatchIDs(req.IDs)
+		if err != nil {
+			ctx.AbortWithInvalidParams(err)
+
+			return
+		}
+
+		validMountPoints := make([]*models.MountPoint, 0, len(requestIDs))
+
+		for _, id := range requestIDs {
 			mountPoint, err := h.mountPointService.Query(ctx.GetContext(), id)
 			if err != nil {
 				ctx.GetContext().Debug("查询挂载点失败，跳过", zap.Int64("id", id), zap.Error(err))
+
 				continue
 			}
 			// 检查权限：管理员或创建者可以删除
-			if !(isAdmin || mountPoint.CreatorUserID == userID) {
+			if !isAdmin && mountPoint.CreatorUserID != userID {
 				ctx.GetContext().Debug("无权限删除该挂载点，跳过", zap.Int64("id", id), zap.Int64("creator_user_id", mountPoint.CreatorUserID))
+
 				continue
 			}
+
 			validMountPoints = append(validMountPoints, mountPoint)
 		}
 
@@ -69,27 +82,42 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 			ctx.GetContext(),
 			"批量删除",
 			fmt.Sprintf("批量删除 %d 个挂载点", len(validMountPoints)),
-			filetasklogSvi.WithDesc(fmt.Sprintf("请求ID数量: %d, 授权通过: %d", len(req.IDs), len(validMountPoints))),
+			filetasklogSvi.WithDesc(fmt.Sprintf("请求ID数量: %d, 去重后: %d, 授权通过: %d", len(req.IDs), len(requestIDs), len(validMountPoints))),
 		)
 		if logErr != nil {
 			ctx.GetContext().Warn("创建批量删除任务日志失败", zap.Error(logErr))
 		} else if tracker != nil {
 			_ = h.fileTaskLogService.Running(ctx.GetContext(), tracker)
+
 			_ = h.fileTaskLogService.FlushCount(
 				ctx.GetContext(), tracker,
-				filetasklogSvi.WithTotalCounter(len(validMountPoints)),
+				filetasklogSvi.WithTotalCounter(len(requestIDs)),
 			)
+
+			if missingOrUnauthorized := len(requestIDs) - len(validMountPoints); missingOrUnauthorized > 0 {
+				_ = h.fileTaskLogService.FlushCount(
+					ctx.GetContext(), tracker,
+					filetasklogSvi.WithFailedCounter(missingOrUnauthorized),
+				)
+			}
 		}
 
 		// 为每个挂载点推送独立删除任务
 		successCount := 0
+
 		for _, mountPoint := range validMountPoints {
 			taskReq := &topic.FileBatchDeleteRequest{
 				IDs: []int64{mountPoint.FileId},
 			}
+
 			body, err := json.Marshal(taskReq)
 			if err != nil {
 				ctx.GetContext().Warn("序列化删除任务失败", zap.Int64("file_id", mountPoint.FileId), zap.Error(err))
+
+				if tracker != nil {
+					_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithFailedCounter(1))
+				}
+
 				continue
 			}
 
@@ -102,22 +130,61 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 				body,
 			); err != nil {
 				ctx.GetContext().Warn("推送删除任务失败，跳过", zap.Int64("file_id", mountPoint.FileId), zap.Error(err))
+
+				if tracker != nil {
+					_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithFailedCounter(1))
+				}
+
 				continue
 			}
+
 			successCount++
+		}
+
+		if tracker != nil {
+			_ = h.fileTaskLogService.CompleteIfProgressDone(ctx.GetContext(), tracker, tracker.WithCost())
 		}
 
 		ctx.GetContext().Info(
 			"批量删除请求已加入队列",
 			zap.Int("total", len(req.IDs)),
+			zap.Int("unique", len(requestIDs)),
 			zap.Int("valid", len(validMountPoints)),
 			zap.Int("success", successCount),
 		)
 
 		ctx.Success(batchDeleteResponse{
-			Total:   len(req.IDs),
+			Total:   len(requestIDs),
 			Success: successCount,
-			Failed:  len(req.IDs) - successCount,
+			Failed:  len(requestIDs) - successCount,
 		})
 	}
+}
+
+func uniqueInt64s(ids []int64) []int64 {
+	seen := make(map[int64]struct{}, len(ids))
+	result := make([]int64, 0, len(ids))
+
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+
+		seen[id] = struct{}{}
+		result = append(result, id)
+	}
+
+	return result
+}
+
+func normalizeBatchIDs(ids []int64) ([]int64, error) {
+	result := uniqueInt64s(ids)
+
+	for _, id := range result {
+		if id <= 0 {
+			return nil, errors.New("ids 必须全部大于 0")
+		}
+	}
+
+	return result, nil
 }

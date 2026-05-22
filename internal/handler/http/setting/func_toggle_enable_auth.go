@@ -3,7 +3,6 @@ package setting
 import (
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
-	"github.com/xxcheng123/cloudpan189-share/internal/shared"
 )
 
 type toggleEnableAuthRequest struct {
@@ -39,8 +38,6 @@ func (h *handler) ToggleEnableAuth() httpcontext.HandlerFunc {
 
 			return
 		}
-
-		shared.EnableAuth = req.EnableAuth
 
 		ctx.Success()
 	}

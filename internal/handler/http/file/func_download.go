@@ -107,6 +107,7 @@ func (h *handler) Download() httpcontext.HandlerFunc {
 		userID := ctx.GetInt64(consts.CtxKeyUserId)
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
 		tokenID := mountFile.TokenId
+
 		if userID > 0 {
 			boundTokenID, bindErr := h.userMountPointTokenService.GetTokenID(ctx.GetContext(), userID, mountFile.ID)
 			if bindErr != nil {
