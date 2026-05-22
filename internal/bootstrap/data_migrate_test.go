@@ -147,6 +147,147 @@ func TestPreflightSQLiteNaturalUniqueKeysRejectsSanitizedVirtualFileNameCollisio
 	}
 }
 
+func TestMigrationTargetTablesEmptySkipsMissingTables(t *testing.T) {
+	db := openMigrationTestDB(t)
+
+	empty, err := migrationTargetTablesEmpty(db)
+	if err != nil {
+		t.Fatalf("check migration target tables: %v", err)
+	}
+
+	if !empty {
+		t.Fatal("expected missing target tables to be treated as empty")
+	}
+}
+
+func TestDataMigrationTableNamesAreDerivedFromSteps(t *testing.T) {
+	steps := dataMigrationSteps(nil, 0)
+	tableNames := dataMigrationTableNames()
+
+	if len(tableNames) != len(steps) {
+		t.Fatalf("expected %d table names, got %d", len(steps), len(tableNames))
+	}
+
+	seen := make(map[string]struct{}, len(tableNames))
+	for i, tableName := range tableNames {
+		if tableName == "" {
+			t.Fatalf("step %d has empty table name", i)
+		}
+
+		if _, ok := seen[tableName]; ok {
+			t.Fatalf("duplicate migration table name: %s", tableName)
+		}
+
+		seen[tableName] = struct{}{}
+	}
+}
+
+func TestMigrationTargetTablesEmptyReturnsTrueWhenKnownTablesAreEmpty(t *testing.T) {
+	db := openMigrationTestDB(t)
+
+	if err := db.AutoMigrate(&models.User{}, &models.Setting{}, &SystemSetting{}); err != nil {
+		t.Fatalf("migrate target schemas: %v", err)
+	}
+
+	empty, err := migrationTargetTablesEmpty(db)
+	if err != nil {
+		t.Fatalf("check migration target tables: %v", err)
+	}
+
+	if !empty {
+		t.Fatal("expected empty target tables to allow migration")
+	}
+}
+
+func TestMigrationTargetTablesEmptyReturnsFalseWhenSettingExists(t *testing.T) {
+	db := openMigrationTestDB(t)
+
+	if err := db.AutoMigrate(&models.Setting{}); err != nil {
+		t.Fatalf("migrate setting schema: %v", err)
+	}
+
+	if err := db.Create(&models.Setting{Title: "existing", SaltKey: "salt"}).Error; err != nil {
+		t.Fatalf("seed setting: %v", err)
+	}
+
+	empty, err := migrationTargetTablesEmpty(db)
+	if err != nil {
+		t.Fatalf("check migration target tables: %v", err)
+	}
+
+	if empty {
+		t.Fatal("expected existing non-user target data to block migration")
+	}
+}
+
+func TestMigrationTargetTablesEmptyReturnsFalseWhenSystemSettingExists(t *testing.T) {
+	db := openMigrationTestDB(t)
+
+	if err := db.AutoMigrate(&SystemSetting{}); err != nil {
+		t.Fatalf("migrate system setting schema: %v", err)
+	}
+
+	if err := db.Create(&SystemSetting{Name: "subscription_config"}).Error; err != nil {
+		t.Fatalf("seed system setting: %v", err)
+	}
+
+	empty, err := migrationTargetTablesEmpty(db)
+	if err != nil {
+		t.Fatalf("check migration target tables: %v", err)
+	}
+
+	if empty {
+		t.Fatal("expected existing system setting data to block migration")
+	}
+}
+
+func TestMigrationSourceTablesHaveDataReturnsFalseWhenMissingOrEmpty(t *testing.T) {
+	db := openMigrationTestDB(t)
+
+	hasData, err := migrationSourceTablesHaveData(db)
+	if err != nil {
+		t.Fatalf("check missing source tables: %v", err)
+	}
+
+	if hasData {
+		t.Fatal("expected missing source tables to have no migration data")
+	}
+
+	if err := db.AutoMigrate(&models.User{}, &models.Setting{}); err != nil {
+		t.Fatalf("migrate source schemas: %v", err)
+	}
+
+	hasData, err = migrationSourceTablesHaveData(db)
+	if err != nil {
+		t.Fatalf("check empty source tables: %v", err)
+	}
+
+	if hasData {
+		t.Fatal("expected empty source tables to have no migration data")
+	}
+}
+
+func TestMigrationSourceTablesHaveDataReturnsTrueWhenUserExistsWithoutSetting(t *testing.T) {
+	db := openMigrationTestDB(t)
+
+	if err := db.AutoMigrate(&models.User{}); err != nil {
+		t.Fatalf("migrate user schema: %v", err)
+	}
+
+	if err := db.Create(&models.User{Username: "alice", Password: "secret"}).Error; err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
+	hasData, err := migrationSourceTablesHaveData(db)
+	if err != nil {
+		t.Fatalf("check source tables: %v", err)
+	}
+
+	if !hasData {
+		t.Fatal("expected user-only source data to trigger migration")
+	}
+}
+
 func TestMigrateUsersPreservesPrimaryKeysAndUpserts(t *testing.T) {
 	src := openMigrationTestDB(t)
 	dst := openMigrationTestDB(t)

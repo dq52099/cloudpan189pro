@@ -21,8 +21,9 @@ var errMissingSourceTable = errors.New("source table is missing")
 const dataMigrationBatchSize = 1000
 
 type dataMigrationStep struct {
-	name string
-	run  func(*gorm.DB) error
+	name      string
+	tableName string
+	run       func(*gorm.DB) error
 }
 
 type migrationNaturalUniqueConflict struct {
@@ -90,30 +91,43 @@ func MigrateFromSQLite(cfg *configs.Config) error {
 		fmt.Printf("检测到 SQLite 用户数: %d\n", userCount)
 	}
 
-	steps := []dataMigrationStep{
-		{name: "用户组", run: func(dst *gorm.DB) error { return migrateUserGroups(sqliteDB, dst) }},
-		{name: "用户", run: func(dst *gorm.DB) error { return migrateUsers(sqliteDB, dst) }},
-		{name: "云盘令牌", run: func(dst *gorm.DB) error { return migrateCloudTokens(sqliteDB, dst) }},
-		{name: "虚拟文件", run: func(dst *gorm.DB) error { return migrateVirtualFiles(sqliteDB, dst) }},
-		{name: "挂载点", run: func(dst *gorm.DB) error { return migrateMountPoints(sqliteDB, dst) }},
-		{name: "用户组文件关系", run: func(dst *gorm.DB) error { return migrateGroup2Files(sqliteDB, dst) }},
-		{name: "用户挂载点令牌", run: func(dst *gorm.DB) error { return migrateUserMountPointTokens(sqliteDB, dst) }},
-		{name: "自动订阅计划", run: func(dst *gorm.DB) error { return migrateAutoIngestPlans(sqliteDB, dst) }},
-		{name: "自动订阅日志", run: func(dst *gorm.DB) error { return migrateAutoIngestLogs(sqliteDB, dst) }},
-		{name: "媒体文件", run: func(dst *gorm.DB) error { return migrateMediaFiles(sqliteDB, dst) }},
-		{name: "媒体配置", run: func(dst *gorm.DB) error { return migrateMediaConfig(sqliteDB, dst) }},
-		{name: "文件任务日志", run: func(dst *gorm.DB) error { return migrateFileTaskLogs(sqliteDB, dst) }},
-		{name: "登录日志", run: func(dst *gorm.DB) error { return migrateLoginLogs(sqliteDB, dst) }},
-		{name: "Telegram 设置", run: func(dst *gorm.DB) error { return migrateTelegramSettings(sqliteDB, dst) }},
-		{name: "Telegram 用户", run: func(dst *gorm.DB) error { return migrateTelegramUsers(sqliteDB, dst) }},
-		{name: "订阅", run: func(dst *gorm.DB) error { return migrateSubscriptions(sqliteDB, dst) }},
-		{name: "订阅匹配历史", run: func(dst *gorm.DB) error { return migrateMatchHistory(sqliteDB, dst) }},
-		{name: "每日热门历史", run: func(dst *gorm.DB) error { return migrateDailyHotHistory(sqliteDB, dst) }},
-		{name: "系统设置", run: func(dst *gorm.DB) error { return migrateSystemSettings(sqliteDB, dst) }},
-		{name: "设置", run: func(dst *gorm.DB) error { return migrateSettings(sqliteDB, dst, userCount) }},
+	return runDataMigrationSteps(pgDB, dataMigrationSteps(sqliteDB, userCount))
+}
+
+func dataMigrationSteps(src *gorm.DB, userCount int64) []dataMigrationStep {
+	return []dataMigrationStep{
+		{name: "用户组", tableName: new(models.UserGroup).TableName(), run: func(dst *gorm.DB) error { return migrateUserGroups(src, dst) }},
+		{name: "用户", tableName: new(models.User).TableName(), run: func(dst *gorm.DB) error { return migrateUsers(src, dst) }},
+		{name: "云盘令牌", tableName: new(models.CloudToken).TableName(), run: func(dst *gorm.DB) error { return migrateCloudTokens(src, dst) }},
+		{name: "虚拟文件", tableName: new(models.VirtualFile).TableName(), run: func(dst *gorm.DB) error { return migrateVirtualFiles(src, dst) }},
+		{name: "挂载点", tableName: new(models.MountPoint).TableName(), run: func(dst *gorm.DB) error { return migrateMountPoints(src, dst) }},
+		{name: "用户组文件关系", tableName: new(models.Group2File).TableName(), run: func(dst *gorm.DB) error { return migrateGroup2Files(src, dst) }},
+		{name: "用户挂载点令牌", tableName: new(models.UserMountPointToken).TableName(), run: func(dst *gorm.DB) error { return migrateUserMountPointTokens(src, dst) }},
+		{name: "自动订阅计划", tableName: new(models.AutoIngestPlan).TableName(), run: func(dst *gorm.DB) error { return migrateAutoIngestPlans(src, dst) }},
+		{name: "自动订阅日志", tableName: new(models.AutoIngestLog).TableName(), run: func(dst *gorm.DB) error { return migrateAutoIngestLogs(src, dst) }},
+		{name: "媒体文件", tableName: new(models.MediaFile).TableName(), run: func(dst *gorm.DB) error { return migrateMediaFiles(src, dst) }},
+		{name: "媒体配置", tableName: new(models.MediaConfig).TableName(), run: func(dst *gorm.DB) error { return migrateMediaConfig(src, dst) }},
+		{name: "文件任务日志", tableName: new(models.FileTaskLog).TableName(), run: func(dst *gorm.DB) error { return migrateFileTaskLogs(src, dst) }},
+		{name: "登录日志", tableName: new(models.LoginLog).TableName(), run: func(dst *gorm.DB) error { return migrateLoginLogs(src, dst) }},
+		{name: "Telegram 设置", tableName: new(models.TelegramSetting).TableName(), run: func(dst *gorm.DB) error { return migrateTelegramSettings(src, dst) }},
+		{name: "Telegram 用户", tableName: new(models.TelegramUser).TableName(), run: func(dst *gorm.DB) error { return migrateTelegramUsers(src, dst) }},
+		{name: "订阅", tableName: new(models.Subscription).TableName(), run: func(dst *gorm.DB) error { return migrateSubscriptions(src, dst) }},
+		{name: "订阅匹配历史", tableName: new(models.MatchHistory).TableName(), run: func(dst *gorm.DB) error { return migrateMatchHistory(src, dst) }},
+		{name: "每日热门历史", tableName: new(models.DailyHotHistory).TableName(), run: func(dst *gorm.DB) error { return migrateDailyHotHistory(src, dst) }},
+		{name: "系统设置", tableName: new(SystemSetting).TableName(), run: func(dst *gorm.DB) error { return migrateSystemSettings(src, dst) }},
+		{name: "设置", tableName: new(models.Setting).TableName(), run: func(dst *gorm.DB) error { return migrateSettings(src, dst, userCount) }},
+	}
+}
+
+func dataMigrationTableNames() []string {
+	steps := dataMigrationSteps(nil, 0)
+	tableNames := make([]string, 0, len(steps))
+
+	for _, step := range steps {
+		tableNames = append(tableNames, step.tableName)
 	}
 
-	return runDataMigrationSteps(pgDB, steps)
+	return tableNames
 }
 
 func preflightSQLiteNaturalUniqueKeys(src *gorm.DB) error {
@@ -648,6 +662,62 @@ func DataMigrationEnabled(cfg *configs.Config) bool {
 	return true
 }
 
+func migrationTargetTablesEmpty(db *gorm.DB) (bool, error) {
+	for _, tableName := range dataMigrationTableNames() {
+		empty, err := migrationTargetTableEmpty(db, tableName)
+		if err != nil {
+			return false, err
+		}
+
+		if !empty {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
+func migrationTargetTableEmpty(db *gorm.DB, tableName string) (bool, error) {
+	if !db.Migrator().HasTable(tableName) {
+		return true, nil
+	}
+
+	var count int64
+	if err := db.Table(tableName).Count(&count).Error; err != nil {
+		return false, fmt.Errorf("检查 PostgreSQL 目标表 %s 是否为空失败: %w", tableName, err)
+	}
+
+	return count == 0, nil
+}
+
+func migrationSourceTablesHaveData(db *gorm.DB) (bool, error) {
+	for _, tableName := range dataMigrationTableNames() {
+		hasData, err := migrationSourceTableHasData(db, tableName)
+		if err != nil {
+			return false, err
+		}
+
+		if hasData {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func migrationSourceTableHasData(db *gorm.DB, tableName string) (bool, error) {
+	if !db.Migrator().HasTable(tableName) {
+		return false, nil
+	}
+
+	var count int64
+	if err := db.Table(tableName).Limit(1).Count(&count).Error; err != nil {
+		return false, fmt.Errorf("检查 SQLite 源表 %s 是否存在数据失败: %w", tableName, err)
+	}
+
+	return count > 0, nil
+}
+
 func ShouldMigrateData(cfg *configs.Config) bool {
 	if !DataMigrationEnabled(cfg) {
 		return false
@@ -664,12 +734,12 @@ func ShouldMigrateData(cfg *configs.Config) bool {
 	}
 	defer closeGormDB(sqliteDB)
 
-	var settingCount int64
-	if err := sqliteDB.Model(&models.Setting{}).Count(&settingCount).Error; err != nil {
+	sourceHasData, err := migrationSourceTablesHaveData(sqliteDB)
+	if err != nil {
 		return false
 	}
 
-	if settingCount == 0 {
+	if !sourceHasData {
 		return false
 	}
 
@@ -688,10 +758,10 @@ func ShouldMigrateData(cfg *configs.Config) bool {
 	}
 	defer closeGormDB(pgDB)
 
-	var pgUserCount int64
-	if err := pgDB.Model(&models.User{}).Count(&pgUserCount).Error; err != nil {
+	targetEmpty, err := migrationTargetTablesEmpty(pgDB)
+	if err != nil {
 		return false
 	}
 
-	return pgUserCount == 0
+	return targetEmpty
 }
