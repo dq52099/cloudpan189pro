@@ -276,20 +276,27 @@ const isAutoIngestBatchOperationResponse = (
 
   const data = result as Partial<AutoIngestBatchOperationResponse>
 
-  return typeof data.success === 'number' && typeof data.failed === 'number'
+  return isValidClearCount(data.success) && isValidClearCount(data.failed)
 }
 
 const showBatchOperationResult = (
   label: string,
-  result: AutoIngestBatchOperationResponse | undefined
-) => {
+  result: AutoIngestBatchOperationResponse | undefined,
+  expectedTotal: number
+): boolean => {
   if (!isAutoIngestBatchOperationResponse(result)) {
     message.error(`${label}完成，但响应统计缺失`)
 
-    return
+    return false
   }
 
   const { success, failed } = result
+  if (success + failed !== expectedTotal) {
+    message.error(`${label}完成，但响应统计异常`)
+
+    return false
+  }
+
   const text = `${label}完成：成功 ${success}，失败 ${failed}`
 
   if (failed > 0 && success > 0) {
@@ -299,6 +306,8 @@ const showBatchOperationResult = (
   } else {
     message.success(text)
   }
+
+  return true
 }
 
 const isValidClearCount = (value: unknown): value is number => {
@@ -434,9 +443,10 @@ const handleBatchRetry = () => {
   batchRetryPlan({ ids })
     .then((res: ApiResponse<AutoIngestBatchOperationResponse>) => {
       if (res.code === 200) {
-        showBatchOperationResult('批量重试', res.data)
-        clearPlanSelection()
-        fetchPlanList()
+        if (showBatchOperationResult('批量重试', res.data, ids.length)) {
+          clearPlanSelection()
+          fetchPlanList()
+        }
       } else {
         message.error(res.msg || '批量重试失败')
       }
@@ -464,8 +474,9 @@ const handleBatchRefresh = () => {
   batchRefreshPlan({ ids })
     .then((res: ApiResponse<AutoIngestBatchOperationResponse>) => {
       if (res.code === 200) {
-        showBatchOperationResult('批量扫描', res.data)
-        clearPlanSelection()
+        if (showBatchOperationResult('批量扫描', res.data, ids.length)) {
+          clearPlanSelection()
+        }
       } else {
         message.error(res.msg || '批量扫描失败')
       }
@@ -493,9 +504,10 @@ const handleBatchEnable = () => {
   batchEnablePlan({ ids })
     .then((res: ApiResponse<AutoIngestBatchOperationResponse>) => {
       if (res.code === 200) {
-        showBatchOperationResult('批量启用', res.data)
-        clearPlanSelection()
-        fetchPlanList()
+        if (showBatchOperationResult('批量启用', res.data, ids.length)) {
+          clearPlanSelection()
+          fetchPlanList()
+        }
       } else {
         message.error(res.msg || '批量启用失败')
       }
@@ -523,9 +535,10 @@ const handleBatchDisable = () => {
   batchDisablePlan({ ids })
     .then((res: ApiResponse<AutoIngestBatchOperationResponse>) => {
       if (res.code === 200) {
-        showBatchOperationResult('批量停用', res.data)
-        clearPlanSelection()
-        fetchPlanList()
+        if (showBatchOperationResult('批量停用', res.data, ids.length)) {
+          clearPlanSelection()
+          fetchPlanList()
+        }
       } else {
         message.error(res.msg || '批量停用失败')
       }
@@ -563,9 +576,10 @@ const handleBatchDelete = () => {
       batchDeletePlan({ ids })
         .then((res: ApiResponse<AutoIngestBatchOperationResponse>) => {
           if (res.code === 200) {
-            showBatchOperationResult('批量删除', res.data)
-            clearPlanSelection()
-            fetchPlanList()
+            if (showBatchOperationResult('批量删除', res.data, ids.length)) {
+              clearPlanSelection()
+              fetchPlanList()
+            }
           } else {
             message.error(res.msg || '批量删除失败')
           }

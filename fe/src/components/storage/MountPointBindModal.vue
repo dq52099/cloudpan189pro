@@ -582,6 +582,10 @@ const isNonNegativeInteger = (value: unknown): value is number => {
   return Number.isInteger(value) && Number(value) >= 0
 }
 
+const isPositiveSafeInteger = (value: unknown): value is number => {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+}
+
 const isOptionalString = (value: unknown): value is string | undefined => {
   return value === undefined || typeof value === 'string'
 }
@@ -644,12 +648,22 @@ const handleMountResults = (response: ApiResponse<BatchAddStorageResponse>) => {
 
   const { successCount, failCount, scanFailedCount = 0, results } = response.data
 
-  const successItems = results
-    .filter((r) => r.success && r.id !== undefined)
-    .map((r) => ({
-      id: r.id as number,
-      path: r.localPath,
-    }))
+  const successItems: { id: number; path: string }[] = []
+  for (const result of results) {
+    if (!result.success || !isPositiveSafeInteger(result.id)) {
+      continue
+    }
+
+    successItems.push({
+      id: result.id,
+      path: result.localPath,
+    })
+  }
+
+  if (successItems.length !== successCount) {
+    message.error('批量挂载响应结果异常')
+    return
+  }
 
   if (successCount > 0) {
     message.success(

@@ -316,6 +316,7 @@ const fileState = reactive({
 })
 
 const bindLoading = ref(false)
+const familyFilesPageSize = 100
 let isComponentMounted = false
 let operationVersion = 0
 let tokenRequestId = 0
@@ -380,6 +381,49 @@ const resetFileState = () => {
   fileState.selectedKeys = []
   fileState.expandedKeys = []
   fileState.treeData.clear()
+}
+
+interface FamilyFilesPage {
+  files: FileNode[]
+  total: number
+  currentPage: number
+  pageSize: number
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return typeof value === 'object' && value !== null
+}
+
+const isSafePositiveInteger = (value: unknown): value is number => {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+}
+
+const isSafeNonNegativeInteger = (value: unknown): value is number => {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
+const normalizeFamilyFilesPage = (value: unknown): FamilyFilesPage | null => {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  const fileItems = getListItems<FileNode>(value)
+  const files = normalizeFileNodes(fileItems)
+  if (
+    !files ||
+    !isSafeNonNegativeInteger(value.total) ||
+    !isSafePositiveInteger(value.currentPage) ||
+    !isSafePositiveInteger(value.pageSize)
+  ) {
+    return null
+  }
+
+  return {
+    files,
+    total: value.total,
+    currentPage: value.currentPage,
+    pageSize: value.pageSize,
+  }
 }
 
 // 获取令牌列表
@@ -523,7 +567,7 @@ const handleNextToFileSelection = () => {
 }
 
 // 获取家庭文件列表
-const fetchFamilyFiles = (parentId: string = '') => {
+const fetchFamilyFiles = async (parentId: string = '') => {
   if (!tokenState.selectedTokenId || !familyState.selectedFamilyId) return
   const currentOperation = operationVersion
   const currentRequestId = ++fileRequestId
@@ -536,15 +580,22 @@ const fetchFamilyFiles = (parentId: string = '') => {
   } else {
     fileState.treeLoading = true
   }
-  const params: GetFamilyFilesQuery = {
-    pageNum: 1,
-    pageSize: 100,
-    cloudToken: currentCloudToken,
-    familyId: currentFamilyId,
-    parentId: parentId,
-  }
-  getFamilyFiles(params)
-    .then((response) => {
+
+  const files: FileNode[] = []
+  let pageNum = 1
+  let total = 0
+
+  try {
+    do {
+      const params: GetFamilyFilesQuery = {
+        pageNum,
+        pageSize: familyFilesPageSize,
+        cloudToken: currentCloudToken,
+        familyId: currentFamilyId,
+        parentId: parentId,
+      }
+
+      const response = await getFamilyFiles(params)
       if (
         !isCurrentFileRequest(
           parentId,
@@ -557,57 +608,73 @@ const fetchFamilyFiles = (parentId: string = '') => {
         return
       }
 
-      if (response.code === 200 && response.data) {
-        const fileItems = getListItems<FileNode>(response.data)
-        const files = normalizeFileNodes(fileItems)
-        if (!files) {
-          message.error('获取家庭文件列表失败：响应数据格式异常')
-
-          return
-        }
-
-        if (parentId === '') {
-          fileState.files = files
-          fileState.currentParentId = parentId
-        }
-        fileState.treeData.set(parentId, files)
-      } else {
+      if (response.code !== 200 || !response.data) {
         message.error(response.msg || '获取家庭文件列表失败')
-      }
-    })
-    .catch((error) => {
-      if (
-        !isCurrentFileRequest(
-          parentId,
-          currentRequestId,
-          currentOperation,
-          currentCloudToken,
-          currentFamilyId
-        )
-      ) {
+
         return
       }
 
-      console.error('获取家庭文件列表失败:', error)
-      message.error('获取家庭文件列表失败')
-    })
-    .finally(() => {
-      if (
-        isCurrentFileRequest(
-          parentId,
-          currentRequestId,
-          currentOperation,
-          currentCloudToken,
-          currentFamilyId
-        )
-      ) {
-        if (parentId === '') {
-          fileState.loading = false
-        } else {
-          fileState.treeLoading = false
-        }
+      const page = normalizeFamilyFilesPage(response.data)
+      if (!page) {
+        message.error('获取家庭文件列表失败：响应数据格式异常')
+
+        return
       }
-    })
+
+      if (page.currentPage !== pageNum || page.pageSize !== familyFilesPageSize) {
+        message.error('获取家庭文件列表失败：分页信息异常')
+
+        return
+      }
+
+      files.push(...page.files)
+      total = page.total
+      if (total > files.length && page.files.length === 0) {
+        message.error('获取家庭文件列表失败：分页数据不完整')
+
+        return
+      }
+
+      pageNum = page.currentPage + 1
+    } while (total > files.length)
+
+    if (parentId === '') {
+      fileState.files = files
+      fileState.currentParentId = parentId
+    }
+    fileState.treeData.set(parentId, files)
+  } catch (error) {
+    if (
+      !isCurrentFileRequest(
+        parentId,
+        currentRequestId,
+        currentOperation,
+        currentCloudToken,
+        currentFamilyId
+      )
+    ) {
+      return
+    }
+
+    console.error('获取家庭文件列表失败:', error)
+    message.error('获取家庭文件列表失败')
+  } finally {
+    if (
+      isCurrentFileRequest(
+        parentId,
+        currentRequestId,
+        currentOperation,
+        currentCloudToken,
+        currentFamilyId
+      )
+    ) {
+      if (parentId === '') {
+        fileState.loading = false
+      } else {
+        fileState.treeLoading = false
+      }
+    }
+  }
 }
 
 // 构建树形数据
