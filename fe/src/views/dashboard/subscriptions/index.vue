@@ -262,9 +262,11 @@ import {
   type CategoryOption,
 } from '@/api/subscription'
 import {
+  normalizeAISearchResponse,
   normalizeCategoriesResponse,
   normalizeHotMoviesResponse,
   normalizeSearchResults,
+  normalizeSubscriptionConfigResponse,
 } from '@/utils/responseGuards'
 
 const message = useMessage()
@@ -325,31 +327,8 @@ const isString = (value: unknown): value is string => {
   return typeof value === 'string'
 }
 
-const isBoolean = (value: unknown): value is boolean => {
-  return typeof value === 'boolean'
-}
-
 const isFiniteNumber = (value: unknown): value is number => {
   return typeof value === 'number' && Number.isFinite(value)
-}
-
-const isSubscriptionConfig = (value: unknown): value is SubscriptionConfig => {
-  if (!isRecord(value)) {
-    return false
-  }
-
-  return (
-    isBoolean(value.enableTMDB) &&
-    isBoolean(value.enableDouban) &&
-    isString(value.panSearchURL) &&
-    isString(value.defaultMountPath) &&
-    isBoolean(value.autoMount) &&
-    isString(value.cronExpression) &&
-    isString(value.tmdbAPIKey) &&
-    isString(value.openaiAPIKey) &&
-    isString(value.openaiBaseURL) &&
-    isString(value.openaiModel)
-  )
 }
 
 const isMountSubscriptionResponse = (value: unknown): value is MountSubscriptionResponse => {
@@ -470,9 +449,16 @@ const handleCategoryChange = (value: string | number | null) => {
 const loadConfig = async () => {
   try {
     const res = await getSubscriptionConfig()
-    if (res.code === 200 && isSubscriptionConfig(res.data)) {
-      configForm.value = res.data
-      tmdbApiKey.value = !!res.data.tmdbAPIKey
+    if (res.code === 200) {
+      const config = normalizeSubscriptionConfigResponse(res.data)
+      if (!config) {
+        message.error('加载配置失败：响应数据格式异常')
+
+        return
+      }
+
+      configForm.value = config
+      tmdbApiKey.value = !!config.tmdbAPIKey
     }
   } catch (err) {
     console.error('加载配置失败', err)
@@ -553,19 +539,26 @@ const handleAISearch = async () => {
       return
     }
 
-    if (res.code === 200 && res.data) {
-      if (res.data.result) {
-        const results = normalizeSearchResults([res.data.result])
+    if (res.code === 200) {
+      const aiSearch = normalizeAISearchResponse(res.data)
+      if (!aiSearch) {
+        message.error('AI搜索失败：响应数据格式异常')
+
+        return
+      }
+
+      if (aiSearch.result) {
+        const results = normalizeSearchResults([aiSearch.result])
         if (!results) {
           message.error('AI搜索失败：响应数据格式异常')
 
           return
         }
 
-        message.success('AI推荐: ' + res.data.keyword)
+        message.success('AI推荐: ' + aiSearch.keyword)
         searchResults.value = results
-      } else if (Array.isArray(res.data.allResults) && res.data.allResults.length > 0) {
-        const results = normalizeSearchResults(res.data.allResults)
+      } else if (aiSearch.allResults.length > 0) {
+        const results = normalizeSearchResults(aiSearch.allResults)
         if (!results) {
           message.error('AI搜索失败：响应数据格式异常')
 
@@ -575,7 +568,7 @@ const handleAISearch = async () => {
         message.info('AI服务未配置，返回全部搜索结果')
         searchResults.value = results
       } else {
-        message.warning(res.data.message || '未找到相关资源')
+        message.warning(aiSearch.message || '未找到相关资源')
         searchResults.value = []
       }
     } else {
@@ -658,14 +651,15 @@ const handleSaveConfig = async () => {
     }
 
     if (res.code === 200) {
-      if (!isSubscriptionConfig(res.data)) {
+      const config = normalizeSubscriptionConfigResponse(res.data)
+      if (!config) {
         message.error('保存完成但响应配置缺失/异常')
 
         return
       }
 
-      configForm.value = res.data
-      tmdbApiKey.value = !!res.data.tmdbAPIKey
+      configForm.value = config
+      tmdbApiKey.value = !!config.tmdbAPIKey
       message.success('保存成功')
     } else {
       message.error(res.msg || '保存失败')

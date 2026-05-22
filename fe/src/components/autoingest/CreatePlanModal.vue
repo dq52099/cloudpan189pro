@@ -239,7 +239,10 @@ import {
   type CreateSubscribePlanResponse,
 } from '@/api/autoingest'
 import { type ApiResponse } from '@/utils/api'
-import { normalizeGetSubscribeUserResponse } from '@/utils/responseGuards'
+import {
+  normalizeCreateSubscribePlanResponse,
+  normalizeGetSubscribeUserResponse,
+} from '@/utils/responseGuards'
 
 const message = useMessage()
 
@@ -568,9 +571,13 @@ const handleSubmit = () => {
 
             return
           }
-          if (payload.oneClickAddHistory && res.data?.historyError) {
-            message.warning(`计划已创建，但历史入库任务未下发：${res.data.historyError}`)
-          } else if (payload.oneClickAddHistory && res.data?.historyQueued) {
+
+          const createResult = normalizeCreateSubscribePlanResponse(res.data)
+          if (!createResult) {
+            message.warning('创建成功，但响应数据格式异常')
+          } else if (payload.oneClickAddHistory && createResult.historyError) {
+            message.warning(`计划已创建，但历史入库任务未下发：${createResult.historyError}`)
+          } else if (payload.oneClickAddHistory && createResult.historyQueued) {
             message.success('创建成功，历史入库任务已下发')
           } else {
             message.success('创建成功')

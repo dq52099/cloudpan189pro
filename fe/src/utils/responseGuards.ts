@@ -6,15 +6,18 @@ import type {
   ShareInfo,
   ShareResourceInfo,
 } from '@/api/storage/advance'
+import type { FileSearchItem } from '@/api/file'
 import type { ConfigInfoResponse } from '@/api/media'
-import type { PlanLogResult } from '@/api/autoingest'
+import type { CreateSubscribePlanResponse, PlanLogResult } from '@/api/autoingest'
 import type { StorageInfo } from '@/api/storage'
 import type {
+  AISearchResponse,
   CategoriesResponse,
   CategoryOption,
   HotMovieItem,
   HotMoviesResponse,
   SearchResult,
+  SubscriptionConfig,
 } from '@/api/subscription'
 import type { TelegramSetting, TelegramUser } from '@/api/telegram'
 import type { UserGroupInfo } from '@/api/usergroup'
@@ -258,6 +261,38 @@ export const normalizePlanLogResults = (value: unknown): PlanLogResult[] | null 
       isAutoIngestLogLevel(item.level) &&
       isString(item.createdAt) &&
       isString(item.updatedAt)
+    )
+  })
+}
+
+const isOptionalRecord = (value: unknown): boolean => {
+  return value === undefined || value === null || (isRecord(value) && !Array.isArray(value))
+}
+
+export const normalizeFileSearchItems = (value: unknown): FileSearchItem[] | null => {
+  return normalizeItems<FileSearchItem>(value, (item) => {
+    if (!isRecord(item)) {
+      return false
+    }
+
+    return (
+      isSafePositiveInteger(item.id) &&
+      isString(item.cloudId) &&
+      isSafeNonNegativeInteger(item.parentId) &&
+      isSafeNonNegativeInteger(item.topId) &&
+      isBoolean(item.isTop) &&
+      isBoolean(item.isDir) &&
+      isString(item.name) &&
+      isSafeNonNegativeInteger(item.size) &&
+      isString(item.hash) &&
+      isString(item.osType) &&
+      isOptionalRecord(item.addition) &&
+      isString(item.rev) &&
+      isString(item.createDate) &&
+      isString(item.modifyDate) &&
+      isString(item.createdAt) &&
+      isString(item.updatedAt) &&
+      isString(item.fullPath)
     )
   })
 }
@@ -515,6 +550,90 @@ export const normalizeSearchResults = (value: unknown): SearchResult[] | null =>
       isOptionalString(item.note)
     )
   })
+}
+
+export const normalizeAISearchResponse = (value: unknown): AISearchResponse | null => {
+  if (
+    !isRecord(value) ||
+    !isString(value.message) ||
+    !isString(value.keyword) ||
+    !isString(value.aiDescription)
+  ) {
+    return null
+  }
+
+  const resultItems = value.result === null ? [] : normalizeSearchResults([value.result])
+  if (!resultItems) {
+    return null
+  }
+
+  const allResults = normalizeSearchResults(value.allResults)
+  if (!allResults) {
+    return null
+  }
+
+  return {
+    message: value.message,
+    keyword: value.keyword,
+    aiDescription: value.aiDescription,
+    result: resultItems[0] ?? null,
+    allResults,
+  }
+}
+
+export const normalizeSubscriptionConfigResponse = (value: unknown): SubscriptionConfig | null => {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  if (
+    !isBoolean(value.enableTMDB) ||
+    !isBoolean(value.enableDouban) ||
+    !isString(value.panSearchURL) ||
+    !isString(value.defaultMountPath) ||
+    !isBoolean(value.autoMount) ||
+    !isString(value.cronExpression) ||
+    !isString(value.tmdbAPIKey) ||
+    !isString(value.openaiAPIKey) ||
+    !isString(value.openaiBaseURL) ||
+    !isString(value.openaiModel)
+  ) {
+    return null
+  }
+
+  return {
+    enableTMDB: value.enableTMDB,
+    enableDouban: value.enableDouban,
+    panSearchURL: value.panSearchURL,
+    defaultMountPath: value.defaultMountPath,
+    autoMount: value.autoMount,
+    cronExpression: value.cronExpression,
+    tmdbAPIKey: value.tmdbAPIKey,
+    openaiAPIKey: value.openaiAPIKey,
+    openaiBaseURL: value.openaiBaseURL,
+    openaiModel: value.openaiModel,
+  }
+}
+
+export const normalizeCreateSubscribePlanResponse = (
+  value: unknown
+): CreateSubscribePlanResponse | null => {
+  if (!isRecord(value) || !isSafePositiveInteger(value.id)) {
+    return null
+  }
+
+  if (
+    (value.historyQueued !== undefined && !isBoolean(value.historyQueued)) ||
+    !isOptionalString(value.historyError)
+  ) {
+    return null
+  }
+
+  return {
+    id: value.id,
+    historyQueued: value.historyQueued,
+    historyError: value.historyError,
+  }
 }
 
 const isOptionalSafeNonNegativeInteger = (value: unknown): value is number | undefined => {

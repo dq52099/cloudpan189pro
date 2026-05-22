@@ -63,6 +63,14 @@ export interface MountSubscriptionResponse {
   name: string
 }
 
+export interface AISearchResponse {
+  message: string
+  keyword: string
+  aiDescription: string
+  result: SearchResult | null
+  allResults: SearchResult[]
+}
+
 export const getCategories = (): Promise<ApiResponse<CategoriesResponse>> => {
   return api.get('/subscription/categories').then((res) => res.data)
 }
@@ -93,17 +101,7 @@ export const searchPan = (keyword: string): Promise<ApiResponse<SearchResult[]>>
   return api.get('/subscription/search', { params: { keyword } }).then((res) => res.data)
 }
 
-export const searchPanWithAI = (
-  keyword: string
-): Promise<
-  ApiResponse<{
-    message: string
-    keyword: string
-    aiDescription: string
-    result: SearchResult | null
-    allResults: SearchResult[]
-  }>
-> => {
+export const searchPanWithAI = (keyword: string): Promise<ApiResponse<AISearchResponse>> => {
   return api.get('/subscription/search/ai', { params: { keyword } }).then((res) => res.data)
 }
 

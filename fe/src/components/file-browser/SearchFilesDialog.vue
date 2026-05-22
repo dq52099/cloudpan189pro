@@ -91,6 +91,7 @@ import { SearchOutline } from '@vicons/ionicons5'
 import { searchFiles, type FileSearchItem } from '@/api/file'
 import { formatFileSize } from '@/utils/format'
 import { getListItems, getListTotal } from '@/utils/pagination'
+import { normalizeFileSearchItems } from '@/utils/responseGuards'
 
 interface Props {
   show: boolean
@@ -266,7 +267,8 @@ const doSearch = () => {
       if (!isLatestSearch(currentDialogVersion, currentSearchRequestId)) return
 
       if (res.code === 200 && res.data) {
-        const items = getListItems<FileSearchItem>(res.data)
+        const rawItems = getListItems<FileSearchItem>(res.data)
+        const items = normalizeFileSearchItems(rawItems)
         const itemCount = getListTotal(res.data)
         const responseCurrentPage = (res.data as { currentPage?: unknown }).currentPage
         const responsePageSize = (res.data as { pageSize?: unknown }).pageSize
