@@ -189,6 +189,7 @@ import { getCloudTokenList } from '@/api/cloudtoken'
 import { getPersonFiles } from '@/api/storage/advance'
 import type { FileNode, GetPersonFilesQuery } from '@/api/storage/advance'
 import { getListItems } from '@/utils/pagination'
+import { normalizeCloudTokens, normalizeFileNodes } from '@/utils/responseGuards'
 import { OS_TYPES } from '@/utils/osType'
 import { useMountPointBind } from '@/composables/useMountPointBind'
 
@@ -288,7 +289,8 @@ const fetchTokenList = () => {
       }
 
       if (response.code === 200 && response.data) {
-        const tokens = getListItems<Models.CloudToken>(response.data)
+        const tokenItems = getListItems<Models.CloudToken>(response.data)
+        const tokens = normalizeCloudTokens(tokenItems)
         if (!tokens) {
           message.error('获取令牌列表失败：响应数据格式异常')
 
@@ -371,7 +373,8 @@ const fetchPersonFiles = (parentId: string = '-11') => {
       }
 
       if (response.code === 200 && response.data) {
-        const files = getListItems<FileNode>(response.data)
+        const fileItems = getListItems<FileNode>(response.data)
+        const files = normalizeFileNodes(fileItems)
         if (!files) {
           message.error('获取文件列表失败：响应数据格式异常')
 

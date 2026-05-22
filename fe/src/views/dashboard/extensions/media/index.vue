@@ -413,6 +413,9 @@ const defaultIncludedSuffixes = [
 ].map((s) => `.${s}`)
 
 const isBusinessSuccess = (response: { code: number }) => response.code === 200
+const isNonNegativeSafeInteger = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+
 const isRebuildStrmFilesResponse = (result: unknown): result is RebuildStrmFilesResponse => {
   if (!result || typeof result !== 'object') {
     return false
@@ -421,9 +424,9 @@ const isRebuildStrmFilesResponse = (result: unknown): result is RebuildStrmFiles
   const data = result as Partial<RebuildStrmFilesResponse>
 
   return (
-    typeof data.total === 'number' &&
-    typeof data.success === 'number' &&
-    typeof data.failed === 'number'
+    isNonNegativeSafeInteger(data.total) &&
+    isNonNegativeSafeInteger(data.success) &&
+    isNonNegativeSafeInteger(data.failed)
   )
 }
 
@@ -751,7 +754,7 @@ const handleRebuildStrm = () => {
           }
 
           if (!isRebuildStrmFilesResponse(res.data)) {
-            message.error('重建任务已提交，但响应统计缺失')
+            message.error('响应数据格式异常')
 
             return
           }

@@ -62,6 +62,7 @@ import {
 import { bindUserGroup, type BindGroupRequest } from '@/api/user'
 import { getUserGroupList, type UserGroupInfo } from '@/api/usergroup'
 import { getListItems } from '@/utils/pagination'
+import { normalizeUserGroups } from '@/utils/responseGuards'
 
 interface Props {
   show: boolean
@@ -141,7 +142,8 @@ const fetchUserGroups = (currentOperation = operationVersion) => {
       }
 
       if (response.code === 200 && response.data) {
-        const groups = getListItems<UserGroupInfo>(response.data)
+        const groupItems = getListItems<UserGroupInfo>(response.data)
+        const groups = normalizeUserGroups(groupItems)
         if (!groups) {
           message.error('获取用户组列表失败：响应数据格式异常')
 

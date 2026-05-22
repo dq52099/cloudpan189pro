@@ -270,6 +270,7 @@ import type {
   GetFamilyListQuery,
 } from '@/api/storage/advance'
 import { getListItems } from '@/utils/pagination'
+import { normalizeCloudTokens, normalizeFamilies, normalizeFileNodes } from '@/utils/responseGuards'
 import { OS_TYPES } from '@/utils/osType'
 import { useMountPointBind } from '@/composables/useMountPointBind'
 
@@ -397,7 +398,8 @@ const fetchTokenList = () => {
       }
 
       if (response.code === 200 && response.data) {
-        const tokens = getListItems<Models.CloudToken>(response.data)
+        const tokenItems = getListItems<Models.CloudToken>(response.data)
+        const tokens = normalizeCloudTokens(tokenItems)
         if (!tokens) {
           message.error('获取令牌列表失败：响应数据格式异常')
 
@@ -459,7 +461,14 @@ const fetchFamilyList = () => {
       }
 
       if (response.code === 200 && response.data) {
-        familyState.families = response.data.familyInfoResp || []
+        const families = normalizeFamilies(response.data.familyInfoResp)
+        if (!families) {
+          message.error('获取家庭列表失败：响应数据格式异常')
+
+          return
+        }
+
+        familyState.families = families
       } else {
         message.error(response.msg || '获取家庭列表失败')
       }
@@ -549,7 +558,8 @@ const fetchFamilyFiles = (parentId: string = '') => {
       }
 
       if (response.code === 200 && response.data) {
-        const files = getListItems<FileNode>(response.data)
+        const fileItems = getListItems<FileNode>(response.data)
+        const files = normalizeFileNodes(fileItems)
         if (!files) {
           message.error('获取家庭文件列表失败：响应数据格式异常')
 

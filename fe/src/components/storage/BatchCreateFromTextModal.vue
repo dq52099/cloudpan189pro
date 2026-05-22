@@ -75,6 +75,7 @@ import {
 import { getCloudTokenList } from '@/api/cloudtoken'
 import { batchParseStorageText, type BatchParseItem } from '@/api/storage'
 import { getListItems } from '@/utils/pagination'
+import { normalizeCloudTokens } from '@/utils/responseGuards'
 
 interface Emits {
   (e: 'parsed', payload: { items: BatchParseItem[]; token: number }): void
@@ -177,7 +178,8 @@ const fetchCloudTokens = async (currentOperation = operationVersion) => {
     }
 
     if (res.code === 200 && res.data) {
-      const tokens = getListItems<Models.CloudToken>(res.data)
+      const tokenItems = getListItems<Models.CloudToken>(res.data)
+      const tokens = normalizeCloudTokens(tokenItems)
       if (!tokens) {
         message.error('获取云盘账号失败：响应数据格式异常')
 

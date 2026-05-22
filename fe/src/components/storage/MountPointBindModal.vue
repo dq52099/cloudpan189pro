@@ -163,6 +163,7 @@ import {
 import type { ApiResponse } from '@/utils/api'
 import { getCloudTokenList } from '@/api/cloudtoken'
 import { getListItems } from '@/utils/pagination'
+import { normalizeCloudTokens } from '@/utils/responseGuards'
 import { getOsTypeDisplayName, getOsTypeColor } from '@/utils/osType'
 import { useSharedStore } from '@/stores/modules/shared'
 import type { FormRules } from 'naive-ui'
@@ -401,7 +402,8 @@ const fetchCloudTokens = () => {
       }
 
       if (res.code === 200 && res.data) {
-        const tokens = getListItems<Models.CloudToken>(res.data)
+        const tokenItems = getListItems<Models.CloudToken>(res.data)
+        const tokens = normalizeCloudTokens(tokenItems)
         if (!tokens) {
           message.error('获取云盘令牌列表失败：响应数据格式异常')
 

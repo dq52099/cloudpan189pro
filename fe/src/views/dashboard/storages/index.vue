@@ -700,6 +700,9 @@ const batchModifyTokenId = ref<number | null>(null)
 let cloudTokenRequestId = 0
 
 const isBusinessSuccess = (response: { code: number }) => response.code === 200
+const isNonNegativeSafeInteger = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+
 const isBatchDispatchResponse = (result: unknown): result is BatchDispatchResponse => {
   if (!result || typeof result !== 'object') {
     return false
@@ -708,17 +711,17 @@ const isBatchDispatchResponse = (result: unknown): result is BatchDispatchRespon
   const data = result as Partial<BatchDispatchResponse>
 
   return (
-    typeof data.total === 'number' &&
-    typeof data.success === 'number' &&
-    typeof data.failed === 'number'
+    isNonNegativeSafeInteger(data.total) &&
+    isNonNegativeSafeInteger(data.success) &&
+    isNonNegativeSafeInteger(data.failed)
   )
 }
 
 const showBatchDispatchResult = (label: string, result: BatchDispatchResponse | undefined) => {
   if (!isBatchDispatchResponse(result)) {
-    message.error(`${label}已提交，但响应统计缺失`)
+    message.error('响应数据格式异常')
 
-    return
+    return false
   }
 
   const { total, success, failed } = result
@@ -733,6 +736,8 @@ const showBatchDispatchResult = (label: string, result: BatchDispatchResponse | 
   } else {
     message.success(`${label}已提交：成功 ${success} 个`)
   }
+
+  return true
 }
 
 const maxStorageListPageSize = 500
@@ -1359,7 +1364,9 @@ const handleBatchDelete = () => {
 
             return
           }
-          showBatchDispatchResult('批量删除', res.data)
+          if (!showBatchDispatchResult('批量删除', res.data)) {
+            return
+          }
 
           exitBatchMode()
           fetchStorageList()
@@ -1433,7 +1440,9 @@ const handleBatchRefresh = (deep: boolean) => {
 
             return
           }
-          showBatchDispatchResult(`批量${refreshType}任务`, res.data)
+          if (!showBatchDispatchResult(`批量${refreshType}任务`, res.data)) {
+            return
+          }
 
           exitBatchMode()
         })
