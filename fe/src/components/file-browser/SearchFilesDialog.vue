@@ -88,8 +88,9 @@ import {
   useMessage,
 } from 'naive-ui'
 import { SearchOutline } from '@vicons/ionicons5'
-import { searchFiles, type FileSearchItem, type FileSearchResponse } from '@/api/file'
+import { searchFiles, type FileSearchItem } from '@/api/file'
 import { formatFileSize } from '@/utils/format'
+import { getListItems, getListTotal } from '@/utils/pagination'
 
 interface Props {
   show: boolean
@@ -132,6 +133,10 @@ const invalidateSearchRequests = () => {
 
 const isLatestSearch = (targetDialogVersion: number, targetSearchRequestId: number) => {
   return targetDialogVersion === dialogVersion && targetSearchRequestId === searchRequestId
+}
+
+const isPositiveSafeInteger = (value: unknown): value is number => {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
 }
 
 const resetSearchState = () => {
@@ -261,11 +266,25 @@ const doSearch = () => {
       if (!isLatestSearch(currentDialogVersion, currentSearchRequestId)) return
 
       if (res.code === 200 && res.data) {
-        const data = res.data as FileSearchResponse
-        list.value = data.data || []
-        total.value = data.total || 0
-        currentPage.value = data.currentPage || query.currentPage
-        pageSize.value = data.pageSize || query.pageSize
+        const items = getListItems<FileSearchItem>(res.data)
+        const itemCount = getListTotal(res.data)
+        const responseCurrentPage = (res.data as { currentPage?: unknown }).currentPage
+        const responsePageSize = (res.data as { pageSize?: unknown }).pageSize
+        if (
+          !items ||
+          itemCount === null ||
+          !isPositiveSafeInteger(responseCurrentPage) ||
+          !isPositiveSafeInteger(responsePageSize)
+        ) {
+          message.error('搜索失败：响应数据格式异常')
+
+          return
+        }
+
+        list.value = items
+        total.value = itemCount
+        currentPage.value = responseCurrentPage
+        pageSize.value = responsePageSize
       } else {
         message.error(res.msg || '搜索失败')
       }
