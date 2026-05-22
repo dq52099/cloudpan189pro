@@ -1,0 +1,42 @@
+port: 12395
+dbFile: "data/data.db"
+logFile: "logs/share.log"
+mediaDir: "media_dir"
+dbType: "postgresql"
+postgres:
+  host: "postgres"
+  port: 5432
+  user: "postgres"
+  pass: "postgres"
+  dbName: "share"
+  sslMode: "disable"
+mysql:
+  host: "mysql"
+  port: 3306
+  user: "root"
+  pass: "password"
+  dbName: "share"
+taskEngine:
+  workerCount: 4
+  bufferSize: 89120
+  processTimeout: 7200
+  maxRetry: 3
+telegram:
+  botToken: ""
+  chatID: ""
+  proxyURL: ""
+  proxyType: ""
+  apiURL: "https://api.telegram.org"
+  defaultMountPath: "/转存"
+  enableNotify: true
+openai:
+  apiKey: ""
+  baseURL: ""
+  model: "agent/deepseek-v3.2"
+subscription:
+  enabled: false
+  cronExpression: "0 8 * * *"
+  panSearchURL: ""
+  panSearchProxy: ""
+  enableTMDB: true
+  enableDouban: true

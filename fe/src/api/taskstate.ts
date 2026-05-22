@@ -27,9 +27,9 @@ export interface FileLogListResponse {
 // 任务引擎状态响应接口
 export interface TaskEngineListResponse {
   isRunning: boolean // 引擎是否正在运行
-  stats: Models.TaskStats // 任务引擎统计信息
-  pendingTasks: Models.TaskInfo[] // 待处理的任务列表
-  runningTasks: Models.TaskInfo[] // 正在运行的任务列表
+  stats?: Partial<Models.TaskStats> // 任务引擎统计信息
+  pendingTasks?: Models.TaskInfo[] // 待处理的任务列表
+  runningTasks?: Models.TaskInfo[] // 正在运行的任务列表
 }
 
 // ===== 任务状态管理接口 =====

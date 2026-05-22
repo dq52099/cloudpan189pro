@@ -18,6 +18,7 @@ type Service interface {
 
 type service struct {
 	svc                bootstrap.ServiceContext
+	cloudTokenService  cloudtokenSvi.Service
 	mountPointService  mountPointSvi.Service
 	virtualFileService virtualFileSvi.Service
 }
@@ -29,6 +30,7 @@ func NewService(svc bootstrap.ServiceContext) Service {
 
 	return &service{
 		svc:                svc,
+		cloudTokenService:  cloudTokenService,
 		mountPointService:  mountPointSvi.NewService(svc, cloudTokenService, cloudBridgeService, userMountPointTokenService),
 		virtualFileService: virtualFileSvi.NewService(svc),
 	}

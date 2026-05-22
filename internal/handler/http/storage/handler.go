@@ -70,6 +70,8 @@ const (
 	protocolPerson         = models.OsTypePersonFolder
 	protocolFamily         = models.OsTypeFamilyFolder
 	protocolSubscribeShare = models.OsTypeSubscribeShareFolder
+	maxBatchIDs            = 1000
+	maxBatchModifyTokenIDs = 500
 )
 
 type handler struct {

@@ -157,6 +157,15 @@ func (s *RefreshFileScheduler) dispatchIfDue(mp *models.MountPoint, now time.Tim
 		return
 	}
 
+	if mp.FileId <= 0 {
+		s.ctx.Warn("跳过无效挂载点自动刷新",
+			zap.Int64("mount_point_id", mp.ID),
+			zap.Int64("file_id", mp.FileId),
+			zap.String("full_path", mp.FullPath))
+
+		return
+	}
+
 	interval := mp.RefreshInterval
 	if interval < 1 {
 		interval = 30 // 最小 30 分钟，兜底 1 分钟

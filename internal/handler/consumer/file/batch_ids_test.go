@@ -397,7 +397,7 @@ func TestScanFileJoinsBusinessAndFailedStatusErrors(t *testing.T) {
 	}
 }
 
-func TestHandleBatchDeleteSkipsEmptyIDList(t *testing.T) {
+func TestHandleBatchDeleteRejectsEmptyIDList(t *testing.T) {
 	handler := NewHandler(
 		zap.NewNop(),
 		nil,
@@ -418,8 +418,8 @@ func TestHandleBatchDeleteSkipsEmptyIDList(t *testing.T) {
 	}
 
 	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.HandleBatchDelete())
-	if err := processor.Process(stdctx.Background(), payload); err != nil {
-		t.Fatalf("expected empty batch delete to be ignored, got %v", err)
+	if err := processor.Process(stdctx.Background(), payload); !errors.Is(err, errEmptyFileTaskIDs) {
+		t.Fatalf("expected empty batch delete to return %v, got %v", errEmptyFileTaskIDs, err)
 	}
 }
 
@@ -707,6 +707,26 @@ func TestHandleDeleteRejectsMalformedJSON(t *testing.T) {
 	}
 }
 
+func TestHandleDeleteRejectsZeroFileID(t *testing.T) {
+	handler := NewHandler(
+		zap.NewNop(),
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.HandleDelete())
+	if err := processor.Process(stdctx.Background(), []byte(`{}`)); !errors.Is(err, errInvalidFileTaskID) {
+		t.Fatalf("expected zero file id to return %v, got %v", errInvalidFileTaskID, err)
+	}
+}
+
 func TestHandleDeleteReturnsCompletedStatusError(t *testing.T) {
 	tDB := setupBatchDeleteTaskLogTestDB(t)
 	statusErr := errors.New("delete completed status write failed")
@@ -977,7 +997,7 @@ func TestHandleBatchDeleteCompletesParentTracker(t *testing.T) {
 	}
 }
 
-func TestHandleBatchModifyTokenSkipsEmptyIDList(t *testing.T) {
+func TestHandleBatchModifyTokenRejectsEmptyIDList(t *testing.T) {
 	handler := NewHandler(
 		zap.NewNop(),
 		nil,
@@ -998,8 +1018,8 @@ func TestHandleBatchModifyTokenSkipsEmptyIDList(t *testing.T) {
 	}
 
 	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.HandleBatchModifyToken())
-	if err := processor.Process(stdctx.Background(), payload); err != nil {
-		t.Fatalf("expected empty batch modify token to be ignored, got %v", err)
+	if err := processor.Process(stdctx.Background(), payload); !errors.Is(err, errEmptyFileTaskIDs) {
+		t.Fatalf("expected empty batch modify token to return %v, got %v", errEmptyFileTaskIDs, err)
 	}
 }
 

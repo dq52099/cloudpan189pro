@@ -4,6 +4,7 @@ import (
 	stdctx "context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -166,6 +167,72 @@ func TestBatchDeleteDeduplicatesIDsBeforeQueueingTasks(t *testing.T) {
 	}
 }
 
+func TestBatchDeleteAllowsDuplicateIDsBeyondRawLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: {FileId: 11, FullPath: "/movies", CreatorUserID: 100},
+		},
+	}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/batch_delete", wrapper.Wrap(NewHandler(
+		taskEngine,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		&mockBatchDeleteFileTaskLogService{},
+		nil,
+		nil,
+		nil,
+		nil,
+	).BatchDelete()))
+
+	ids := make([]string, maxBatchIDs+1)
+	for i := range ids {
+		ids[i] = "11"
+	}
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/batch_delete",
+		strings.NewReader(fmt.Sprintf(`{"ids":[%s]}`, strings.Join(ids, ","))),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if got, want := mountPointService.queries, []int64{11}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected one deduplicated query %v, got %v", want, got)
+	}
+
+	var response struct {
+		Data batchDeleteResponse `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Data.Total != 1 || response.Data.Success != 1 || response.Data.Failed != 0 {
+		t.Fatalf("unexpected response data: %+v", response.Data)
+	}
+}
+
 func TestBatchDeleteTaskLogRecordsDispatchFailures(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -231,6 +298,101 @@ func TestBatchDeleteTaskLogRecordsDispatchFailures(t *testing.T) {
 
 	if log.Status != models.StatusFailed {
 		t.Fatalf("expected failed parent task status, got %q", log.Status)
+	}
+}
+
+func TestBatchDeleteTaskLogStaysRunningUntilQueuedTasksFinishPartialFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: {FileId: 1101, FullPath: "/movies", CreatorUserID: 100},
+			22: {FileId: 2201, FullPath: "/series", CreatorUserID: 200},
+		},
+	}
+	taskLogDB := setupStorageTaskLogTestDB(t)
+	fileTaskLogService := filetasklogSvi.NewService(taskLogDB)
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/batch_delete", wrapper.Wrap(NewHandler(
+		taskEngine,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		fileTaskLogService,
+		nil,
+		nil,
+		nil,
+		nil,
+	).BatchDelete()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_delete", strings.NewReader(`{"ids":[11,22,33]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if len(taskEngine.payloads) != 1 {
+		t.Fatalf("expected 1 queued task, got %d", len(taskEngine.payloads))
+	}
+
+	var response struct {
+		Data batchDeleteResponse `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Data.Total != 3 || response.Data.Success != 1 || response.Data.Failed != 2 {
+		t.Fatalf("unexpected response data: %+v", response.Data)
+	}
+
+	var log models.FileTaskLog
+	if err := taskLogDB.db.First(&log).Error; err != nil {
+		t.Fatalf("query task log: %v", err)
+	}
+
+	if log.Total != 3 || log.Completed != 0 || log.Failed != 2 {
+		t.Fatalf("expected total=3 completed=0 failed=2 before queued task finishes, got total=%d completed=%d failed=%d", log.Total, log.Completed, log.Failed)
+	}
+
+	if log.Status != models.StatusRunning {
+		t.Fatalf("expected parent task to stay %q before queued task finishes, got %q", models.StatusRunning, log.Status)
+	}
+
+	appCtx := appContext.NewContext(stdctx.Background())
+
+	logKey := filetasklogSvi.NewLogID(log.ID)
+	if err := fileTaskLogService.FlushCount(appCtx, logKey, filetasklogSvi.WithCompletedCounter(1)); err != nil {
+		t.Fatalf("flush child completion: %v", err)
+	}
+
+	if err := fileTaskLogService.CompleteIfProgressDone(appCtx, logKey); err != nil {
+		t.Fatalf("complete parent task: %v", err)
+	}
+
+	if err := taskLogDB.db.First(&log, log.ID).Error; err != nil {
+		t.Fatalf("query updated task log: %v", err)
+	}
+
+	if log.Total != 3 || log.Completed != 1 || log.Failed != 2 {
+		t.Fatalf("expected total=3 completed=1 failed=2 after queued task finishes, got total=%d completed=%d failed=%d", log.Total, log.Completed, log.Failed)
+	}
+
+	if log.Status != models.StatusFailed {
+		t.Fatalf("expected parent task to become %q after partial failure finishes, got %q", models.StatusFailed, log.Status)
 	}
 }
 

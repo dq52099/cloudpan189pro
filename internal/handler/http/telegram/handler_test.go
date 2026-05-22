@@ -100,6 +100,61 @@ func TestUpdateSettingPersistsFalseBooleans(t *testing.T) {
 	}
 }
 
+func TestUpdateSettingPartialUpdatePreservesExistingValues(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupTelegramHandlerTestDB(t)
+
+	setting := &models.TelegramSetting{
+		BotTokenEncrypted: "old-token",
+		ProxyURL:          "http://old-proxy",
+		ProxyType:         "http",
+		APIURL:            "https://old.example.com",
+		ChatID:            "old-chat",
+		DefaultMountPath:  "/old",
+		EnableNotify:      true,
+		Enable:            true,
+	}
+	if err := db.Create(setting).Error; err != nil {
+		t.Fatalf("create telegram setting: %v", err)
+	}
+
+	router := newTelegramTestRouter(db)
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/settings/update",
+		strings.NewReader(`{"defaultMountPath":"/new"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var updated models.TelegramSetting
+	if err := db.First(&updated, setting.ID).Error; err != nil {
+		t.Fatalf("query telegram setting: %v", err)
+	}
+
+	if updated.DefaultMountPath != "/new" {
+		t.Fatalf("expected default mount path updated, got %q", updated.DefaultMountPath)
+	}
+
+	if updated.BotTokenEncrypted != "old-token" ||
+		updated.ProxyURL != "http://old-proxy" ||
+		updated.ProxyType != "http" ||
+		updated.APIURL != "https://old.example.com" ||
+		updated.ChatID != "old-chat" ||
+		!updated.EnableNotify ||
+		!updated.Enable {
+		t.Fatalf("expected partial update to preserve existing setting, got %+v", updated)
+	}
+}
+
 func TestUpdateUserPersistsFalseAdminValue(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

@@ -47,23 +47,27 @@ func (s *service) BatchDelete(ctx context.Context, ids []int64, hooks ...BatchDe
 		return []int64{}, nil
 	}
 
-	if err := validateVirtualFileIDs(ids); err != nil {
+	normalizedIDs, err := normalizeVirtualFileIDs(ids)
+	if err != nil {
 		return nil, err
 	}
 
 	// 1. 先查询出完整的文件信息（修复：删除后无法查询文件信息导致无法删除strm的问题）
 	var filesToDelete []*models.VirtualFile
-	if err := s.getDB(ctx).Where("id IN ?", ids).Find(&filesToDelete).Error; err != nil {
-		ctx.Error("批量删除文件 - 数据库查询失败", zap.Int64s("file_ids", ids), zap.Error(err))
+	if err := s.getDB(ctx).Where("id IN ?", normalizedIDs).Find(&filesToDelete).Error; err != nil {
+		ctx.Error("批量删除文件 - 数据库查询失败", zap.Int64s("file_ids", normalizedIDs), zap.Error(err))
 
 		return nil, err
 	}
 
-	// 如果没有匹配的记录，直接返回
-	if len(filesToDelete) == 0 {
-		ctx.Debug("批量删除文件 - 没有找到匹配的记录", zap.Int64s("file_ids", ids))
+	if len(filesToDelete) != len(normalizedIDs) {
+		ctx.Debug("批量删除文件 - 部分文件不存在",
+			zap.Int64s("file_ids", normalizedIDs),
+			zap.Int("matched_rows", len(filesToDelete)),
+			zap.Int("requested_rows", len(normalizedIDs)),
+		)
 
-		return []int64{}, nil
+		return nil, errors.Wrap(gorm.ErrRecordNotFound, "部分文件不存在")
 	}
 
 	matchIdList := make([]int64, 0, len(filesToDelete))
@@ -100,14 +104,4 @@ func (s *service) BatchDelete(ctx context.Context, ids []int64, hooks ...BatchDe
 	ctx.Debug("批量删除文件完成", zap.Int64s("deleted_ids", matchIdList), zap.Int64("affected_rows", result.RowsAffected))
 
 	return matchIdList, nil
-}
-
-func validateVirtualFileIDs(ids []int64) error {
-	for _, id := range ids {
-		if id <= 0 {
-			return errInvalidVirtualFileID
-		}
-	}
-
-	return nil
 }

@@ -35,9 +35,16 @@ func (s *service) ToggleStatus(ctx context.Context, key LogKey, status string, o
 
 	result := s.getDB(ctx).
 		Where("id = ?", id).
+		Where("status NOT IN ?", []string{models.StatusCompleted, models.StatusFailed}).
 		Select("status", "end_at", "duration", "result", "error_msg", "desc", "completed", "total").
 		Updates(mp)
-	if err = checkTaskLogUpdateResult(ctx, result, id, "文件任务日志不存在"); err != nil {
+	if result.Error != nil {
+		err = result.Error
+	} else if result.RowsAffected == 0 {
+		err = s.ensureTaskLogExists(ctx, id)
+	}
+
+	if err != nil {
 		ctx.Error("切换文件任务状态失败", zap.Error(err))
 	}
 

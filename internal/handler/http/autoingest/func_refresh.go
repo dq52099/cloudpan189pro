@@ -14,11 +14,11 @@ import (
 )
 
 type refreshPlanRequest struct {
-	PlanId int64 `json:"planId" binding:"required" example:"1"`
+	PlanId int64 `json:"planId" binding:"required,min=1" example:"1"`
 }
 
 type retryFailedRequest struct {
-	PlanId int64 `json:"planId" binding:"required" example:"1"`
+	PlanId int64 `json:"planId" binding:"required,min=1" example:"1"`
 }
 
 // Refresh 下发订阅计划刷新任务
@@ -143,38 +143,16 @@ func (h *handler) RetryFailed() httpcontext.HandlerFunc {
 			return
 		}
 
-		// 将偏移量重置为0，重新扫描所有文件
 		oldOffset := plan.Offset
-
-		if err := h.planService.UpdateOffset(ctx.GetContext(), req.PlanId, 0); err != nil {
-			ctx.GetContext().Error("重置偏移量失败", zap.Error(err))
-			ctx.Fail(codePlanUpdateFailed.WithError(err))
+		if err = h.dispatchRetryWithRollback(ctx, plan, 0, false, false); err != nil {
+			failAutoIngestRetryError(ctx, err)
 
 			return
 		}
 
-		// 记录重置操作
 		if _, logErr := h.logService.Create(ctx.GetContext(), req.PlanId, autoingest.LogLevelWarn,
 			fmt.Sprintf("手动重试：将偏移量从 %d 重置为 0", oldOffset)); logErr != nil {
 			ctx.GetContext().Error("创建重试日志失败", zap.Error(logErr))
-		}
-
-		// 下发刷新任务
-		taskReq := &topic.AutoIngestRefreshSubscribeRequest{
-			PlanId: plan.ID,
-		}
-
-		body, jerr := json.Marshal(taskReq)
-		if jerr != nil {
-			ctx.Fail(codePlanRefreshFailed.WithError(jerr))
-
-			return
-		}
-
-		if err = h.taskEngine.PushMessage(ctx.GetContext(), taskReq.Topic(), body); err != nil {
-			ctx.Fail(codePlanRefreshFailed.WithError(err))
-
-			return
 		}
 
 		ctx.Success("重试任务已下发，偏移量已重置")

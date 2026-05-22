@@ -6,7 +6,7 @@ import (
 
 // configToggleRequest 切换媒体配置启用状态
 type configToggleRequest struct {
-	Enable bool `json:"enable" example:"true"`
+	Enable *bool `json:"enable" binding:"required" example:"true"`
 }
 
 // ConfigToggle 切换媒体配置启用状态
@@ -29,7 +29,7 @@ func (h *handler) ConfigToggle() httpcontext.HandlerFunc {
 			return
 		}
 
-		if err := h.mediaConfigService.Toggle(ctx.GetContext(), req.Enable); err != nil {
+		if err := h.mediaConfigService.Toggle(ctx.GetContext(), *req.Enable); err != nil {
 			ctx.Fail(codeConfigToggleFailed.WithError(err))
 
 			return

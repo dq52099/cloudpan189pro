@@ -48,7 +48,7 @@ func (h *handler) ModifyOwnPass() httpcontext.HandlerFunc {
 		user, err := h.userService.Query(ctx.GetContext(), uid)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				ctx.Fail(codeModifyPassFailed.WithError(err))
+				ctx.Fail(codeUserResourceMissing.WithError(err))
 
 				return
 			}

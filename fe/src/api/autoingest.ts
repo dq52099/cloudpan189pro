@@ -46,6 +46,8 @@ export interface CreateSubscribePlanRequest {
 // 创建订阅型计划 - 响应体
 export interface CreateSubscribePlanResponse {
   id: number
+  historyQueued?: boolean
+  historyError?: string
 }
 
 // 更新计划 - 请求体（仅允许以下字段）
@@ -116,7 +118,7 @@ export const getAutoIngestLogList = (
 }
 
 // 重试失败的任务
-export const retryFailedAutoIngest = (data: { planId?: number }): Promise<ApiResponse> => {
+export const retryFailedAutoIngest = (data: { planId: number }): Promise<ApiResponse> => {
   return api.post('/auto_ingest/plan/retry_failed', data).then((res) => res.data)
 }
 
@@ -145,42 +147,42 @@ export const retryAutoIngestPlan = (data: { id: number }): Promise<ApiResponse> 
 
 // 批量重试计划
 export interface BatchRetryPlanRequest {
-  ids: number[]
+  ids: number[] // 计划ID列表，元素必须大于0，去重后最多500个
 }
-export interface BatchOperationResponse {
+export interface AutoIngestBatchOperationResponse {
   success: number
   failed: number
 }
 export const batchRetryPlan = (
   data: BatchRetryPlanRequest
-): Promise<ApiResponse<BatchOperationResponse>> => {
+): Promise<ApiResponse<AutoIngestBatchOperationResponse>> => {
   return api.post('/auto_ingest/plan/batch_retry', data).then((res) => res.data)
 }
 
 // 批量刷新计划
 export const batchRefreshPlan = (
   data: BatchRetryPlanRequest
-): Promise<ApiResponse<BatchOperationResponse>> => {
+): Promise<ApiResponse<AutoIngestBatchOperationResponse>> => {
   return api.post('/auto_ingest/plan/batch_refresh', data).then((res) => res.data)
 }
 
 // 批量删除计划
 export const batchDeletePlan = (
   data: BatchRetryPlanRequest
-): Promise<ApiResponse<BatchOperationResponse>> => {
+): Promise<ApiResponse<AutoIngestBatchOperationResponse>> => {
   return api.post('/auto_ingest/plan/batch_delete', data).then((res) => res.data)
 }
 
 // 批量停用计划
 export const batchDisablePlan = (
   data: BatchRetryPlanRequest
-): Promise<ApiResponse<BatchOperationResponse>> => {
+): Promise<ApiResponse<AutoIngestBatchOperationResponse>> => {
   return api.post('/auto_ingest/plan/batch_disable', data).then((res) => res.data)
 }
 
 // 批量启用计划
 export const batchEnablePlan = (
   data: BatchRetryPlanRequest
-): Promise<ApiResponse<BatchOperationResponse>> => {
+): Promise<ApiResponse<AutoIngestBatchOperationResponse>> => {
   return api.post('/auto_ingest/plan/batch_enable', data).then((res) => res.data)
 }

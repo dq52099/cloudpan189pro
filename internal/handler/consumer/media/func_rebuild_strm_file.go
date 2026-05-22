@@ -1,6 +1,7 @@
 package media
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"slices"
@@ -29,6 +30,8 @@ const maxRecursionDepth = 100
 
 // rebuildConcurrency 全量重建时的挂载点级并发度。
 const rebuildConcurrency = 4
+
+var errInvalidRebuildMountPointFileID = errors.New("mountPointFileId 必须大于 0")
 
 // rebuildProgress STRM 重建进度统计。
 // 全部字段必须用 atomic.* 访问，避免 data race。
@@ -205,6 +208,12 @@ func (h *handler) RebuildStrmFileByMountPoint() taskcontext.HandlerFunc {
 			logger.Error("解析STRM重建任务失败", zap.Error(err))
 
 			return err
+		}
+
+		if req.MountPointFileId <= 0 {
+			logger.Error("STRM单挂载点重建任务参数无效", zap.Int64("mount_point_file_id", req.MountPointFileId))
+
+			return errInvalidRebuildMountPointFileID
 		}
 
 		logger.Info("开始重建strm文件",

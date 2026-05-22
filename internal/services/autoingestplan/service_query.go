@@ -11,6 +11,10 @@ import (
 
 // Query 根据ID查询自动挂载计划
 func (s *service) Query(ctx context.Context, id int64) (*models.AutoIngestPlan, error) {
+	if id <= 0 {
+		return nil, errInvalidAutoIngestPlanID
+	}
+
 	var plan models.AutoIngestPlan
 
 	if err := s.getDB(ctx).Where("id = ?", id).First(&plan).Error; err != nil {

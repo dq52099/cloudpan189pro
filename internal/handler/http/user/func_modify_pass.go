@@ -1,7 +1,10 @@
 package user
 
 import (
+	"errors"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	"gorm.io/gorm"
 )
 
 type modifyPassRequest struct {
@@ -34,6 +37,12 @@ func (h *handler) ModifyPass() httpcontext.HandlerFunc {
 		}
 
 		if err := h.userService.ModifyPass(ctx.GetContext(), req.ID, req.Password); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(codeUserResourceMissing.WithError(err))
+
+				return
+			}
+
 			ctx.Fail(codeModifyPassFailed.WithError(err))
 
 			return

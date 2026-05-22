@@ -15,7 +15,7 @@ import (
 type refreshStrategyRequest struct {
 	EnableAutoRefresh bool `json:"enableAutoRefresh" binding:"omitempty" example:"false"`
 	AutoRefreshDays   int  `json:"autoRefreshDays" binding:"omitempty,min=1" example:"7"`
-	RefreshInterval   int  `json:"refreshInterval" binding:"omitempty,min=30" example:"30"` // 单位分钟，最小30
+	RefreshInterval   int  `json:"refreshInterval" binding:"omitempty,min=30,max=1440" example:"30"` // 单位分钟，最小30，最大1440
 	EnableDeepRefresh bool `json:"enableDeepRefresh" binding:"omitempty" example:"false"`
 }
 
@@ -33,7 +33,9 @@ type createSubscribePlanRequest struct {
 }
 
 type createSubscribePlanResponse struct {
-	ID int64 `json:"id" example:"1"`
+	ID            int64  `json:"id" example:"1"`
+	HistoryQueued bool   `json:"historyQueued" example:"true"`
+	HistoryError  string `json:"historyError,omitempty"`
 }
 
 // CreateSubscribePlan 创建订阅型自动挂载计划
@@ -69,6 +71,12 @@ func (h *handler) CreateSubscribePlan() httpcontext.HandlerFunc {
 		enable := req.AutoIngestInterval > 0
 		if req.Enable != nil {
 			enable = *req.Enable
+		}
+
+		if err := h.validateCloudTokenAccess(ctx, req.CloudToken); err != nil {
+			ctx.Fail(codeCreatePlanFailed.WithError(err))
+
+			return
 		}
 
 		addition := &models.AutoIngestPlanSubscribeAddition{
@@ -122,6 +130,7 @@ func (h *handler) CreateSubscribePlan() httpcontext.HandlerFunc {
 			return
 		}
 
+		resp := &createSubscribePlanResponse{ID: id}
 		if req.OneClickAddHistory {
 			taskReq := &topic.AutoIngestRefreshSubscribeRequest{
 				PlanId: id,
@@ -130,11 +139,15 @@ func (h *handler) CreateSubscribePlan() httpcontext.HandlerFunc {
 			taskBody, jerr := json.Marshal(taskReq)
 			if jerr != nil {
 				ctx.GetContext().Warn("序列化一键入库任务失败", zap.Int64("plan_id", id), zap.Error(jerr))
+				resp.HistoryError = jerr.Error()
 			} else if perr := h.taskEngine.PushMessage(ctx.GetContext(), taskReq.Topic(), taskBody); perr != nil {
 				ctx.GetContext().Warn("一键入库任务下发失败", zap.Int64("plan_id", id), zap.Error(perr))
+				resp.HistoryError = perr.Error()
+			} else {
+				resp.HistoryQueued = true
 			}
 		}
 
-		ctx.Success(&createSubscribePlanResponse{ID: id})
+		ctx.Success(resp)
 	}
 }

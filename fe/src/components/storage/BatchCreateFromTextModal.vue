@@ -129,6 +129,33 @@ const isCurrentOperation = (version: number) => {
   return isComponentMounted && operationVersion === version
 }
 
+const isOptionalString = (value: unknown): value is string | undefined => {
+  return value === undefined || typeof value === 'string'
+}
+
+const isBatchParseItem = (value: unknown): value is BatchParseItem => {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const item = value as Record<string, unknown>
+
+  return (
+    typeof item.name === 'string' &&
+    item.name.trim().length > 0 &&
+    typeof item.osType === 'string' &&
+    item.osType.trim().length > 0 &&
+    isOptionalString(item.shareCode) &&
+    isOptionalString(item.shareAccessCode) &&
+    isOptionalString(item.fileId) &&
+    isOptionalString(item.subscribeUser)
+  )
+}
+
+const isBatchParseItemArray = (value: unknown): value is BatchParseItem[] => {
+  return Array.isArray(value) && value.every(isBatchParseItem)
+}
+
 const invalidatePendingWork = () => {
   operationVersion++
   state.loadingTokens = false
@@ -207,7 +234,13 @@ const handleNext = async () => {
         return
       }
 
-      if (res.data && res.data.length > 0) {
+      if (!isBatchParseItemArray(res.data)) {
+        message.error('解析响应格式异常')
+
+        return
+      }
+
+      if (res.data.length > 0) {
         message.success(`成功解析 ${res.data.length} 个资源`)
         emit('parsed', {
           items: res.data,

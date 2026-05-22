@@ -17,6 +17,7 @@ type configUpdateRequest struct {
 	IncludedSuffixes    *[]string                 `json:"includedSuffixes" binding:"omitempty" example:"['.mp4','.mkv','.avi']"`
 	AutoRebuildEnable   *bool                     `json:"autoRebuildEnable" binding:"omitempty" example:"false"`
 	AutoRebuildInterval *int                      `json:"autoRebuildInterval" binding:"omitempty" example:"24"`
+	AutoRebuildCron     *string                   `json:"autoRebuildCron" binding:"omitempty" example:"0 2 * * *"`
 }
 
 // ConfigUpdate 更新媒体配置指定字段
@@ -71,6 +72,10 @@ func (h *handler) ConfigUpdate() httpcontext.HandlerFunc {
 
 		if req.AutoRebuildInterval != nil {
 			fields = append(fields, utils.WithField("auto_rebuild_interval", *req.AutoRebuildInterval))
+		}
+
+		if req.AutoRebuildCron != nil {
+			fields = append(fields, utils.WithField("auto_rebuild_cron", *req.AutoRebuildCron))
 		}
 
 		if len(fields) == 0 {

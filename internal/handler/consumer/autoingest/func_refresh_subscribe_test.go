@@ -4,10 +4,13 @@ import (
 	stdctx "context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	mysqlDriver "github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/taskcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/taskengine"
@@ -24,6 +27,18 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+type duplicateSQLiteCodeError struct {
+	code int
+}
+
+func (e duplicateSQLiteCodeError) Error() string {
+	return "sqlite constraint error"
+}
+
+func (e duplicateSQLiteCodeError) Code() int {
+	return e.code
+}
 
 type mockRefreshSubscribeTaskEngine struct {
 	taskengine.TaskEngine
@@ -47,6 +62,58 @@ func (m *mockRefreshSubscribeTaskEngine) Count() int {
 	defer m.mu.Unlock()
 
 	return m.pushCount
+}
+
+func TestIsDuplicateEntryErrorRecognizesDriverErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "mysql duplicate",
+			err:  &mysqlDriver.MySQLError{Number: 1062, Message: "Duplicate entry"},
+			want: true,
+		},
+		{
+			name: "wrapped postgres unique violation",
+			err:  fmt.Errorf("create storage: %w", &pgconn.PgError{Code: "23505", Message: "duplicate key value violates unique constraint"}),
+			want: true,
+		},
+		{
+			name: "sqlite unique constraint code",
+			err:  duplicateSQLiteCodeError{code: 2067},
+			want: true,
+		},
+		{
+			name: "sqlite primary key constraint code",
+			err:  fmt.Errorf("wrapped: %w", duplicateSQLiteCodeError{code: 1555}),
+			want: true,
+		},
+		{
+			name: "sqlite text fallback",
+			err:  errors.New("UNIQUE constraint failed: virtual_files.parent_id, virtual_files.name"),
+			want: true,
+		},
+		{
+			name: "generic error",
+			err:  errors.New("connection refused"),
+			want: false,
+		},
+		{
+			name: "nil",
+			err:  nil,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isDuplicateEntryError(tt.err); got != tt.want {
+				t.Fatalf("expected %v, got %v", tt.want, got)
+			}
+		})
+	}
 }
 
 type mockRefreshSubscribeCloudBridgeService struct {

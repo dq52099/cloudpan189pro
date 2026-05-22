@@ -13,8 +13,14 @@ import (
 )
 
 type batchRefreshRequest struct {
-	IDs  []int64 `json:"ids" binding:"required,min=1,max=1000"`
+	IDs  []int64 `json:"ids" binding:"required,min=1"`
 	Deep bool    `json:"deep"` // 是否深度刷新
+}
+
+type batchRefreshResponse struct {
+	Total   int `json:"total"`
+	Success int `json:"success"`
+	Failed  int `json:"failed"`
 }
 
 // BatchRefresh 批量刷新存储挂载
@@ -51,7 +57,7 @@ func (h *handler) BatchRefresh() httpcontext.HandlerFunc {
 			fullPath string
 		}
 
-		requestIDs, err := normalizeBatchIDs(req.IDs)
+		requestIDs, err := normalizeBatchIDs(req.IDs, maxBatchIDs)
 		if err != nil {
 			ctx.AbortWithInvalidParams(err)
 
@@ -137,17 +143,27 @@ func (h *handler) BatchRefresh() httpcontext.HandlerFunc {
 		// 这里把派发任务的 tracker 立刻标记完成，避免其长时间 Running 被 stale checker 置为 Failed。
 		if tracker != nil {
 			failedCount := len(requestIDs) - successCount
+			result := fmt.Sprintf("派发成功 %d 个，失败 %d 个，具体扫描进度请查看对应子任务", successCount, failedCount)
 
 			_ = h.fileTaskLogService.FlushCount(
 				ctx.GetContext(), tracker,
 				filetasklogSvi.WithCompletedCounter(successCount),
 				filetasklogSvi.WithFailedCounter(failedCount),
 			)
-			if err := h.fileTaskLogService.Completed(
+			if failedCount > 0 {
+				if err := h.fileTaskLogService.Failed(
+					ctx.GetContext(), tracker,
+					tracker.WithCost(),
+					utils.WithField("completed", successCount),
+					utils.WithField("result", result),
+				); err != nil {
+					ctx.GetContext().Warn("批量刷新任务标记失败失败", zap.Error(err))
+				}
+			} else if err := h.fileTaskLogService.Completed(
 				ctx.GetContext(), tracker,
 				tracker.WithCost(),
 				utils.WithField("completed", successCount),
-				utils.WithField("result", fmt.Sprintf("派发成功 %d 个，失败 %d 个，具体扫描进度请查看对应子任务", successCount, len(requestIDs)-successCount)),
+				utils.WithField("result", result),
 			); err != nil {
 				ctx.GetContext().Warn("批量刷新任务标记完成失败", zap.Error(err))
 			}
@@ -157,6 +173,10 @@ func (h *handler) BatchRefresh() httpcontext.HandlerFunc {
 			zap.Int("total", len(req.IDs)),
 			zap.Int("unique", len(requestIDs)),
 			zap.Int("success", successCount))
-		ctx.Success(fmt.Sprintf("刷新任务已提交，成功 %d 个，失败 %d 个", successCount, len(requestIDs)-successCount))
+		ctx.Success(batchRefreshResponse{
+			Total:   len(requestIDs),
+			Success: successCount,
+			Failed:  len(requestIDs) - successCount,
+		})
 	}
 }

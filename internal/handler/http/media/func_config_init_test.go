@@ -51,7 +51,11 @@ func performConfigInitRequest(t *testing.T, service *mockConfigInitMediaConfigSe
 func TestConfigInitAcceptsExplicitDisableAutoClean(t *testing.T) {
 	service := &mockConfigInitMediaConfigService{}
 
-	recorder := performConfigInitRequest(t, service, `{"enable":true,"storagePath":"/media","autoClean":false,"baseURL":"http://example.test"}`)
+	recorder := performConfigInitRequest(
+		t,
+		service,
+		`{"enable":true,"storagePath":"/media","autoClean":false,"baseURL":"http://example.test","autoRebuildEnable":true,"autoRebuildCron":"0 4 * * *"}`,
+	)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected success, got %d body=%s", recorder.Code, recorder.Body.String())
@@ -63,6 +67,10 @@ func TestConfigInitAcceptsExplicitDisableAutoClean(t *testing.T) {
 
 	if service.req.AutoClean {
 		t.Fatal("expected autoClean false to be passed to service")
+	}
+
+	if service.req.AutoRebuildCron != "0 4 * * *" {
+		t.Fatalf("expected autoRebuildCron to be passed to service, got %q", service.req.AutoRebuildCron)
 	}
 }
 

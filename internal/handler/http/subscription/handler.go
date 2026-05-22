@@ -97,6 +97,14 @@ func invalidParams(err error) httpcontext.BusinessError {
 	}
 }
 
+func notFound(msg string) httpcontext.BusinessError {
+	return &customBusinessError{
+		httpCode:     http.StatusNotFound,
+		businessCode: 404,
+		message:      msg,
+	}
+}
+
 type customBusinessError struct {
 	httpCode     int
 	businessCode int
@@ -586,16 +594,16 @@ func (h *Handler) defaultMountPathFromConfig() (string, error) {
 }
 
 type UpdateConfigReq struct {
-	EnableTMDB       bool   `json:"enableTMDB"`
-	EnableDouban     bool   `json:"enableDouban"`
-	PanSearchURL     string `json:"panSearchURL"`
-	DefaultMountPath string `json:"defaultMountPath"`
-	AutoMount        bool   `json:"autoMount"`
-	CronExpression   string `json:"cronExpression"`
-	TMDBAPIKey       string `json:"tmdbAPIKey"`
-	OpenAIAPIKey     string `json:"openaiAPIKey"`
-	OpenAIBaseURL    string `json:"openaiBaseURL"`
-	OpenAIModel      string `json:"openaiModel"`
+	EnableTMDB       *bool   `json:"enableTMDB"`
+	EnableDouban     *bool   `json:"enableDouban"`
+	PanSearchURL     *string `json:"panSearchURL"`
+	DefaultMountPath *string `json:"defaultMountPath"`
+	AutoMount        *bool   `json:"autoMount"`
+	CronExpression   *string `json:"cronExpression"`
+	TMDBAPIKey       *string `json:"tmdbAPIKey"`
+	OpenAIAPIKey     *string `json:"openaiAPIKey"`
+	OpenAIBaseURL    *string `json:"openaiBaseURL"`
+	OpenAIModel      *string `json:"openaiModel"`
 }
 
 func (h *Handler) UpdateConfig() httpcontext.HandlerFunc {
@@ -616,19 +624,27 @@ func (h *Handler) UpdateConfig() httpcontext.HandlerFunc {
 			return
 		}
 
-		setting.Name = "subscription_config"
-		setting.Value = models.SubscriptionConfig{
-			EnableTMDB:       req.EnableTMDB,
-			EnableDouban:     req.EnableDouban,
-			PanSearchURL:     req.PanSearchURL,
-			CronExpression:   req.CronExpression,
-			DefaultMountPath: req.DefaultMountPath,
-			AutoMount:        req.AutoMount,
-			TMDBAPIKey:       req.TMDBAPIKey,
-			OpenAIAPIKey:     req.OpenAIAPIKey,
-			OpenAIBaseURL:    req.OpenAIBaseURL,
-			OpenAIModel:      req.OpenAIModel,
+		config := setting.Value
+		if setting.ID == 0 {
+			defaultConfig := h.defaultSubscriptionConfig()
+			config = models.SubscriptionConfig{
+				EnableTMDB:       defaultConfig.EnableTMDB,
+				EnableDouban:     defaultConfig.EnableDouban,
+				PanSearchURL:     defaultConfig.PanSearchURL,
+				CronExpression:   defaultConfig.CronExpression,
+				DefaultMountPath: defaultConfig.DefaultMountPath,
+				AutoMount:        defaultConfig.AutoMount,
+				TMDBAPIKey:       defaultConfig.TMDBAPIKey,
+				OpenAIAPIKey:     defaultConfig.OpenAIAPIKey,
+				OpenAIBaseURL:    defaultConfig.OpenAIBaseURL,
+				OpenAIModel:      defaultConfig.OpenAIModel,
+			}
 		}
+
+		applySubscriptionConfigUpdate(&config, &req)
+
+		setting.Name = "subscription_config"
+		setting.Value = config
 
 		if setting.ID == 0 {
 			result = h.db.Create(&setting)
@@ -647,7 +663,7 @@ func (h *Handler) UpdateConfig() httpcontext.HandlerFunc {
 		if setting.ID != 0 && result.RowsAffected == 0 {
 			if err := h.checkSubscriptionSettingUpdateResult(result, setting.ID); err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
-					c.Fail(invalidParams(gorm.ErrRecordNotFound))
+					c.Fail(notFound("订阅配置不存在").WithError(err))
 				} else {
 					c.Fail(invalidParams(err))
 				}
@@ -656,13 +672,55 @@ func (h *Handler) UpdateConfig() httpcontext.HandlerFunc {
 			}
 		}
 
-		if req.TMDBAPIKey != "" && h.tmdb != nil {
-			h.tmdb.SetAPIKey(req.TMDBAPIKey)
-			h.tmdbAPIKey = req.TMDBAPIKey
+		if h.tmdb != nil && req.TMDBAPIKey != nil {
+			h.tmdb.SetAPIKey(config.TMDBAPIKey)
+			h.tmdbAPIKey = config.TMDBAPIKey
 			h.logger.Info("Updated TMDB API Key from subscription config")
 		}
 
-		c.Success(req)
+		c.Success(config)
+	}
+}
+
+func applySubscriptionConfigUpdate(config *models.SubscriptionConfig, req *UpdateConfigReq) {
+	if req.EnableTMDB != nil {
+		config.EnableTMDB = *req.EnableTMDB
+	}
+
+	if req.EnableDouban != nil {
+		config.EnableDouban = *req.EnableDouban
+	}
+
+	if req.PanSearchURL != nil {
+		config.PanSearchURL = *req.PanSearchURL
+	}
+
+	if req.DefaultMountPath != nil {
+		config.DefaultMountPath = *req.DefaultMountPath
+	}
+
+	if req.AutoMount != nil {
+		config.AutoMount = *req.AutoMount
+	}
+
+	if req.CronExpression != nil {
+		config.CronExpression = *req.CronExpression
+	}
+
+	if req.TMDBAPIKey != nil {
+		config.TMDBAPIKey = *req.TMDBAPIKey
+	}
+
+	if req.OpenAIAPIKey != nil {
+		config.OpenAIAPIKey = *req.OpenAIAPIKey
+	}
+
+	if req.OpenAIBaseURL != nil {
+		config.OpenAIBaseURL = *req.OpenAIBaseURL
+	}
+
+	if req.OpenAIModel != nil {
+		config.OpenAIModel = *req.OpenAIModel
 	}
 }
 
@@ -698,156 +756,182 @@ type SearchResult struct {
 	Note       string `json:"note,omitempty"`
 }
 
+type panSearchResponseV2 struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    struct {
+		Total        int                        `json:"total"`
+		MergedByType map[string][]panSearchItem `json:"merged_by_type"`
+	} `json:"data"`
+}
+
+type panSearchItem struct {
+	URL      string   `json:"url"`
+	Password string   `json:"password"`
+	Note     string   `json:"note"`
+	Datetime string   `json:"datetime"`
+	Source   string   `json:"source"`
+	Images   []string `json:"images"`
+}
+
 func (h *Handler) SearchPan() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
-		keyword := c.Query("keyword")
+		keyword := strings.TrimSpace(c.Query("keyword"))
 		if keyword == "" {
 			c.Fail(invalidParams(fmt.Errorf("关键词不能为空")))
 
 			return
 		}
 
-		panSearchURL, err := h.panSearchURLFromConfig()
+		results, err := h.searchPanResults(c, keyword)
 		if err != nil {
-			c.Fail(invalidParams(fmt.Errorf("读取订阅配置失败: %w", err)))
+			c.Fail(invalidParams(err))
 
 			return
-		}
-
-		searchURL := panSearchURL
-		if !strings.Contains(panSearchURL, "/api/search") {
-			searchURL = strings.TrimRight(panSearchURL, "/") + "/api/search"
-		}
-
-		searchURL = fmt.Sprintf("%s?kw=%s&cloud_types=tianyi", searchURL, url.QueryEscape(keyword))
-
-		h.logger.Info("Searching pan", zap.String("url", searchURL))
-
-		req, err := http.NewRequestWithContext(c.Request.Context(), "GET", searchURL, nil)
-		if err != nil {
-			c.Fail(invalidParams(fmt.Errorf("请求失败: %w", err)))
-
-			return
-		}
-
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-		req.Header.Set("Accept", "application/json, text/plain, */*")
-		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
-		req.Header.Set("Referer", "https://so.252035.xyz/")
-
-		// 使用代理（如果配置了）
-		client := h.httpClient
-
-		proxyURL := os.Getenv("TG_PROXY")
-		if proxyURL != "" {
-			if proxyURL_, err := url.Parse(proxyURL); err == nil {
-				client = &http.Client{
-					Timeout:   h.httpClient.Timeout,
-					Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL_)},
-				}
-				h.logger.Info("Using proxy for pan search", zap.String("proxy", proxyURL))
-			}
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			h.logger.Error("Pan search request failed", zap.Error(err))
-
-			if isPanSearchTimeoutError(err) {
-				c.Fail(invalidParams(fmt.Errorf("请求超时，请稍后重试")))
-			} else {
-				c.Fail(invalidParams(fmt.Errorf("搜索服务不可用: %v", err)))
-			}
-
-			return
-		}
-		defer func() {
-			_ = resp.Body.Close()
-		}()
-
-		bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxPanSearchResponseSize+1))
-		if err != nil {
-			h.logger.Error("Failed to read response body", zap.Error(err))
-			c.Fail(invalidParams(fmt.Errorf("读取响应失败: %v", err)))
-
-			return
-		}
-
-		if len(bodyBytes) > maxPanSearchResponseSize {
-			c.Fail(invalidParams(fmt.Errorf("盘搜返回体过大，已拒绝")))
-
-			return
-		}
-
-		h.logger.Info("Pan search response", zap.Int("status", resp.StatusCode), zap.Int("body_len", len(bodyBytes)))
-
-		if resp.StatusCode != http.StatusOK {
-			h.logger.Warn("Pan search returned non-OK status", zap.Int("status", resp.StatusCode), zap.String("url", searchURL))
-			c.Fail(invalidParams(fmt.Errorf("搜索接口返回状态: %d，请检查盘搜 API 地址是否正确", resp.StatusCode)))
-
-			return
-		}
-
-		type PanSearchResponseV2 struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-			Data    struct {
-				Total        int `json:"total"`
-				MergedByType map[string][]struct {
-					URL      string   `json:"url"`
-					Password string   `json:"password"`
-					Note     string   `json:"note"`
-					Datetime string   `json:"datetime"`
-					Source   string   `json:"source"`
-					Images   []string `json:"images"`
-				} `json:"merged_by_type"`
-			} `json:"data"`
-		}
-
-		var result PanSearchResponseV2
-		if err := json.Unmarshal(bodyBytes, &result); err != nil {
-			h.logger.Error("Failed to parse pan search response", zap.Error(err))
-			c.Fail(invalidParams(fmt.Errorf("解析响应失败: %w", err)))
-
-			return
-		}
-
-		if result.Code != 0 {
-			c.Fail(invalidParams(fmt.Errorf("%s", result.Message)))
-
-			return
-		}
-
-		var results []SearchResult
-
-		if tianyiData, ok := result.Data.MergedByType["tianyi"]; ok {
-			for _, item := range tianyiData {
-				matches := shareCodeRegex.FindStringSubmatch(item.URL)
-
-				shareCode := ""
-				if len(matches) > 1 {
-					shareCode = matches[1]
-				}
-
-				cover := ""
-				if len(item.Images) > 0 {
-					cover = item.Images[0]
-				}
-
-				results = append(results, SearchResult{
-					ShareURL:   item.URL,
-					ShareCode:  shareCode,
-					Name:       item.Note,
-					UploadTime: item.Datetime,
-					Source:     item.Source,
-					Cover:      cover,
-					Note:       item.Note,
-				})
-			}
 		}
 
 		c.Success(results)
 	}
+}
+
+func (h *Handler) searchPanResults(c *httpcontext.Context, keyword string) ([]SearchResult, error) {
+	searchURL, err := h.panSearchRequestURL(keyword)
+	if err != nil {
+		return nil, err
+	}
+
+	h.logger.Info("Searching pan", zap.String("url", searchURL))
+
+	req, err := http.NewRequestWithContext(c.Request.Context(), "GET", searchURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("请求失败: %w", err)
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+	req.Header.Set("Referer", "https://so.252035.xyz/")
+
+	resp, err := h.panSearchHTTPClient().Do(req)
+	if err != nil {
+		h.logger.Error("Pan search request failed", zap.Error(err))
+
+		if isPanSearchTimeoutError(err) {
+			return nil, fmt.Errorf("请求超时，请稍后重试")
+		}
+
+		return nil, fmt.Errorf("搜索服务不可用: %v", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxPanSearchResponseSize+1))
+	if err != nil {
+		h.logger.Error("Failed to read response body", zap.Error(err))
+
+		return nil, fmt.Errorf("读取响应失败: %v", err)
+	}
+
+	if len(bodyBytes) > maxPanSearchResponseSize {
+		return nil, fmt.Errorf("盘搜返回体过大，已拒绝")
+	}
+
+	h.logger.Info("Pan search response", zap.Int("status", resp.StatusCode), zap.Int("body_len", len(bodyBytes)))
+
+	if resp.StatusCode != http.StatusOK {
+		h.logger.Warn("Pan search returned non-OK status", zap.Int("status", resp.StatusCode), zap.String("url", searchURL))
+
+		return nil, fmt.Errorf("搜索接口返回状态: %d，请检查盘搜 API 地址是否正确", resp.StatusCode)
+	}
+
+	var result panSearchResponseV2
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
+		h.logger.Error("Failed to parse pan search response", zap.Error(err))
+
+		return nil, fmt.Errorf("解析响应失败: %w", err)
+	}
+
+	if result.Code != 0 {
+		return nil, fmt.Errorf("%s", result.Message)
+	}
+
+	return panSearchResultsFromResponse(result), nil
+}
+
+func (h *Handler) panSearchRequestURL(keyword string) (string, error) {
+	panSearchURL, err := h.panSearchURLFromConfig()
+	if err != nil {
+		return "", fmt.Errorf("读取订阅配置失败: %w", err)
+	}
+
+	searchURL := panSearchURL
+	if !strings.Contains(panSearchURL, "/api/search") {
+		searchURL = strings.TrimRight(panSearchURL, "/") + "/api/search"
+	}
+
+	return fmt.Sprintf("%s?kw=%s&cloud_types=tianyi", searchURL, url.QueryEscape(keyword)), nil
+}
+
+func (h *Handler) panSearchHTTPClient() *http.Client {
+	client := h.httpClient
+	if client == nil {
+		client = &http.Client{Timeout: 120 * time.Second}
+	}
+
+	proxyURL := os.Getenv("TG_PROXY")
+	if proxyURL == "" {
+		return client
+	}
+
+	parsedProxyURL, err := url.Parse(proxyURL)
+	if err != nil {
+		h.logger.Warn("Invalid TG_PROXY for pan search", zap.String("proxy", proxyURL), zap.Error(err))
+
+		return client
+	}
+
+	h.logger.Info("Using proxy for pan search", zap.String("proxy", proxyURL))
+
+	return &http.Client{
+		Timeout:   client.Timeout,
+		Transport: &http.Transport{Proxy: http.ProxyURL(parsedProxyURL)},
+	}
+}
+
+func panSearchResultsFromResponse(result panSearchResponseV2) []SearchResult {
+	results := make([]SearchResult, 0)
+
+	tianyiData, ok := result.Data.MergedByType["tianyi"]
+	if !ok {
+		return results
+	}
+
+	for _, item := range tianyiData {
+		matches := shareCodeRegex.FindStringSubmatch(item.URL)
+
+		shareCode := ""
+		if len(matches) > 1 {
+			shareCode = matches[1]
+		}
+
+		cover := ""
+		if len(item.Images) > 0 {
+			cover = item.Images[0]
+		}
+
+		results = append(results, SearchResult{
+			ShareURL:   item.URL,
+			ShareCode:  shareCode,
+			Name:       item.Note,
+			UploadTime: item.Datetime,
+			Source:     item.Source,
+			Cover:      cover,
+			Note:       item.Note,
+		})
+	}
+
+	return results
 }
 
 func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
@@ -879,16 +963,22 @@ func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 			return
 		}
 
-		defaultMountPath, err := h.defaultMountPathFromConfig()
-		if err != nil {
-			c.Fail(invalidParams(fmt.Errorf("读取订阅配置失败: %w", err)))
+		mountPath := strings.TrimSpace(req.MountPath)
+		if mountPath == "" {
+			defaultMountPath, err := h.defaultMountPathFromConfig()
+			if err != nil {
+				c.Fail(invalidParams(fmt.Errorf("读取订阅配置失败: %w", err)))
 
-			return
+				return
+			}
+
+			mountPath = strings.TrimRight(defaultMountPath, "/") + "/" + strings.TrimLeft(req.Title, "/")
 		}
 
-		mountPath := req.MountPath
-		if mountPath == "" {
-			mountPath = defaultMountPath + "/" + req.Title
+		if !strings.HasPrefix(mountPath, "/") {
+			c.Fail(invalidParams(fmt.Errorf("挂载路径必须以 / 开头")))
+
+			return
 		}
 
 		if h.storageFacadeService == nil {
@@ -932,6 +1022,7 @@ func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 			FileId:        shareInfo.ID,
 			AllowExisting: true,
 			CreatorUserID: userID,
+			IsAdmin:       isAdmin,
 		}
 
 		id, err := h.storageFacadeService.CreateStorage(ctx, storageReq)
@@ -955,146 +1046,39 @@ func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 
 func (h *Handler) SearchPanWithAI() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
-		keyword := c.Query("keyword")
+		keyword := strings.TrimSpace(c.Query("keyword"))
 		if keyword == "" {
 			c.Fail(invalidParams(fmt.Errorf("关键词不能为空")))
 
 			return
 		}
 
-		panSearchURL, err := h.panSearchURLFromConfig()
+		results, err := h.searchPanResults(c, keyword)
 		if err != nil {
-			c.Fail(invalidParams(fmt.Errorf("读取订阅配置失败: %w", err)))
+			c.Fail(invalidParams(err))
 
 			return
 		}
 
-		searchURL := panSearchURL
-		if !strings.Contains(panSearchURL, "/api/search") {
-			searchURL = strings.TrimRight(panSearchURL, "/") + "/api/search"
-		}
-
-		searchURL = fmt.Sprintf("%s?kw=%s&cloud_types=tianyi", searchURL, url.QueryEscape(keyword))
-
-		h.logger.Info("Searching pan with AI", zap.String("url", searchURL))
-
-		req, err := http.NewRequestWithContext(c.Request.Context(), "GET", searchURL, nil)
-		if err != nil {
-			c.Fail(invalidParams(fmt.Errorf("请求失败: %w", err)))
-
-			return
-		}
-
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-		req.Header.Set("Accept", "application/json, text/plain, */*")
-		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
-		req.Header.Set("Referer", "https://so.252035.xyz/")
-
-		resp, err := h.httpClient.Do(req)
-		if err != nil {
-			h.logger.Error("Pan search request failed", zap.Error(err))
-
-			if isPanSearchTimeoutError(err) {
-				c.Fail(invalidParams(fmt.Errorf("请求超时，请稍后重试")))
-			} else {
-				c.Fail(invalidParams(fmt.Errorf("搜索服务不可用: %v", err)))
-			}
-
-			return
-		}
-		defer func() {
-			_ = resp.Body.Close()
-		}()
-
-		if resp.StatusCode != http.StatusOK {
-			h.logger.Warn("Pan search returned non-OK status", zap.Int("status", resp.StatusCode))
-			c.Fail(invalidParams(fmt.Errorf("搜索接口返回状态: %d", resp.StatusCode)))
-
-			return
-		}
-
-		type PanSearchResponseV2 struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-			Data    struct {
-				Total        int `json:"total"`
-				MergedByType map[string][]struct {
-					URL      string   `json:"url"`
-					Password string   `json:"password"`
-					Note     string   `json:"note"`
-					Datetime string   `json:"datetime"`
-					Source   string   `json:"source"`
-					Images   []string `json:"images"`
-				} `json:"merged_by_type"`
-			} `json:"data"`
-		}
-
-		bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxPanSearchResponseSize+1))
-		if err != nil {
-			h.logger.Error("Failed to read response body", zap.Error(err))
-			c.Fail(invalidParams(fmt.Errorf("读取响应失败: %v", err)))
-
-			return
-		}
-
-		if len(bodyBytes) > maxPanSearchResponseSize {
-			c.Fail(invalidParams(fmt.Errorf("盘搜返回体过大，已拒绝")))
-
-			return
-		}
-
-		var searchResult PanSearchResponseV2
-		if err := json.Unmarshal(bodyBytes, &searchResult); err != nil {
-			h.logger.Error("Failed to parse pan search response", zap.Error(err))
-			c.Fail(invalidParams(fmt.Errorf("解析响应失败: %w", err)))
-
-			return
-		}
-
-		if searchResult.Code != 0 {
-			c.Fail(invalidParams(fmt.Errorf("%s", searchResult.Message)))
+		if len(results) == 0 {
+			c.Success(gin.H{
+				"message":       "未找到相关资源",
+				"keyword":       keyword,
+				"aiDescription": "",
+				"result":        nil,
+				"allResults":    []SearchResult{},
+			})
 
 			return
 		}
 
 		if h.openaiSvc == nil {
-			c.Fail(invalidParams(fmt.Errorf("AI服务未配置")))
-
-			return
-		}
-
-		var results []SearchResult
-
-		if tianyiData, ok := searchResult.Data.MergedByType["tianyi"]; ok {
-			for _, item := range tianyiData {
-				matches := shareCodeRegex.FindStringSubmatch(item.URL)
-
-				shareCode := ""
-				if len(matches) > 1 {
-					shareCode = matches[1]
-				}
-
-				cover := ""
-				if len(item.Images) > 0 {
-					cover = item.Images[0]
-				}
-
-				results = append(results, SearchResult{
-					ShareURL:   item.URL,
-					ShareCode:  shareCode,
-					Name:       item.Note,
-					UploadTime: item.Datetime,
-					Source:     item.Source,
-					Cover:      cover,
-					Note:       item.Note,
-				})
-			}
-		}
-
-		if len(results) == 0 {
 			c.Success(gin.H{
-				"message": "未找到相关资源",
-				"result":  nil,
+				"message":       "AI服务未配置，返回全部搜索结果",
+				"keyword":       keyword,
+				"aiDescription": "",
+				"result":        nil,
+				"allResults":    results,
 			})
 
 			return

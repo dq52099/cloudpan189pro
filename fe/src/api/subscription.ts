@@ -47,9 +47,20 @@ export interface SearchResult {
   shareUrl: string
   shareCode: string
   name: string
-  size: string
+  size?: string
   uploadTime: string
   source: string
+  cover?: string
+  note?: string
+}
+
+export interface MountSubscriptionResponse {
+  message: string
+  mountPath: string
+  shareURL: string
+  shareCode: string
+  fileId: number
+  name: string
 }
 
 export const getCategories = (): Promise<ApiResponse<CategoriesResponse>> => {
@@ -101,6 +112,7 @@ export const mountSubscription = (data: {
   shareUrl: string
   shareCode?: string
   cover?: string
-}): Promise<ApiResponse<{ message: string; mountPath: string }>> => {
+  mountPath?: string
+}): Promise<ApiResponse<MountSubscriptionResponse>> => {
   return api.post('/subscription/mount', data).then((res) => res.data)
 }

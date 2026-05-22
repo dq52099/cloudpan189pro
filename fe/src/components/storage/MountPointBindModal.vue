@@ -564,10 +564,71 @@ const buildRequests = (): AddStorageRequest[] => {
   }))
 }
 
+const isFiniteNumber = (value: unknown): value is number => {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+const isNonNegativeInteger = (value: unknown): value is number => {
+  return Number.isInteger(value) && Number(value) >= 0
+}
+
+const isOptionalString = (value: unknown): value is string | undefined => {
+  return value === undefined || typeof value === 'string'
+}
+
+const isOptionalBoolean = (value: unknown): value is boolean | undefined => {
+  return value === undefined || typeof value === 'boolean'
+}
+
+const isOptionalFiniteNumber = (value: unknown): value is number | undefined => {
+  return value === undefined || isFiniteNumber(value)
+}
+
+const isBatchAddResultItem = (
+  value: unknown
+): value is BatchAddStorageResponse['results'][number] => {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const item = value as Partial<BatchAddStorageResponse['results'][number]>
+
+  return (
+    typeof item.localPath === 'string' &&
+    typeof item.success === 'boolean' &&
+    isOptionalFiniteNumber(item.id) &&
+    isOptionalString(item.error) &&
+    isOptionalBoolean(item.scanQueued) &&
+    isOptionalString(item.scanError)
+  )
+}
+
+const isBatchAddStorageResponse = (value: unknown): value is BatchAddStorageResponse => {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const data = value as Partial<BatchAddStorageResponse>
+
+  return (
+    isNonNegativeInteger(data.successCount) &&
+    isNonNegativeInteger(data.failCount) &&
+    isOptionalFiniteNumber(data.scanQueuedCount) &&
+    isOptionalFiniteNumber(data.scanFailedCount) &&
+    Array.isArray(data.results) &&
+    data.results.every(isBatchAddResultItem)
+  )
+}
+
 // 处理批量挂载结果
 const handleMountResults = (response: ApiResponse<BatchAddStorageResponse>) => {
-  if (response.code !== 200 || !response.data) {
+  if (response.code !== 200) {
     message.error(response.msg || '批量挂载失败')
+    return
+  }
+
+  if (!isBatchAddStorageResponse(response.data)) {
+    message.error('批量挂载响应统计缺失/异常')
     return
   }
 

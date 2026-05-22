@@ -3,6 +3,7 @@ export namespace StorageType {
   export type StorageSetting = {
     pathPrefix: string
     selectedToken: number
+    version?: number
     enableAutoRefresh?: boolean
     autoRefreshDays?: number
     refreshInterval?: number

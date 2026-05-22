@@ -27,6 +27,7 @@ type CreateStorageRequest struct {
 	EnableDeepRefresh bool `json:"enableDeepRefresh"`
 
 	CreatorUserID int64 // 创建者用户ID
+	IsAdmin       bool  // 创建者是否管理员
 
 	// AllowExisting 为 true 时，若目标路径已有挂载点，直接返回其根 VirtualFile ID；
 	// 若只有同路径虚拟文件而没有挂载点，仍返回 ErrPathAlreadyExists，避免调用方误判为挂载成功。
@@ -40,6 +41,7 @@ var (
 	errRequestNil         = errors.New("请求对象为空")
 	errInvalidPath        = errors.New("路径不合法，需要 / 开头的路径")
 	errRootPathNotAllowed = errors.New("不允许挂载根路径")
+	errInvalidCloudToken  = errors.New("云盘令牌不合法")
 )
 
 // CreateStorage 在一个统一流程中创建 VirtualFile 顶层节点与 MountPoint 记录，返回根 VirtualFile ID。
@@ -52,6 +54,10 @@ func (s *service) CreateStorage(ctx context.Context, req *CreateStorageRequest) 
 
 	if !utils.CheckIsPath(req.LocalPath) {
 		return 0, errInvalidPath
+	}
+
+	if err := s.validateCloudTokenAccess(ctx, req); err != nil {
+		return 0, err
 	}
 
 	// 防重：MountPoint 与 VirtualFile
@@ -148,4 +154,22 @@ func (s *service) CreateStorage(ctx context.Context, req *CreateStorageRequest) 
 	}
 
 	return id, nil
+}
+
+func (s *service) validateCloudTokenAccess(ctx context.Context, req *CreateStorageRequest) error {
+	if req.CloudToken < 0 {
+		return errInvalidCloudToken
+	}
+
+	if req.CloudToken == 0 {
+		return nil
+	}
+
+	if s.cloudTokenService == nil {
+		return errInvalidCloudToken
+	}
+
+	_, err := s.cloudTokenService.QueryAccessible(ctx, req.CloudToken, req.CreatorUserID, req.IsAdmin)
+
+	return err
 }

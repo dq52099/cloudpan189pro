@@ -1,4 +1,4 @@
-PROJECT_NAME=cloudpan189-share
+PROJECT_NAME=cloudpan189pro
 MODULE_NAME=github.com/xxcheng123/cloudpan189-share
 CONFIG_PACKAGE=$(MODULE_NAME)/internal/configs
 PNPM ?= corepack pnpm@9.15.9
@@ -10,7 +10,7 @@ VAR_GIT_BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
 # 输出配置
 OUTPUT_DIR=output
 BINARY_NAME=share
-DOCKER_IMAGE=$(PROJECT_NAME):latest
+DOCKER_IMAGE=dq52099/$(PROJECT_NAME):latest
 
 .PHONY: build build-frontend build-backend build-multi-arch clean clean-all
 .PHONY: docker-build docker-run docker-stop docker-clean docker-logs

@@ -112,7 +112,14 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 
 		accessibleIds = lo.Uniq(accessibleIds)
 
-		if len(accessibleIds) == 0 || (!lo.Contains(accessibleIds, file.TopId) && file.OsType != models.OsTypeFolder) {
+		accessibleTopPaths, err := e.resolveAccessibleTopPaths(ctx, accessibleIds)
+		if err != nil {
+			ctx.Fail(busCodeFileQueryError.WithError(err))
+
+			return
+		}
+
+		if !isVirtualFileVisible(file, fullPath, accessibleIds, accessibleTopPaths) {
 			ctx.Unauthorized("无权限访问")
 
 			return
@@ -132,10 +139,6 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 
 				return
 			}
-
-			children = lo.Filter(children, func(child *models.VirtualFile, _ int) bool {
-				return !e.shouldLimitFileByStrm(child, isAdmin)
-			})
 		} else if ctx.Request.Method == http.MethodGet || ctx.Request.Method == http.MethodHead || ctx.Request.Method == http.MethodPost {
 			values, err := e.verifyService.SignV1(ctx.GetContext(), file.ID)
 			if err != nil {
@@ -150,11 +153,21 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 			return
 		}
 
-		if len(allowTopIds) > 0 {
-			children = lo.Filter(children, func(child *models.VirtualFile, index int) bool {
-				return child.OsType == models.OsTypeFolder || lo.Contains(allowTopIds, child.TopId)
-			})
+		filteredChildren := make([]*models.VirtualFile, 0, len(children))
+		for _, child := range children {
+			if e.shouldLimitFileByStrm(child, isAdmin) {
+				continue
+			}
+
+			childPath := path.Join(fullPath, child.Name)
+			if !isVirtualFileVisible(child, childPath, allowTopIds, accessibleTopPaths) {
+				continue
+			}
+
+			filteredChildren = append(filteredChildren, child)
 		}
+
+		children = filteredChildren
 
 		ctx.Header("Content-Type", "application/xml; charset=utf-8")
 		ctx.Header("DAV", "1, 2")
@@ -181,6 +194,58 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 
 		ctx.Data(http.StatusMultiStatus, "application/xml; charset=utf-8", []byte(xmlResponse.String()))
 	}
+}
+
+func (e *workEngine) resolveAccessibleTopPaths(ctx *httpcontext.Context, topIds []int64) ([]string, error) {
+	paths := make([]string, 0, len(topIds))
+
+	for _, topId := range topIds {
+		topPath, err := e.virtualFileService.CalFullPath(ctx.GetContext(), topId)
+		if err != nil {
+			return nil, err
+		}
+
+		paths = append(paths, topPath)
+	}
+
+	return paths, nil
+}
+
+func isVirtualFileVisible(file *models.VirtualFile, filePath string, allowTopIds []int64, accessibleTopPaths []string) bool {
+	if file == nil {
+		return false
+	}
+
+	if isRootVirtualFile(file) {
+		return true
+	}
+
+	if lo.Contains(allowTopIds, file.TopId) {
+		return true
+	}
+
+	if file.IsDir && file.TopId == 0 {
+		return isPathAncestorOfAny(filePath, accessibleTopPaths)
+	}
+
+	return false
+}
+
+func isRootVirtualFile(file *models.VirtualFile) bool {
+	return file != nil && file.ID == 0 && file.ParentId == 0 && file.TopId == 0 && file.IsDir && file.IsTop
+}
+
+func isPathAncestorOfAny(candidate string, paths []string) bool {
+	candidate = path.Clean("/" + strings.TrimPrefix(candidate, "/"))
+
+	for _, item := range paths {
+		item = path.Clean("/" + strings.TrimPrefix(item, "/"))
+		if item == candidate || strings.HasPrefix(item, strings.TrimRight(candidate, "/")+"/") {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (e *workEngine) shouldLimitFileByStrm(file *models.VirtualFile, isAdmin bool) bool {

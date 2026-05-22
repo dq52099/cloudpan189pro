@@ -22,6 +22,10 @@ func (s *service) BatchCreate(ctx context.Context, parentId int64, files []*mode
 		return 0, errors.New("parent_id is invalid")
 	}
 
+	if len(files) == 0 {
+		return 0, nil
+	}
+
 	names := make([]string, 0, len(files)*2)
 	for _, file := range files {
 		file.ParentId = parentId

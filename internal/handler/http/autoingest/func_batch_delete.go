@@ -10,7 +10,7 @@ import (
 
 // BatchDeleteRequest 批量删除请求
 type BatchDeleteRequest struct {
-	IDs []int64 `json:"ids" binding:"required,min=1,max=500"`
+	IDs []int64 `json:"ids" binding:"required,min=1"`
 }
 
 // BatchDelete 批量删除计划

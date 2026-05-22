@@ -155,6 +155,27 @@ func TestDeleteByIdsRejectsInvalidIDWithoutDeletingLogs(t *testing.T) {
 	}
 }
 
+func TestDeleteByIdsReturnsNotFoundWhenSomeIDsMissing(t *testing.T) {
+	tDB := setupAutoIngestLogTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	log := createAutoIngestLog(t, tDB.db, 10, autoingest.LogLevelInfo)
+
+	deleted, err := svc.DeleteByIds(ctx, []int64{log.ID, 99999})
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected record not found, got %v", err)
+	}
+
+	if deleted != 1 {
+		t.Fatalf("expected one deleted row before not found, got %d", deleted)
+	}
+
+	if count := countAutoIngestLogs(t, tDB.db, "id = ?", log.ID); count != 0 {
+		t.Fatalf("expected existing log to be deleted, got count %d", count)
+	}
+}
+
 func TestDeleteErrorLogsByPlanIdRejectsInvalidPlanIDWithoutDeletingLogs(t *testing.T) {
 	tDB := setupAutoIngestLogTestDB(t)
 	svc := NewService(tDB)

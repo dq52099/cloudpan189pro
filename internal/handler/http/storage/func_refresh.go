@@ -44,7 +44,7 @@ func (h *handler) Refresh() httpcontext.HandlerFunc {
 		}
 
 		taskReq := &topic.FileScanFileRequest{
-			FileId: req.ID,
+			FileId: mountPoint.FileId,
 			Deep:   req.Deep,
 		}
 

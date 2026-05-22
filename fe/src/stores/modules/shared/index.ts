@@ -3,18 +3,48 @@ import { reactive, watch } from 'vue'
 import { localStg } from '@/utils/storage'
 import { type StorageType } from '@/types/global.d'
 
+const storageSettingVersion = 2
+
+const defaultStorageSetting = (): StorageType.StorageSetting => ({
+  pathPrefix: '/',
+  selectedToken: 0,
+  version: storageSettingVersion,
+})
+
+const migrateStorageSetting = (
+  setting: StorageType.StorageSetting | null
+): StorageType.StorageSetting => {
+  if (!setting) {
+    return defaultStorageSetting()
+  }
+
+  const next: StorageType.StorageSetting = {
+    ...defaultStorageSetting(),
+    ...setting,
+  }
+
+  if ((setting.version ?? 1) < 2 && next.refreshInterval && next.refreshInterval < 30) {
+    next.refreshInterval = 30
+  }
+
+  next.version = storageSettingVersion
+
+  return next
+}
+
 export const useSharedStore = defineStore('shared', () => {
   let temporaryPathPrefixRestoreValue: string | null = null
 
   const load = (): StorageType.StorageSetting => {
     const _storageSetting = localStg.get('storageSetting')
 
-    return _storageSetting || { pathPrefix: '/', selectedToken: 0 }
+    return migrateStorageSetting(_storageSetting)
   }
 
   const persist = (data: StorageType.StorageSetting) => {
     localStg.set('storageSetting', {
       ...data,
+      version: storageSettingVersion,
       pathPrefix: temporaryPathPrefixRestoreValue ?? data.pathPrefix,
     })
   }

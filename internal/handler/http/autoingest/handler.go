@@ -7,6 +7,7 @@ import (
 	autoingestlogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestlog"
 	autoingestplanSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestplan"
 	cloudbridgeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
+	cloudtokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
 )
 
 type Handler interface {
@@ -66,6 +67,7 @@ type handler struct {
 	planService        autoingestplanSvi.Service
 	logService         autoingestlogSvi.Service
 	cloudBridgeService cloudbridgeSvi.Service
+	cloudTokenService  cloudtokenSvi.Service
 }
 
 func NewHandler(
@@ -73,11 +75,18 @@ func NewHandler(
 	planService autoingestplanSvi.Service,
 	logService autoingestlogSvi.Service,
 	cloudBridgeService cloudbridgeSvi.Service,
+	cloudTokenService ...cloudtokenSvi.Service,
 ) Handler {
-	return &handler{
+	h := &handler{
 		taskEngine:         taskEngine,
 		planService:        planService,
 		logService:         logService,
 		cloudBridgeService: cloudBridgeService,
 	}
+
+	if len(cloudTokenService) > 0 {
+		h.cloudTokenService = cloudTokenService[0]
+	}
+
+	return h
 }

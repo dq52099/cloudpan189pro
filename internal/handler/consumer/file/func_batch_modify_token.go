@@ -25,12 +25,6 @@ func (h *handler) HandleBatchModifyToken() taskcontext.HandlerFunc {
 			return err
 		}
 
-		if len(requestIDs) == 0 {
-			ctx.GetContext().Info("批量修改令牌任务为空，跳过")
-
-			return nil
-		}
-
 		taskName := "批量修改令牌"
 		taskDesc := fmt.Sprintf("批量修改 %d 个挂载点的令牌，新令牌ID: %d", len(requestIDs), req.TokenID)
 

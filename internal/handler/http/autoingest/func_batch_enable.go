@@ -8,7 +8,7 @@ import (
 
 // BatchEnableRequest 批量启用请求
 type BatchEnableRequest struct {
-	IDs []int64 `json:"ids" binding:"required,min=1,max=500"`
+	IDs []int64 `json:"ids" binding:"required,min=1"`
 }
 
 // BatchEnable 批量启用计划

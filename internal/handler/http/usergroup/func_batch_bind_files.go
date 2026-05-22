@@ -38,7 +38,7 @@ func (h *handler) BatchBindFiles() httpcontext.HandlerFunc {
 
 		if _, err := h.userGroupService.Query(ctx.GetContext(), req.GroupID); err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				ctx.Fail(codeBatchBindFilesFailed.WithError(err))
+				ctx.Fail(codeUserGroupNotFound.WithError(err))
 
 				return
 			}

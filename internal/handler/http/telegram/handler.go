@@ -101,14 +101,14 @@ func (h *Handler) GetSetting() httpcontext.HandlerFunc {
 }
 
 type UpdateSettingReq struct {
-	BotToken         string `json:"botToken"`
-	ProxyURL         string `json:"proxyURL"`
-	ProxyType        string `json:"proxyType"`
-	APIURL           string `json:"apiURL"`
-	ChatID           string `json:"chatID"`
-	DefaultMountPath string `json:"defaultMountPath"`
-	EnableNotify     bool   `json:"enableNotify"`
-	Enable           bool   `json:"enable"`
+	BotToken         *string `json:"botToken"`
+	ProxyURL         *string `json:"proxyURL"`
+	ProxyType        *string `json:"proxyType"`
+	APIURL           *string `json:"apiURL"`
+	ChatID           *string `json:"chatID"`
+	DefaultMountPath *string `json:"defaultMountPath"`
+	EnableNotify     *bool   `json:"enableNotify"`
+	Enable           *bool   `json:"enable"`
 }
 
 func (h *Handler) UpdateSetting() httpcontext.HandlerFunc {
@@ -129,31 +129,26 @@ func (h *Handler) UpdateSetting() httpcontext.HandlerFunc {
 			return
 		}
 
-		setting.BotTokenEncrypted = req.BotToken
-		setting.ProxyURL = req.ProxyURL
-		setting.ProxyType = req.ProxyType
-		setting.APIURL = req.APIURL
-		setting.ChatID = req.ChatID
-		setting.DefaultMountPath = req.DefaultMountPath
-		setting.EnableNotify = req.EnableNotify
-		setting.Enable = req.Enable
+		if setting.ID == 0 {
+			setting.APIURL = "https://api.telegram.org"
+			setting.DefaultMountPath = "/转存"
+			setting.EnableNotify = true
+		}
+
+		applyTelegramSettingUpdate(&setting, &req)
+
+		updates := telegramSettingUpdateMap(&req)
 
 		if setting.ID == 0 {
 			result = h.db.Create(&setting)
 		} else {
-			result = h.db.Model(&models.TelegramSetting{}).
-				Where("id = ?", setting.ID).
-				Select(
-					"bot_token_encrypted",
-					"proxy_url",
-					"proxy_type",
-					"api_url",
-					"chat_id",
-					"default_mount_path",
-					"enable_notify",
-					"enable",
-				).
-				Updates(setting)
+			if len(updates) == 0 {
+				result = &gorm.DB{RowsAffected: 0}
+			} else {
+				result = h.db.Model(&models.TelegramSetting{}).
+					Where("id = ?", setting.ID).
+					Updates(updates)
+			}
 		}
 
 		if result.Error != nil {
@@ -178,6 +173,77 @@ func (h *Handler) UpdateSetting() httpcontext.HandlerFunc {
 		setting.BotTokenEncrypted = ""
 		c.Success(setting)
 	}
+}
+
+func applyTelegramSettingUpdate(setting *models.TelegramSetting, req *UpdateSettingReq) {
+	if req.BotToken != nil {
+		setting.BotTokenEncrypted = *req.BotToken
+	}
+
+	if req.ProxyURL != nil {
+		setting.ProxyURL = *req.ProxyURL
+	}
+
+	if req.ProxyType != nil {
+		setting.ProxyType = *req.ProxyType
+	}
+
+	if req.APIURL != nil {
+		setting.APIURL = *req.APIURL
+	}
+
+	if req.ChatID != nil {
+		setting.ChatID = *req.ChatID
+	}
+
+	if req.DefaultMountPath != nil {
+		setting.DefaultMountPath = *req.DefaultMountPath
+	}
+
+	if req.EnableNotify != nil {
+		setting.EnableNotify = *req.EnableNotify
+	}
+
+	if req.Enable != nil {
+		setting.Enable = *req.Enable
+	}
+}
+
+func telegramSettingUpdateMap(req *UpdateSettingReq) map[string]interface{} {
+	updates := make(map[string]interface{})
+	if req.BotToken != nil {
+		updates["bot_token_encrypted"] = *req.BotToken
+	}
+
+	if req.ProxyURL != nil {
+		updates["proxy_url"] = *req.ProxyURL
+	}
+
+	if req.ProxyType != nil {
+		updates["proxy_type"] = *req.ProxyType
+	}
+
+	if req.APIURL != nil {
+		updates["api_url"] = *req.APIURL
+	}
+
+	if req.ChatID != nil {
+		updates["chat_id"] = *req.ChatID
+	}
+
+	if req.DefaultMountPath != nil {
+		updates["default_mount_path"] = *req.DefaultMountPath
+	}
+
+	if req.EnableNotify != nil {
+		updates["enable_notify"] = *req.EnableNotify
+	}
+
+	if req.Enable != nil {
+		updates["enable"] = *req.Enable
+	}
+
+	return updates
 }
 
 func (h *Handler) TestConnection() httpcontext.HandlerFunc {

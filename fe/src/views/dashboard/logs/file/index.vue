@@ -218,6 +218,10 @@ const clearLogOptions: DropdownOption[] = [
   { label: '保留最近 90 天', key: '90d' },
 ]
 
+const isValidClearCount = (value: unknown): value is number => {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
 const AUTO_REFRESH_INTERVAL = 3000
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 let isComponentMounted = false
@@ -419,7 +423,12 @@ const handleClearLogs = (key: string | number) => {
           }
 
           if (res.code === 200) {
-            message.success(`任务日志已清理${res.data ? `，删除 ${res.data} 条` : ''}`)
+            if (isValidClearCount(res.data)) {
+              message.success(`任务日志已清理，删除 ${res.data} 条`)
+            } else {
+              message.warning('清理完成但响应统计缺失/异常')
+            }
+
             paginationReactive.page = 1
             fetchTaskLogList()
           } else {

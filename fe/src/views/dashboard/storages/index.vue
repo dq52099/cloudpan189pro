@@ -103,7 +103,9 @@
           type="info"
           @click="handleBatchRefresh(false)"
           class="batch-btn"
-          :disabled="batchSubmitting || selectedIds.length === 0"
+          :disabled="
+            batchSubmitting || selectedIds.length === 0 || selectedIds.length > maxBatchActionIds
+          "
         >
           <template #icon
             ><n-icon><RefreshOutline /></n-icon
@@ -114,7 +116,9 @@
           type="warning"
           @click="handleBatchRefresh(true)"
           class="batch-btn"
-          :disabled="batchSubmitting || selectedIds.length === 0"
+          :disabled="
+            batchSubmitting || selectedIds.length === 0 || selectedIds.length > maxBatchActionIds
+          "
         >
           <template #icon
             ><n-icon><RefreshOutline /></n-icon
@@ -125,7 +129,11 @@
           type="primary"
           @click="handleBatchModifyToken"
           class="batch-btn"
-          :disabled="batchSubmitting || selectedIds.length === 0"
+          :disabled="
+            batchSubmitting ||
+            selectedIds.length === 0 ||
+            selectedIds.length > maxBatchModifyTokenIds
+          "
         >
           <template #icon
             ><n-icon><KeyOutline /></n-icon
@@ -136,7 +144,9 @@
           type="error"
           @click="handleBatchDelete"
           class="batch-btn"
-          :disabled="batchSubmitting || selectedIds.length === 0"
+          :disabled="
+            batchSubmitting || selectedIds.length === 0 || selectedIds.length > maxBatchActionIds
+          "
         >
           <template #icon
             ><n-icon><TrashOutline /></n-icon
@@ -162,21 +172,21 @@
     <div class="storage-cards">
       <n-card
         v-for="storage in tableData"
-        :key="storage.id"
+        :key="storage.mountPointId"
         class="storage-card"
-        :class="{ 'is-selected': selectedIds.includes(storage.id) }"
+        :class="{ 'is-selected': selectedIds.includes(storage.mountPointId) }"
         hoverable
         :bordered="false"
-        @click="handleCardClick(storage.id)"
+        @click="handleCardClick(storage.mountPointId)"
       >
         <!-- 选择遮罩 -->
         <div v-if="isBatchMode" class="selection-overlay">
           <n-checkbox
-            :checked="selectedIds.includes(storage.id)"
+            :checked="selectedIds.includes(storage.mountPointId)"
             class="selection-checkbox"
             size="large"
             :disabled="batchSubmitting"
-            @click.stop="toggleSelection(storage.id)"
+            @click.stop="toggleSelection(storage.mountPointId)"
           />
         </div>
         <!-- 存储卡片内容 -->
@@ -211,7 +221,7 @@
                 </template>
               </n-button>
 
-              <n-dropdown :options="getRefreshOptions(storage.id)" trigger="click">
+              <n-dropdown :options="getRefreshOptions(storage.mountPointId)" trigger="click">
                 <n-button size="small" quaternary circle>
                   <template #icon>
                     <n-icon :size="16">
@@ -539,7 +549,7 @@
             <n-select
               v-model:value="selectedTokenId"
               :options="cloudTokenOptions"
-              placeholder="请选择要绑定的令牌"
+              placeholder="请选择令牌或解绑令牌"
               clearable
               style="width: 100%"
               :disabled="modifyTokenSubmitting"
@@ -556,7 +566,7 @@
           :loading="modifyTokenSubmitting"
           :disabled="modifyTokenSubmitting"
         >
-          确认修改
+          确认
         </n-button>
       </template>
     </n-modal>
@@ -581,7 +591,7 @@
             <n-select
               v-model:value="batchModifyTokenId"
               :options="cloudTokenOptions"
-              placeholder="请选择要绑定的令牌"
+              placeholder="请选择令牌或解绑令牌"
               clearable
               style="width: 100%"
               :disabled="batchSubmitting"
@@ -600,7 +610,7 @@
           :loading="batchSubmitting"
           :disabled="batchSubmitting"
         >
-          确认修改
+          确认
         </n-button>
       </template>
     </n-modal>
@@ -661,7 +671,7 @@ import {
   batchModifyToken,
   clearAllStorage,
 } from '@/api/storage'
-import type { StorageInfo } from '@/api/storage'
+import type { BatchDispatchResponse, StorageInfo } from '@/api/storage'
 import { getCloudTokenList } from '@/api/cloudtoken'
 import { formatDateTime } from '@/utils/time'
 import { getOsTypeDisplayName, getOsTypeColor, mountTypeConfigs } from '@/utils/osType'
@@ -689,6 +699,44 @@ const batchModifyTokenId = ref<number | null>(null)
 let cloudTokenRequestId = 0
 
 const isBusinessSuccess = (response: { code: number }) => response.code === 200
+const isBatchDispatchResponse = (result: unknown): result is BatchDispatchResponse => {
+  if (!result || typeof result !== 'object') {
+    return false
+  }
+
+  const data = result as Partial<BatchDispatchResponse>
+
+  return (
+    typeof data.total === 'number' &&
+    typeof data.success === 'number' &&
+    typeof data.failed === 'number'
+  )
+}
+
+const showBatchDispatchResult = (label: string, result: BatchDispatchResponse | undefined) => {
+  if (!isBatchDispatchResponse(result)) {
+    message.error(`${label}已提交，但响应统计缺失`)
+
+    return
+  }
+
+  const { total, success, failed } = result
+  const detail = `${label}已提交：总计 ${total} 个，成功 ${success} 个，失败 ${failed} 个`
+
+  if (failed > 0 && success > 0) {
+    message.warning(detail)
+  } else if (failed > 0) {
+    message.error(detail)
+  } else if (total === 0) {
+    message.warning(`${label}没有提交：没有可处理的挂载点`)
+  } else {
+    message.success(`${label}已提交：成功 ${success} 个`)
+  }
+}
+
+const maxStorageListPageSize = 500
+const maxBatchActionIds = 1000
+const maxBatchModifyTokenIds = 500
 
 // 加载令牌列表（单个和批量修改令牌共用）
 const loadCloudTokenOptions = (requestId: number) => {
@@ -796,6 +844,12 @@ const refreshTime = ref(dayjs())
 // 计算下一次运行时间
 const getNextRunTime = (storage: StorageInfo) => {
   if (!storage.enableAutoRefresh || !storage.refreshInterval) return null
+  if ('nextRefreshTime' in storage && !storage.nextRefreshTime) return null
+  if (storage.nextRefreshTime) {
+    const serverNextRun = dayjs(storage.nextRefreshTime)
+    if (serverNextRun.isValid()) return serverNextRun
+  }
+
   const lastRun = storage.updatedAt ? dayjs(storage.updatedAt) : null
   if (!lastRun) return null
 
@@ -1050,33 +1104,33 @@ const addNewStorageCallback = (data: { success: boolean }) => {
 }
 
 // 获取刷新选项
-const getRefreshOptions = (storageId: number): DropdownOption[] => {
+const getRefreshOptions = (mountPointId: number): DropdownOption[] => {
   return [
     {
       label: '普通刷新',
-      key: `normal-${storageId}`,
+      key: `normal-${mountPointId}`,
       props: {
-        onClick: () => handleRefresh(storageId, false),
+        onClick: () => handleRefresh(mountPointId, false),
       },
     },
     {
       label: '深度刷新',
-      key: `deep-${storageId}`,
+      key: `deep-${mountPointId}`,
       props: {
-        onClick: () => handleRefresh(storageId, true),
+        onClick: () => handleRefresh(mountPointId, true),
       },
     },
   ]
 }
 
 // 处理刷新
-const handleRefresh = (storageId: number, deep: boolean) => {
-  const storage = tableData.find((s) => s.id === storageId)
+const handleRefresh = (mountPointId: number, deep: boolean) => {
+  const storage = tableData.find((s) => s.mountPointId === mountPointId)
   const refreshType = deep ? '深度刷新' : '普通刷新'
 
   message.loading(`正在执行${refreshType}...`)
 
-  refreshStorage({ id: storageId, deep })
+  refreshStorage({ id: mountPointId, deep })
     .then((res) => {
       if (!isBusinessSuccess(res)) {
         message.error(res.msg || '刷新失败')
@@ -1102,7 +1156,7 @@ const handleDelete = (storage: StorageInfo) => {
     onPositiveClick: () => {
       message.loading(`正在删除 ${storage.name || '存储'}...`)
 
-      deleteStorage({ id: storage.id })
+      deleteStorage({ id: storage.mountPointId })
         .then((res) => {
           if (!isBusinessSuccess(res)) {
             message.error(res.msg || '删除失败')
@@ -1120,8 +1174,8 @@ const handleDelete = (storage: StorageInfo) => {
   })
 }
 
-// 计算属性：当前页面展示的所有 ID
-const currentViewIds = computed(() => tableData.map((item) => item.id))
+// 计算属性：当前页面展示的挂载点 ID
+const currentViewIds = computed(() => tableData.map((item) => item.mountPointId))
 
 // 计算属性：是否已全选当前页
 const isAllSelected = computed(() => {
@@ -1145,7 +1199,7 @@ const isAllSelectedAllPages = computed(() => {
   const total = paginationReactive.itemCount || 0
   return total > 0 && selectedIds.value.length === total
 })
-const selectAllPages = () => {
+const selectAllPages = async () => {
   const total = paginationReactive.itemCount || 0
   if (total <= 0 || isSelectingAllPages.value || batchSubmitting.value) {
     return
@@ -1161,43 +1215,65 @@ const selectAllPages = () => {
   const requestId = ++selectAllPagesRequestId
   isSelectingAllPages.value = true
 
-  getStorageList({
-    currentPage: 1,
-    pageSize: total,
-    ...getStorageListFilterParams(),
-  })
-    .then((res) => {
+  try {
+    const pageSize = maxStorageListPageSize
+    const pageCount = Math.ceil(total / pageSize)
+    const allIds: number[] = []
+
+    for (let page = 1; page <= pageCount; page++) {
+      const res = await getStorageList({
+        currentPage: page,
+        pageSize,
+        ...getStorageListFilterParams(),
+      })
+
       if (!isPageMounted || requestId !== selectAllPagesRequestId) {
         return
       }
 
-      if (isBusinessSuccess(res) && res.data?.data) {
-        const allIds = res.data.data.map((item: StorageInfo) => item.id)
-        selectedIds.value = [...allIds]
-
-        return
-      }
-      message.error(res.msg || '获取全量数据失败')
-    })
-    .catch((error) => {
-      if (!isPageMounted || requestId !== selectAllPagesRequestId) {
+      if (!isBusinessSuccess(res) || !res.data?.data) {
+        message.error(res.msg || '获取全量数据失败')
         return
       }
 
-      console.error('获取全量数据失败:', error)
-      message.error('获取全量数据失败')
-    })
-    .finally(() => {
-      if (!isPageMounted || requestId !== selectAllPagesRequestId) {
-        return
-      }
+      allIds.push(...res.data.data.map((item: StorageInfo) => item.mountPointId))
 
+      if (res.data.data.length < pageSize) {
+        break
+      }
+    }
+
+    selectedIds.value = Array.from(new Set(allIds))
+    if (selectedIds.value.length < total) {
+      message.warning(`已选中 ${selectedIds.value.length} 个，少于当前筛选总数 ${total} 个`)
+    }
+  } catch (error) {
+    if (!isPageMounted || requestId !== selectAllPagesRequestId) {
+      return
+    }
+
+    console.error('获取全量数据失败:', error)
+    message.error('获取全量数据失败')
+  } finally {
+    if (isPageMounted && requestId === selectAllPagesRequestId) {
       isSelectingAllPages.value = false
-    })
+    }
+  }
+}
+
+const validateBatchSelectionLimit = (limit: number, actionText: string) => {
+  if (selectedIds.value.length <= limit) {
+    return true
+  }
+
+  message.warning(`${actionText}最多支持 ${limit} 个挂载点，请减少选择数量`)
+
+  return false
 }
 
 // 批量操作状态
 const isBatchMode = ref(false)
+// 批量操作统一使用挂载点表主键，不能使用 StorageInfo.id（该字段兼容历史接口，值为 fileId）。
 const selectedIds = ref<number[]>([])
 const batchSubmitting = ref(false)
 const batchModifyTokenIds = ref<number[]>([])
@@ -1239,6 +1315,7 @@ const handleCardClick = (id: number) => {
 // 处理批量删除
 const handleBatchDelete = () => {
   if (batchSubmitting.value || selectedIds.value.length === 0) return
+  if (!validateBatchSelectionLimit(maxBatchActionIds, '批量删除')) return
 
   const ids = [...selectedIds.value]
 
@@ -1260,7 +1337,8 @@ const handleBatchDelete = () => {
 
             return
           }
-          message.success('批量删除成功')
+          showBatchDispatchResult('批量删除', res.data)
+
           exitBatchMode()
           fetchStorageList()
         })
@@ -1284,14 +1362,20 @@ const handleClearAll = () => {
     onPositiveClick: () => {
       message.loading('正在清空所有数据...')
 
-      clearAllStorage()
+      clearAllStorage({ deleteFiles: true })
         .then((res) => {
           if (!isBusinessSuccess(res)) {
             message.error(res.msg || '清空失败')
 
             return
           }
-          message.success(`已清空 ${res?.data || 0} 个挂载点`)
+          if (typeof res.data !== 'number') {
+            message.error('清空完成，但响应统计缺失')
+
+            return
+          }
+
+          message.success(`已清空 ${res.data} 个挂载点`)
           fetchStorageList()
         })
         .catch((error) => {
@@ -1304,6 +1388,7 @@ const handleClearAll = () => {
 // 处理批量刷新
 const handleBatchRefresh = (deep: boolean) => {
   if (batchSubmitting.value || selectedIds.value.length === 0) return
+  if (!validateBatchSelectionLimit(maxBatchActionIds, '批量刷新')) return
 
   const ids = [...selectedIds.value]
   const refreshType = deep ? '深度刷新' : '普通刷新'
@@ -1326,7 +1411,8 @@ const handleBatchRefresh = (deep: boolean) => {
 
             return
           }
-          message.success(res?.msg || `批量${refreshType}任务已提交`)
+          showBatchDispatchResult(`批量${refreshType}任务`, res.data)
+
           exitBatchMode()
         })
         .catch((error) => {
@@ -1373,7 +1459,14 @@ const handleBatchModifyTokenConfirm = () => {
 
         return
       }
-      message.success(res?.msg || '批量修改令牌成功')
+
+      if (typeof res.data !== 'string' || res.data.trim() === '') {
+        message.error('批量修改令牌任务已提交，但响应结果缺失')
+
+        return
+      }
+
+      message.success(res.data)
       closeBatchModifyTokenModal(true)
       exitBatchMode()
       fetchStorageList()
@@ -1449,14 +1542,14 @@ const handleAutoRefreshConfirm = () => {
   if (!currentEditStorage.value || autoRefreshSubmitting.value) return
 
   const session = autoRefreshModalSession
-  const storageId = currentEditStorage.value.id
+  const storageId = currentEditStorage.value.mountPointId
 
   autoRefreshFormRef.value?.validate((errors) => {
     if (
       !isPageMounted ||
       session !== autoRefreshModalSession ||
       !showAutoRefreshModal.value ||
-      currentEditStorage.value?.id !== storageId
+      currentEditStorage.value?.mountPointId !== storageId
     ) {
       return
     }
@@ -1473,7 +1566,7 @@ const handleAutoRefreshConfirm = () => {
       : dayjs().format('YYYY-MM-DD')
 
     toggleAutoRefresh({
-      id: currentEditStorage.value!.id,
+      id: currentEditStorage.value!.mountPointId,
       enableAutoRefresh: autoRefreshForm.value.enableAutoRefresh,
       refreshInterval: autoRefreshForm.value.enableAutoRefresh
         ? autoRefreshForm.value.refreshInterval
@@ -1491,7 +1584,7 @@ const handleAutoRefreshConfirm = () => {
           !isPageMounted ||
           session !== autoRefreshModalSession ||
           !showAutoRefreshModal.value ||
-          currentEditStorage.value?.id !== storageId
+          currentEditStorage.value?.mountPointId !== storageId
         ) {
           return
         }
@@ -1510,7 +1603,7 @@ const handleAutoRefreshConfirm = () => {
           !isPageMounted ||
           session !== autoRefreshModalSession ||
           !showAutoRefreshModal.value ||
-          currentEditStorage.value?.id !== storageId
+          currentEditStorage.value?.mountPointId !== storageId
         ) {
           return
         }
@@ -1523,7 +1616,7 @@ const handleAutoRefreshConfirm = () => {
           isPageMounted &&
           session === autoRefreshModalSession &&
           showAutoRefreshModal.value &&
-          currentEditStorage.value?.id === storageId
+          currentEditStorage.value?.mountPointId === storageId
         ) {
           autoRefreshSubmitting.value = false
         }
@@ -1551,6 +1644,10 @@ const formatRefreshPeriod = (storage: StorageInfo) => {
 }
 
 const computedRefreshStatusText = (storage: StorageInfo): string => {
+  if (!storage.autoRefreshBeginAt || !storage.autoRefreshDays) {
+    return '未设置刷新周期'
+  }
+
   if (storage.isInAutoRefreshPeriod) {
     return '待执行'
   }
@@ -1628,6 +1725,7 @@ const resetBatchModifyTokenModal = () => {
 // 处理批量修改令牌（先加载令牌列表再打开弹窗）
 const handleBatchModifyToken = () => {
   if (batchSubmitting.value || selectedIds.value.length === 0) return
+  if (!validateBatchSelectionLimit(maxBatchModifyTokenIds, '批量修改令牌')) return
 
   const requestId = ++cloudTokenRequestId
   const session = ++batchModifyTokenModalSession
@@ -1664,7 +1762,7 @@ const handleModifyToken = (storage: StorageInfo) => {
       isPageMounted &&
       requestId === cloudTokenRequestId &&
       session === modifyTokenModalSession &&
-      currentModifyStorage.value?.id === storage.id
+      currentModifyStorage.value?.mountPointId === storage.mountPointId
     ) {
       showModifyTokenModal.value = true
     }
@@ -1673,12 +1771,18 @@ const handleModifyToken = (storage: StorageInfo) => {
 
 // 确认修改令牌
 const handleModifyTokenConfirm = () => {
-  if (!currentModifyStorage.value || modifyTokenSubmitting.value) return
+  if (
+    !currentModifyStorage.value ||
+    modifyTokenSubmitting.value ||
+    selectedTokenId.value === null ||
+    selectedTokenId.value === undefined
+  )
+    return
 
   const session = modifyTokenModalSession
-  const storageId = currentModifyStorage.value.id
+  const storageId = currentModifyStorage.value.mountPointId
   modifyTokenSubmitting.value = true
-  const tokenId = selectedTokenId.value === 0 ? 0 : selectedTokenId.value || 0
+  const tokenId = selectedTokenId.value
 
   modifyToken({
     id: storageId,
@@ -1689,7 +1793,7 @@ const handleModifyTokenConfirm = () => {
         !isPageMounted ||
         session !== modifyTokenModalSession ||
         !showModifyTokenModal.value ||
-        currentModifyStorage.value?.id !== storageId
+        currentModifyStorage.value?.mountPointId !== storageId
       ) {
         return
       }
@@ -1709,7 +1813,7 @@ const handleModifyTokenConfirm = () => {
         !isPageMounted ||
         session !== modifyTokenModalSession ||
         !showModifyTokenModal.value ||
-        currentModifyStorage.value?.id !== storageId
+        currentModifyStorage.value?.mountPointId !== storageId
       ) {
         return
       }
@@ -1722,7 +1826,7 @@ const handleModifyTokenConfirm = () => {
         isPageMounted &&
         session === modifyTokenModalSession &&
         showModifyTokenModal.value &&
-        currentModifyStorage.value?.id === storageId
+        currentModifyStorage.value?.mountPointId === storageId
       ) {
         modifyTokenSubmitting.value = false
       }

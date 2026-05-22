@@ -80,6 +80,32 @@ func TestListCapsPageSize(t *testing.T) {
 	}
 }
 
+func TestListEmptyPlanIdListReturnsEmpty(t *testing.T) {
+	tDB := setupAutoIngestLogTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	createAutoIngestLog(t, tDB.db, 1, autoingest.LogLevelInfo)
+
+	list, err := svc.List(ctx, &ListRequest{PlanIdList: []int64{}})
+	if err != nil {
+		t.Fatalf("list auto ingest logs by empty plan ids: %v", err)
+	}
+
+	if len(list) != 0 {
+		t.Fatalf("expected empty list for empty plan id filter, got %+v", list)
+	}
+
+	count, err := svc.Count(ctx, &ListRequest{PlanIdList: []int64{}})
+	if err != nil {
+		t.Fatalf("count auto ingest logs by empty plan ids: %v", err)
+	}
+
+	if count != 0 {
+		t.Fatalf("expected count 0 for empty plan id filter, got %d", count)
+	}
+}
+
 func TestListRejectsInvalidPlanFilters(t *testing.T) {
 	tDB := setupAutoIngestLogTestDB(t)
 	svc := NewService(tDB)

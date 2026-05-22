@@ -6,7 +6,7 @@ services:
     ports:
       - "12395:12395"
     volumes:
-      - ./etc/config.yaml:/app/etc/config.yaml:ro
+      - ./etc/config.docker.yaml:/app/etc/config.yaml:ro
       - ./data:/app/data
       - ./logs:/app/logs
       - ./media_dir:/app/media_dir

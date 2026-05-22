@@ -4,6 +4,7 @@ import (
 	stdctx "context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -156,6 +157,99 @@ func TestBatchDeleteDeduplicatesIDsBeforeQueueing(t *testing.T) {
 
 	if got, want := taskReq.IDs, []int64{11, 22}; !int64SlicesEqual(got, want) {
 		t.Fatalf("expected queued IDs %v, got %v", want, got)
+	}
+}
+
+func TestBatchDeleteAllowsDuplicateIDsBeyondRawLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		files: map[int64]*models.VirtualFile{
+			11: {ID: 11, TopId: 1000, Name: "a.mkv"},
+		},
+	}
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			1000: {FileId: 1000, CreatorUserID: 100},
+		},
+	}
+
+	router := newBatchDeleteTestRouter(taskEngine, virtualFileService, mountPointService, 100, false)
+
+	ids := make([]string, maxBatchDeleteIDs+1)
+	for i := range ids {
+		ids[i] = "11"
+	}
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/batch_delete",
+		strings.NewReader(fmt.Sprintf(`{"ids":[%s]}`, strings.Join(ids, ","))),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if got, want := mountPointService.queries, []int64{1000}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected one deduplicated mount point query %v, got %v", want, got)
+	}
+
+	if len(taskEngine.payloads) != 1 {
+		t.Fatalf("expected 1 queued task, got %d", len(taskEngine.payloads))
+	}
+
+	var taskReq topic.FileBatchDeleteRequest
+	if err := json.Unmarshal(taskEngine.payloads[0], &taskReq); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := taskReq.IDs, []int64{11}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected queued IDs %v, got %v", want, got)
+	}
+}
+
+func TestBatchDeleteRejectsTooManyUniqueIDsBeforeQuerying(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	virtualFileService := &mockBatchDeleteVirtualFileService{}
+	mountPointService := &mockBatchDeleteMountPointService{}
+
+	router := newBatchDeleteTestRouter(taskEngine, virtualFileService, mountPointService, 100, false)
+
+	ids := make([]string, maxBatchDeleteIDs+1)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("%d", i+1)
+	}
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/batch_delete",
+		strings.NewReader(fmt.Sprintf(`{"ids":[%s]}`, strings.Join(ids, ","))),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if len(mountPointService.queries) != 0 {
+		t.Fatalf("expected no mount point queries for oversized request, got %v", mountPointService.queries)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no queued tasks for oversized request, got %d", len(taskEngine.payloads))
 	}
 }
 

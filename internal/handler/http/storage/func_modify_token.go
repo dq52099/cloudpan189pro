@@ -8,8 +8,8 @@ import (
 )
 
 type modifyTokenRequest struct {
-	ID      int64 `json:"id" binding:"required" example:"1001"` // 挂载点ID
-	TokenID int64 `json:"tokenId" example:"123"`                // 新的令牌ID
+	ID      int64 `json:"id" binding:"required,min=1" example:"1001"` // 挂载点ID
+	TokenID int64 `json:"tokenId" binding:"min=0" example:"123"`      // 新的令牌ID，0 表示解绑
 }
 
 // ModifyToken 修改存储挂载点令牌

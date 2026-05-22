@@ -6,6 +6,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
+	"go.uber.org/zap"
 )
 
 // Clear 清理媒体文件
@@ -39,7 +40,14 @@ func (h *handler) Clear() httpcontext.HandlerFunc {
 
 		// 推送清理任务到消息队列
 		taskReq := &topic.MediaClearRequest{}
-		body, _ := json.Marshal(taskReq)
+
+		body, err := json.Marshal(taskReq)
+		if err != nil {
+			ctx.GetContext().Error("序列化媒体清理任务失败", zap.Error(err))
+			ctx.Fail(codeClearFailed.WithError(err))
+
+			return
+		}
 
 		if err = h.taskEngine.PushMessage(
 			ctx.GetContext().

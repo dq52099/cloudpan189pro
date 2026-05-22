@@ -2,6 +2,7 @@ package storage
 
 import (
 	stdctx "context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
 )
 
@@ -105,5 +107,59 @@ func TestRefreshAllowsMountPointOwner(t *testing.T) {
 
 	if taskEngine.paths[0] != "/mine" {
 		t.Fatalf("expected refresh task path /mine, got %v", taskEngine.paths[0])
+	}
+}
+
+func TestRefreshQueuesMountPointFileID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: {ID: 11, FileId: 99, FullPath: "/mine", CreatorUserID: 100},
+		},
+	}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/refresh", wrapper.Wrap(NewHandler(
+		taskEngine,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	).Refresh()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/refresh", strings.NewReader(`{"id":11,"deep":true}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected refresh to succeed, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if len(taskEngine.payloads) != 1 {
+		t.Fatalf("expected one refresh task, got %d", len(taskEngine.payloads))
+	}
+
+	var task topic.FileScanFileRequest
+	if err := json.Unmarshal(taskEngine.payloads[0], &task); err != nil {
+		t.Fatal(err)
+	}
+
+	if task.FileId != 99 || !task.Deep {
+		t.Fatalf("expected queued virtual file id 99 with deep=true, got %+v", task)
 	}
 }

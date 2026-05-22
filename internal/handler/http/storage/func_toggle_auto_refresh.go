@@ -10,10 +10,10 @@ import (
 
 type toggleAutoRefreshRequest struct {
 	ID                int64  `json:"id" binding:"required,gt=0" example:"1"`                                                // 挂载点ID
-	EnableAutoRefresh bool   `json:"enableAutoRefresh" binding:"omitempty" example:"true"`                                  // 是否启用自动刷新
+	EnableAutoRefresh *bool  `json:"enableAutoRefresh" binding:"required" example:"true"`                                   // 是否启用自动刷新
 	AutoRefreshDays   int    `json:"autoRefreshDays,omitempty" binding:"omitempty,min=1,max=365" example:"7"`               // 自动刷新持续天数，单位天，最小值1，最大值365
 	RefreshInterval   int    `json:"refreshInterval,omitempty" binding:"omitempty,min=30,max=1440" example:"30"`            // 刷新间隔，单位分钟，最小值30，最大值1440
-	RefreshBeginAt    string `json:"refreshBeginAt,omitempty" binding:"omitempty,datetime=2006-01-02" example:"2023-01-01"` // 自动刷新开始时间，格式：yyyy-MM-dd HH:mm:ss，默认为当前时间
+	RefreshBeginAt    string `json:"refreshBeginAt,omitempty" binding:"omitempty,datetime=2006-01-02" example:"2023-01-01"` // 自动刷新开始时间，格式：yyyy-MM-dd，默认为当前时间
 	EnableDeepRefresh bool   `json:"enableDeepRefresh,omitempty" example:"false"`                                           // 是否启用深度刷新
 }
 
@@ -48,7 +48,7 @@ func (h *handler) ToggleAutoRefresh() httpcontext.HandlerFunc {
 			return
 		}
 
-		if !req.EnableAutoRefresh {
+		if !*req.EnableAutoRefresh {
 			if err := h.mountPointService.EnableAutoRefresh(ctx.GetContext(), req.ID, false); err != nil {
 				ctx.Fail(busCodeStorageToggleAutoRefreshError.WithError(err))
 

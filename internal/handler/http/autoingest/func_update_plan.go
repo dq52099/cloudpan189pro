@@ -9,7 +9,7 @@ import (
 type refreshStrategyUpdateRequest struct {
 	EnableAutoRefresh *bool `json:"enableAutoRefresh" binding:"omitempty" example:"false"`
 	AutoRefreshDays   *int  `json:"autoRefreshDays" binding:"omitempty,min=1" example:"7"`
-	RefreshInterval   *int  `json:"refreshInterval" binding:"omitempty,min=30" example:"30"` // 单位分钟，最小30
+	RefreshInterval   *int  `json:"refreshInterval" binding:"omitempty,min=30,max=1440" example:"30"` // 单位分钟，最小30，最大1440
 	EnableDeepRefresh *bool `json:"enableDeepRefresh" binding:"omitempty" example:"false"`
 }
 
@@ -86,6 +86,12 @@ func (h *handler) UpdatePlan() httpcontext.HandlerFunc {
 		}
 
 		if req.TokenId != nil {
+			if err := h.validateCloudTokenAccess(ctx, *req.TokenId); err != nil {
+				ctx.Fail(codePlanUpdateFailed.WithError(err))
+
+				return
+			}
+
 			fields = append(fields, utils.Field{Key: "token_id", Value: *req.TokenId})
 		}
 

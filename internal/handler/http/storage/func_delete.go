@@ -7,6 +7,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -65,7 +66,13 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 			IDs: []int64{mountPointInfo.FileId},
 		}
 
-		body, _ := json.Marshal(taskReq)
+		body, err := json.Marshal(taskReq)
+		if err != nil {
+			ctx.GetContext().Error("序列化存储删除任务失败", zap.Error(err))
+			ctx.Fail(busCodeStorageSendTaskFail.WithError(err))
+
+			return
+		}
 
 		if err := h.taskEngine.PushMessage(
 			ctx.GetContext().

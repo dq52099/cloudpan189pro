@@ -1,7 +1,10 @@
 package usergroup
 
 import (
+	"errors"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	"gorm.io/gorm"
 )
 
 type getBindFilesRequest struct {
@@ -25,12 +28,25 @@ type getBindFilesResponse struct {
 // @Failure 400 {object} httpcontext.Response "获取绑定文件失败，code=3005"
 // @Failure 401 {object} httpcontext.Response "未授权访问"
 // @Failure 403 {object} httpcontext.Response "权限不足"
+// @Failure 404 {object} httpcontext.Response "用户组不存在"
 // @Router /api/user_group/bind_files [get]
 func (h *handler) GetBindFiles() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
 		req := new(getBindFilesRequest)
 		if err := ctx.ShouldBindQuery(req); err != nil {
 			ctx.AbortWithInvalidParams(err)
+
+			return
+		}
+
+		if _, err := h.userGroupService.Query(ctx.GetContext(), req.GroupId); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(codeUserGroupNotFound.WithError(err))
+
+				return
+			}
+
+			ctx.Fail(codeGetBindFilesFailed.WithError(err))
 
 			return
 		}

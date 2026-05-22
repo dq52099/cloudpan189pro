@@ -162,6 +162,70 @@ func TestListIncludesMountPointsBoundToUserToken(t *testing.T) {
 	}
 }
 
+func TestListNonAdminAppliesFiltersToAllAccessibleSources(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	userTokenSvc := userMountPointTokenSvi.NewService(tDB)
+	svc := NewService(tDB, nil, nil, userTokenSvc)
+	ctx := context.NewContext(stdctx.Background())
+
+	ownedMatch := createMountPoint(t, tDB.db, 3011, 10, "movie-owned")
+	groupMatch := createMountPoint(t, tDB.db, 3012, 20, "movie-group")
+	boundMatch := createMountPoint(t, tDB.db, 3013, 30, "movie-bound")
+	groupNoMatch := createMountPoint(t, tDB.db, 3014, 20, "music-group")
+	boundNoMatch := createMountPoint(t, tDB.db, 3015, 30, "music-bound")
+	hiddenMatch := createMountPoint(t, tDB.db, 3016, 40, "movie-hidden")
+
+	if err := userTokenSvc.BindToken(ctx, 10, boundMatch.ID, 77); err != nil {
+		t.Fatalf("bind token for matching mount point: %v", err)
+	}
+
+	if err := userTokenSvc.BindToken(ctx, 10, boundNoMatch.ID, 77); err != nil {
+		t.Fatalf("bind token for non-matching mount point: %v", err)
+	}
+
+	req := &ListRequest{
+		UserID:       10,
+		GroupFileIds: []int64{groupMatch.FileId, groupNoMatch.FileId},
+		Name:         "movie",
+		NoPaginate:   true,
+	}
+
+	list, err := svc.List(ctx, req)
+	if err != nil {
+		t.Fatalf("list mount points: %v", err)
+	}
+
+	got := map[int64]bool{}
+	for _, item := range list {
+		got[item.FileId] = true
+	}
+
+	for _, expected := range []int64{ownedMatch.FileId, groupMatch.FileId, boundMatch.FileId} {
+		if !got[expected] {
+			t.Fatalf("expected file %d in list, got %+v", expected, got)
+		}
+	}
+
+	for _, unexpected := range []int64{groupNoMatch.FileId, boundNoMatch.FileId, hiddenMatch.FileId} {
+		if got[unexpected] {
+			t.Fatalf("expected file %d to be excluded by filters, got %+v", unexpected, got)
+		}
+	}
+
+	count, err := svc.Count(ctx, &ListRequest{
+		UserID:       10,
+		GroupFileIds: []int64{groupMatch.FileId, groupNoMatch.FileId},
+		Name:         "movie",
+	})
+	if err != nil {
+		t.Fatalf("count mount points: %v", err)
+	}
+
+	if count != 3 {
+		t.Fatalf("expected count 3, got %d", count)
+	}
+}
+
 func TestGetAccessibleMountPointIDsRejectsInvalidNonAdminUserID(t *testing.T) {
 	tDB := setupMountPointTestDB(t)
 	svc := NewService(tDB, nil, nil, nil)
@@ -401,6 +465,36 @@ func TestListFiltersByFileIdList(t *testing.T) {
 
 	if count != 2 {
 		t.Fatalf("expected count 2, got %d", count)
+	}
+}
+
+func TestListEmptyFileIdListReturnsEmpty(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	svc := NewService(tDB, nil, nil, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	createMountPoint(t, tDB.db, 4311, 10, "empty-file-list-visible")
+
+	list, err := svc.List(ctx, &ListRequest{
+		FileIdList: []int64{},
+		NoPaginate: true,
+		IsAdmin:    true,
+	})
+	if err != nil {
+		t.Fatalf("list mount points by empty file ids: %v", err)
+	}
+
+	if len(list) != 0 {
+		t.Fatalf("expected empty list for empty file id filter, got %+v", list)
+	}
+
+	count, err := svc.Count(ctx, &ListRequest{FileIdList: []int64{}, IsAdmin: true})
+	if err != nil {
+		t.Fatalf("count mount points by empty file ids: %v", err)
+	}
+
+	if count != 0 {
+		t.Fatalf("expected count 0 for empty file id filter, got %d", count)
 	}
 }
 
@@ -831,6 +925,37 @@ func TestGetAutoRefreshListAllowsNilRequest(t *testing.T) {
 
 	if list[0].FileId != mountPoint.FileId {
 		t.Fatalf("expected file id %d, got %d", mountPoint.FileId, list[0].FileId)
+	}
+}
+
+func TestIsAutoRefreshActiveAtUsesHalfOpenExpiry(t *testing.T) {
+	beginAt := time.Date(2026, 5, 22, 12, 0, 0, 0, time.UTC)
+	expireAt := beginAt.AddDate(0, 0, 1)
+	mp := &models.MountPoint{
+		EnableAutoRefresh:  true,
+		AutoRefreshBeginAt: &beginAt,
+		AutoRefreshDays:    1,
+	}
+
+	if !isAutoRefreshActiveAt(mp, beginAt) {
+		t.Fatal("expected auto refresh active at begin time")
+	}
+
+	if isAutoRefreshActiveAt(mp, expireAt) {
+		t.Fatal("expected auto refresh inactive at exact expiry time")
+	}
+}
+
+func TestIsAutoRefreshActiveAtAllowsNonPositiveDays(t *testing.T) {
+	beginAt := time.Date(2026, 5, 22, 12, 0, 0, 0, time.UTC)
+	mp := &models.MountPoint{
+		EnableAutoRefresh:  true,
+		AutoRefreshBeginAt: &beginAt,
+		AutoRefreshDays:    0,
+	}
+
+	if !isAutoRefreshActiveAt(mp, beginAt.AddDate(0, 0, 365)) {
+		t.Fatal("expected non-positive auto refresh days to stay active for compatibility")
 	}
 }
 

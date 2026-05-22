@@ -114,7 +114,7 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 		fileHandler           = file.NewHandler(virtualFileService, verifyService, cloudTokenService, cloudBridgeService, mountPointService, group2FileService, userMountPointTokenService, taskEngine)
 
 		taskStateHandler    = taskstate.NewHandler(taskEngine, fileTaskLogService)
-		autoIngestHandler   = autoingest.NewHandler(taskEngine, autoIngestPlanService, autoIngestLogService, cloudBridgeService)
+		autoIngestHandler   = autoingest.NewHandler(taskEngine, autoIngestPlanService, autoIngestLogService, cloudBridgeService, cloudTokenService)
 		loginLogHandler     = loginlogHandler.NewHandler(loginLogService)
 		mediaHandler        = media.NewHandler(mediaConfigService, mediaFileService, mountPointService, virtualFileService, verifyService, fileTaskLogService, taskEngine)
 		telegramHTTPHandler = telegramHandler.NewHandler(db, telegramService, svc.GetLogger("telegram-http"))

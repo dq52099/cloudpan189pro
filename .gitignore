@@ -17,7 +17,8 @@ package-lock.json
 
 fe/node_modules
 fe/llm-prompt.txt
-fe/dist
+fe/dist/*
+!fe/dist/.gitkeep
 fe/.idea
 /assets
 /build

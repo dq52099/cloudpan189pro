@@ -67,7 +67,7 @@
                 {{ config?.autoRebuildEnable ? '已启用' : '未启用' }}
               </n-tag>
               <div class="desc-sub" v-if="config?.autoRebuildEnable">
-                每天 {{ config?.autoRebuildCron || '0 2 * *' }} 自动重建STRM文件
+                每天 {{ config?.autoRebuildCron || '0 2 * * *' }} 自动重建STRM文件
               </div>
               <div class="desc-sub" v-else>启用后将按设定时间自动重建STRM文件</div>
             </n-descriptions-item>
@@ -308,7 +308,7 @@ import {
   useMessage,
   useDialog,
 } from 'naive-ui'
-import type { ConfigInitRequest, ConfigUpdateRequest } from '@/api/media'
+import type { ConfigInitRequest, ConfigUpdateRequest, RebuildStrmFilesResponse } from '@/api/media'
 import {
   getMediaConfigInfo,
   initMediaConfig,
@@ -413,6 +413,19 @@ const defaultIncludedSuffixes = [
 ].map((s) => `.${s}`)
 
 const isBusinessSuccess = (response: { code: number }) => response.code === 200
+const isRebuildStrmFilesResponse = (result: unknown): result is RebuildStrmFilesResponse => {
+  if (!result || typeof result !== 'object') {
+    return false
+  }
+
+  const data = result as Partial<RebuildStrmFilesResponse>
+
+  return (
+    typeof data.total === 'number' &&
+    typeof data.success === 'number' &&
+    typeof data.failed === 'number'
+  )
+}
 
 const buildInitPayload = (): ConfigInitRequest => ({
   ...initForm,
@@ -736,7 +749,30 @@ const handleRebuildStrm = () => {
 
             return
           }
-          message.success('重建任务已提交，将扫描所有挂载点并重新生成strm文件')
+
+          if (!isRebuildStrmFilesResponse(res.data)) {
+            message.error('重建任务已提交，但响应统计缺失')
+
+            return
+          }
+
+          const { total, success, failed } = res.data
+
+          if (failed > 0) {
+            message.warning(
+              `重建任务已派发：总计 ${total} 个，成功 ${success} 个，失败 ${failed} 个`
+            )
+
+            return
+          }
+
+          if (total === 0) {
+            message.warning('重建任务没有派发：没有可处理的挂载点')
+
+            return
+          }
+
+          message.success(`重建任务已派发：成功 ${success} 个`)
         })
         .catch((err) => {
           if (!isComponentMounted) return

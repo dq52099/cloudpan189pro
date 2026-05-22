@@ -125,16 +125,16 @@ func TestBatchRefreshDeduplicatesIDsBeforeQueueingTasks(t *testing.T) {
 	}
 
 	var response struct {
-		Code int    `json:"code"`
-		Data string `json:"data"`
+		Code int                  `json:"code"`
+		Data batchRefreshResponse `json:"data"`
 	}
 
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(response.Data, "成功 2 个，失败 1 个") {
-		t.Fatalf("unexpected response data: %q", response.Data)
+	if response.Data.Total != 3 || response.Data.Success != 2 || response.Data.Failed != 1 {
+		t.Fatalf("unexpected response data: %+v", response.Data)
 	}
 
 	if taskEngine.paths[0] != "/movies" {
@@ -237,8 +237,15 @@ func TestBatchRefreshSkipsMountPointsOwnedByOtherUsers(t *testing.T) {
 		t.Fatalf("expected owned mount point path /movies, got %v", taskEngine.paths[0])
 	}
 
-	if !strings.Contains(recorder.Body.String(), "成功 1 个，失败 1 个") {
-		t.Fatalf("unexpected response body: %s", recorder.Body.String())
+	var response struct {
+		Data batchRefreshResponse `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Data.Total != 2 || response.Data.Success != 1 || response.Data.Failed != 1 {
+		t.Fatalf("unexpected response data: %+v", response.Data)
 	}
 }
 
@@ -292,5 +299,66 @@ func TestBatchRefreshTaskLogKeepsDispatchFailureCounts(t *testing.T) {
 
 	if log.Total != 3 || log.Completed != 1 || log.Failed != 2 {
 		t.Fatalf("expected total=3 completed=1 failed=2, got total=%d completed=%d failed=%d", log.Total, log.Completed, log.Failed)
+	}
+
+	if log.Status != models.StatusFailed {
+		t.Fatalf("expected dispatch failure log status %q, got %q", models.StatusFailed, log.Status)
+	}
+}
+
+func TestBatchRefreshTaskLogCompletesWhenAllTasksDispatched(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: {FileId: 1101, FullPath: "/movies", CreatorUserID: 100},
+			22: {FileId: 2201, FullPath: "/series", CreatorUserID: 100},
+		},
+	}
+	taskLogDB := setupStorageTaskLogTestDB(t)
+	fileTaskLogService := filetasklogSvi.NewService(taskLogDB)
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/batch_refresh", wrapper.Wrap(NewHandler(
+		taskEngine,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		fileTaskLogService,
+		nil,
+		nil,
+		nil,
+		nil,
+	).BatchRefresh()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_refresh", strings.NewReader(`{"ids":[11,22]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var log models.FileTaskLog
+	if err := taskLogDB.db.First(&log).Error; err != nil {
+		t.Fatalf("query task log: %v", err)
+	}
+
+	if log.Total != 2 || log.Completed != 2 || log.Failed != 0 {
+		t.Fatalf("expected total=2 completed=2 failed=0, got total=%d completed=%d failed=%d", log.Total, log.Completed, log.Failed)
+	}
+
+	if log.Status != models.StatusCompleted {
+		t.Fatalf("expected dispatch success log status %q, got %q", models.StatusCompleted, log.Status)
 	}
 }

@@ -25,6 +25,7 @@ type listRequest struct {
 
 type storageDTO struct {
 	ID                    int64                 `json:"id"`
+	MountPointID          int64                 `json:"mountPointId"`
 	TaskLogs              []*models.FileTaskLog `json:"taskLogs"`
 	TokenName             string                `json:"tokenName"`
 	IsInAutoRefreshPeriod bool                  `json:"isInAutoRefreshPeriod"` // 是否在自动刷新时间范围内
@@ -38,6 +39,58 @@ type listResponse struct {
 	CurrentPage int           `json:"currentPage" example:"1"` // 当前页码
 	PageSize    int           `json:"pageSize" example:"10"`   // 每页大小
 	Data        []*storageDTO `json:"data"`                    // 列表数据
+}
+
+func nextAutoRefreshTime(item *models.MountPoint, now time.Time) *time.Time {
+	if item == nil || !item.EnableAutoRefresh || item.AutoRefreshBeginAt == nil {
+		return nil
+	}
+
+	if item.RefreshInterval <= 0 {
+		return nil
+	}
+
+	beginAt := *item.AutoRefreshBeginAt
+	if beginAt.IsZero() {
+		return nil
+	}
+
+	var expireAt *time.Time
+
+	if item.AutoRefreshDays > 0 {
+		nextExpireAt := beginAt.AddDate(0, 0, item.AutoRefreshDays)
+		expireAt = &nextExpireAt
+	}
+
+	if expireAt != nil && !now.Before(*expireAt) {
+		return nil
+	}
+
+	baseAt := beginAt
+	if item.UpdatedAt.After(beginAt) {
+		baseAt = item.UpdatedAt
+	}
+
+	if baseAt.After(now) {
+		if expireAt != nil && !baseAt.Before(*expireAt) {
+			return nil
+		}
+
+		nextAt := baseAt
+
+		return &nextAt
+	}
+
+	interval := time.Duration(item.RefreshInterval) * time.Minute
+	elapsed := now.Sub(baseAt)
+	intervals := elapsed/interval + 1
+
+	nextAt := baseAt.Add(intervals * interval)
+	if expireAt != nil && !nextAt.Before(*expireAt) {
+		return nil
+	}
+
+	return &nextAt
 }
 
 // List 获取存储挂载点列表
@@ -272,6 +325,7 @@ func (h *handler) List() httpcontext.HandlerFunc {
 		}
 
 		dtoList := make([]*storageDTO, 0, len(list))
+		now := time.Now()
 
 		for _, item := range list {
 			tokenName := "令牌未绑定"
@@ -291,10 +345,12 @@ func (h *handler) List() httpcontext.HandlerFunc {
 
 			dtoList = append(dtoList, &storageDTO{
 				ID:                    item.FileId,
+				MountPointID:          item.ID,
 				TaskLogs:              taskLogs,
 				TokenName:             tokenName,
 				MountPoint:            item,
 				IsInAutoRefreshPeriod: item.IsInAutoRefreshPeriod(),
+				NextRefreshTime:       nextAutoRefreshTime(item, now),
 				FileCount:             fileCountMap[item.FileId],
 			})
 		}

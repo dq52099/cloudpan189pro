@@ -560,7 +560,13 @@ const handleSubmit = () => {
 
             return
           }
-          message.success('创建成功')
+          if (payload.oneClickAddHistory && res.data?.historyError) {
+            message.warning(`计划已创建，但历史入库任务未下发：${res.data.historyError}`)
+          } else if (payload.oneClickAddHistory && res.data?.historyQueued) {
+            message.success('创建成功，历史入库任务已下发')
+          } else {
+            message.success('创建成功')
+          }
           resetAll()
           show.value = false
           emit('created')

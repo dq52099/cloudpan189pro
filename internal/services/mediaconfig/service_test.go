@@ -87,6 +87,7 @@ func createMediaConfig(t *testing.T, db *gorm.DB) *models.MediaConfig {
 		IncludedSuffixes:    []string{".mp4"},
 		AutoRebuildEnable:   false,
 		AutoRebuildInterval: 24,
+		AutoRebuildCron:     "0 2 * * *",
 	}
 	if err := db.Create(cfg).Error; err != nil {
 		t.Fatalf("create media config: %v", err)
@@ -132,6 +133,7 @@ func TestInitUpdatesSharedMediaConfig(t *testing.T) {
 		IncludedSuffixes:    []string{".mkv", ".mp4"},
 		AutoRebuildEnable:   true,
 		AutoRebuildInterval: 12,
+		AutoRebuildCron:     "0 4 * * *",
 	})
 	if err != nil {
 		t.Fatalf("init media config: %v", err)
@@ -148,6 +150,38 @@ func TestInitUpdatesSharedMediaConfig(t *testing.T) {
 	if shared.MediaConfig.ConflictPolicy != media.FileConflictPolicyReplace {
 		t.Fatalf("expected replace conflict policy, got %q", shared.MediaConfig.ConflictPolicy)
 	}
+
+	if shared.MediaConfig.AutoRebuildCron != "0 4 * * *" {
+		t.Fatalf("expected auto rebuild cron to be initialized, got %q", shared.MediaConfig.AutoRebuildCron)
+	}
+}
+
+func TestInitDefaultsAutoRebuildCron(t *testing.T) {
+	restoreSharedMediaConfig(t)
+
+	tDB := setupMediaConfigTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+	shared.MediaConfig = nil
+
+	err := svc.Init(ctx, &InitRequest{
+		Enable:         true,
+		StoragePath:    "/tmp/media",
+		AutoClean:      true,
+		ConflictPolicy: media.FileConflictPolicySkip,
+		BaseURL:        "http://media.example.test",
+	})
+	if err != nil {
+		t.Fatalf("init media config: %v", err)
+	}
+
+	if shared.MediaConfig == nil {
+		t.Fatal("expected shared media config to be set")
+	}
+
+	if shared.MediaConfig.AutoRebuildCron != "0 2 * * *" {
+		t.Fatalf("expected default auto rebuild cron, got %q", shared.MediaConfig.AutoRebuildCron)
+	}
 }
 
 func TestUpdateRefreshesSharedMediaConfig(t *testing.T) {
@@ -163,6 +197,7 @@ func TestUpdateRefreshesSharedMediaConfig(t *testing.T) {
 		utils.WithField("enable", true),
 		utils.WithField("storage_path", "/tmp/media-new"),
 		utils.WithField("base_url", "http://new.example.test"),
+		utils.WithField("auto_rebuild_cron", "0 5 * * *"),
 	)
 	if err != nil {
 		t.Fatalf("update media config: %v", err)
@@ -182,6 +217,10 @@ func TestUpdateRefreshesSharedMediaConfig(t *testing.T) {
 
 	if shared.MediaConfig.BaseURL != "http://new.example.test" {
 		t.Fatalf("expected updated base url, got %q", shared.MediaConfig.BaseURL)
+	}
+
+	if shared.MediaConfig.AutoRebuildCron != "0 5 * * *" {
+		t.Fatalf("expected updated auto rebuild cron, got %q", shared.MediaConfig.AutoRebuildCron)
 	}
 }
 

@@ -40,12 +40,7 @@ func (s *service) GetAutoRefreshList(ctx context.Context, req *GetAutoRefreshLis
 	filtered := make([]*models.MountPoint, 0)
 
 	for _, mp := range list {
-		if mp.AutoRefreshDays > 0 {
-			expireDate := mp.AutoRefreshBeginAt.AddDate(0, 0, mp.AutoRefreshDays)
-			if expireDate.After(now) || expireDate.Equal(now) {
-				filtered = append(filtered, mp)
-			}
-		} else {
+		if isAutoRefreshActiveAt(mp, now) {
 			filtered = append(filtered, mp)
 		}
 	}
@@ -53,4 +48,22 @@ func (s *service) GetAutoRefreshList(ctx context.Context, req *GetAutoRefreshLis
 	ctx.Info("查询到需要自动刷新的挂载点", zap.Int("count", len(filtered)))
 
 	return filtered, nil
+}
+
+func isAutoRefreshActiveAt(mp *models.MountPoint, now time.Time) bool {
+	if mp == nil || !mp.EnableAutoRefresh || mp.AutoRefreshBeginAt == nil {
+		return false
+	}
+
+	if now.Before(*mp.AutoRefreshBeginAt) {
+		return false
+	}
+
+	if mp.AutoRefreshDays <= 0 {
+		return true
+	}
+
+	expireDate := mp.AutoRefreshBeginAt.AddDate(0, 0, mp.AutoRefreshDays)
+
+	return now.Before(expireDate)
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
@@ -196,6 +197,120 @@ func requireInt64SliceEqual(t *testing.T, name string, got, want []int64) {
 	}
 }
 
+func requireTimeEqual(t *testing.T, name string, got *time.Time, want time.Time) {
+	t.Helper()
+
+	if got == nil {
+		t.Fatalf("%s is nil, want %s", name, want.Format(time.RFC3339))
+	}
+
+	if !got.Equal(want) {
+		t.Fatalf("%s mismatch: got %s want %s", name, got.Format(time.RFC3339), want.Format(time.RFC3339))
+	}
+}
+
+func TestNextAutoRefreshTime(t *testing.T) {
+	now := time.Date(2026, 5, 22, 12, 0, 0, 0, time.UTC)
+	beginAt := now.Add(-2 * time.Hour)
+	updatedAt := now.Add(-20 * time.Minute)
+	futureBeginAt := now.Add(90 * time.Minute)
+	expiredBeginAt := now.AddDate(0, 0, -8)
+
+	tests := []struct {
+		name string
+		item *models.MountPoint
+		want *time.Time
+	}{
+		{
+			name: "disabled",
+			item: &models.MountPoint{
+				EnableAutoRefresh:  false,
+				AutoRefreshBeginAt: &beginAt,
+				AutoRefreshDays:    7,
+				RefreshInterval:    30,
+			},
+		},
+		{
+			name: "future begin",
+			item: &models.MountPoint{
+				EnableAutoRefresh:  true,
+				AutoRefreshBeginAt: &futureBeginAt,
+				AutoRefreshDays:    7,
+				RefreshInterval:    30,
+			},
+			want: &futureBeginAt,
+		},
+		{
+			name: "uses updated at as last refresh marker",
+			item: &models.MountPoint{
+				EnableAutoRefresh:  true,
+				AutoRefreshBeginAt: &beginAt,
+				AutoRefreshDays:    7,
+				RefreshInterval:    30,
+				UpdatedAt:          updatedAt,
+			},
+			want: timePtr(updatedAt.Add(30 * time.Minute)),
+		},
+		{
+			name: "advances stale schedule into the future",
+			item: &models.MountPoint{
+				EnableAutoRefresh:  true,
+				AutoRefreshBeginAt: &beginAt,
+				AutoRefreshDays:    7,
+				RefreshInterval:    45,
+			},
+			want: timePtr(beginAt.Add(3 * 45 * time.Minute)),
+		},
+		{
+			name: "expired",
+			item: &models.MountPoint{
+				EnableAutoRefresh:  true,
+				AutoRefreshBeginAt: &expiredBeginAt,
+				AutoRefreshDays:    7,
+				RefreshInterval:    30,
+			},
+		},
+		{
+			name: "non-positive days stay compatible with scheduler query",
+			item: &models.MountPoint{
+				EnableAutoRefresh:  true,
+				AutoRefreshBeginAt: &beginAt,
+				AutoRefreshDays:    0,
+				RefreshInterval:    30,
+			},
+			want: timePtr(beginAt.Add(5 * 30 * time.Minute)),
+		},
+		{
+			name: "invalid interval",
+			item: &models.MountPoint{
+				EnableAutoRefresh:  true,
+				AutoRefreshBeginAt: &beginAt,
+				AutoRefreshDays:    7,
+				RefreshInterval:    0,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := nextAutoRefreshTime(tt.item, now)
+			if tt.want == nil {
+				if got != nil {
+					t.Fatalf("expected nil next refresh time, got %s", got.Format(time.RFC3339))
+				}
+
+				return
+			}
+
+			requireTimeEqual(t, "next refresh time", got, *tt.want)
+		})
+	}
+}
+
+func timePtr(t time.Time) *time.Time {
+	return &t
+}
+
 func TestListFileCountLookupUsesCurrentPageFileIDs(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -279,6 +394,10 @@ func TestListFileCountLookupUsesCurrentPageFileIDs(t *testing.T) {
 
 	if len(response.Data.Data) != 3 {
 		t.Fatalf("expected 3 rows, got %d", len(response.Data.Data))
+	}
+
+	if response.Data.Data[0].ID != 1001 || response.Data.Data[0].MountPointID != 1 {
+		t.Fatalf("expected id to remain file id and mountPointId to expose row id, got id=%d mountPointId=%d", response.Data.Data[0].ID, response.Data.Data[0].MountPointID)
 	}
 
 	gotCounts := []int64{

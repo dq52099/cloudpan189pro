@@ -19,23 +19,31 @@ export interface AddStorageRequest {
   subscribeUser?: string // 订阅用户
   enableAutoRefresh?: boolean // 是否启用自动刷新
   autoRefreshDays?: number // 自动刷新持续天数，单位天
-  refreshInterval?: number // 刷新间隔，单位秒
+  refreshInterval?: number // 刷新间隔，单位分钟，最小值30，最大值1440
   enableDeepRefresh?: boolean // 是否启用深度刷新
 }
 
 export interface AddStorageResponse {
   id: number // 存储ID
   path: string // 存储路径
+  scanQueued?: boolean // 初始化扫描任务是否已入队
+  scanError?: string // 初始化扫描任务入队失败原因
 }
 
 // 删除存储挂载请求接口
 export interface DeleteStorageRequest {
-  id: number // 存储节点ID
+  id: number // 挂载点表主键
 }
 
 // 批量删除存储挂载请求接口
 export interface BatchDeleteStorageRequest {
-  ids: number[]
+  ids: number[] // 挂载点表主键列表
+}
+
+export interface BatchDispatchResponse {
+  total: number
+  success: number
+  failed: number
 }
 
 // 批量文本导入挂载请求接口
@@ -43,7 +51,7 @@ export interface BatchCreateTextRequest {
   content: string // 文本内容（一行一个资源）
   cloudToken: number // 云盘令牌ID
   enableAutoRefresh?: boolean // 是否启用自动刷新
-  refreshInterval?: number // 刷新间隔，单位秒
+  refreshInterval?: number // 刷新间隔，单位分钟，最小值30，最大值1440
   shareAccessCode?: string // 默认提取码（可选）
 }
 
@@ -73,7 +81,7 @@ export interface ToggleAutoRefreshRequest {
 // 修改存储挂载点令牌请求接口
 export interface ModifyTokenRequest {
   id: number // 挂载点ID
-  tokenId: number // 新的令牌ID
+  tokenId: number // 新的令牌ID，0表示解绑
 }
 
 // 存储挂载列表查询参数
@@ -100,10 +108,13 @@ export interface StorageSelectItem {
 }
 
 // 存储信息接口（扩展挂载点，包含关联数据）
-export interface StorageInfo extends Models.MountPoint {
+export interface StorageInfo extends Omit<Models.MountPoint, 'id'> {
+  id: number // 兼容历史接口：这里是 fileId，不是挂载点表主键
+  mountPointId: number // 挂载点表主键
   tokenName?: string // 关联的token名称
   taskLogs?: Models.FileTaskLog[] // 关联的任务日志
   isInAutoRefreshPeriod: boolean // 是否在自动刷新时间范围内 早于超过都是false
+  nextRefreshTime?: string | null // 后端计算的下次自动刷新时间；null表示未启用、已过期或配置无效，未到开始时间时返回开始时间
   fileCount: number // 文件数量
 }
 
@@ -148,29 +159,33 @@ export const deleteStorage = (data: DeleteStorageRequest): Promise<ApiResponse> 
 }
 
 // 批量删除存储挂载
-export const batchDeleteStorage = (data: BatchDeleteStorageRequest): Promise<ApiResponse> => {
+export const batchDeleteStorage = (
+  data: BatchDeleteStorageRequest
+): Promise<ApiResponse<BatchDispatchResponse>> => {
   return api.post('/storage/batch_delete', data).then((res) => res.data)
 }
 
 // 批量刷新存储挂载请求接口
 export interface BatchRefreshStorageRequest {
-  ids: number[]
+  ids: number[] // 挂载点表主键列表
   deep?: boolean // 是否深度刷新
 }
 
 // 批量刷新存储挂载
-export const batchRefreshStorage = (data: BatchRefreshStorageRequest): Promise<ApiResponse> => {
+export const batchRefreshStorage = (
+  data: BatchRefreshStorageRequest
+): Promise<ApiResponse<BatchDispatchResponse>> => {
   return api.post('/storage/batch_refresh', data).then((res) => res.data)
 }
 
 // 批量修改存储挂载令牌请求接口
 export interface BatchModifyTokenRequest {
-  ids: number[]
-  tokenId: number // 新的令牌ID
+  ids: number[] // 挂载点表主键列表
+  tokenId: number // 新的令牌ID，0表示解绑
 }
 
 // 批量修改存储挂载令牌
-export const batchModifyToken = (data: BatchModifyTokenRequest): Promise<ApiResponse> => {
+export const batchModifyToken = (data: BatchModifyTokenRequest): Promise<ApiResponse<string>> => {
   return api.post('/storage/batch_modify_token', data, { timeout: 180000 }).then((res) => res.data)
 }
 

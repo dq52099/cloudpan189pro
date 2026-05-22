@@ -25,6 +25,7 @@ func (a *subscriptionMountAdapter) CreateStorage(ctx context.Context, req *subsc
 		RefreshInterval:   req.RefreshInterval,
 		EnableDeepRefresh: req.EnableDeepRefresh,
 		CreatorUserID:     req.CreatorUserID,
+		IsAdmin:           req.IsAdmin,
 		// 订阅定时任务下 idempotent，允许路径已存在
 		AllowExisting: true,
 	})

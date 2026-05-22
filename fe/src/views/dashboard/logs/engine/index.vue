@@ -247,9 +247,16 @@ import { getTaskEngineList } from '@/api/taskstate'
 import { formatDateTime } from '@/utils/time'
 import type { TaskEngineListResponse } from '@/api/taskstate'
 
+type NormalizedTaskEngineListResponse = {
+  isRunning: boolean
+  stats: Models.TaskStats
+  pendingTasks: Models.TaskInfo[]
+  runningTasks: Models.TaskInfo[]
+}
+
 // 数据状态
 const state = reactive({
-  engineData: null as TaskEngineListResponse | null,
+  engineData: null as NormalizedTaskEngineListResponse | null,
   loading: false,
   showTaskDetailModal: false,
   currentTask: null as Models.TaskInfo | null,
@@ -262,6 +269,61 @@ const AUTO_REFRESH_INTERVAL = 5000
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 let isComponentMounted = false
 let engineStatusRequestId = 0
+let hasEngineStatsContractWarning = false
+
+const defaultTaskStats = (): Models.TaskStats => ({
+  totalTasks: 0,
+  pendingTasks: 0,
+  runningTasks: 0,
+  completedTasks: 0,
+  failedTasks: 0,
+})
+
+const isFiniteNumber = (value: unknown): value is number => {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+const isCompleteTaskStats = (value: unknown): value is Models.TaskStats => {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const stats = value as Partial<Models.TaskStats>
+
+  return (
+    isFiniteNumber(stats.totalTasks) &&
+    isFiniteNumber(stats.pendingTasks) &&
+    isFiniteNumber(stats.runningTasks) &&
+    isFiniteNumber(stats.completedTasks) &&
+    isFiniteNumber(stats.failedTasks)
+  )
+}
+
+const normalizeTaskEngineData = (
+  data: TaskEngineListResponse
+): NormalizedTaskEngineListResponse => {
+  const stats = isCompleteTaskStats(data.stats) ? data.stats : defaultTaskStats()
+
+  return {
+    isRunning: data.isRunning === true,
+    stats,
+    pendingTasks: Array.isArray(data.pendingTasks) ? data.pendingTasks : [],
+    runningTasks: Array.isArray(data.runningTasks) ? data.runningTasks : [],
+  }
+}
+
+const warnInvalidEngineStatsOnce = (data: TaskEngineListResponse) => {
+  if (isCompleteTaskStats(data.stats)) {
+    hasEngineStatsContractWarning = false
+
+    return
+  }
+
+  if (!hasEngineStatsContractWarning) {
+    message.warning('任务引擎统计响应缺失/异常，已用 0 显示')
+    hasEngineStatsContractWarning = true
+  }
+}
 
 // 获取任务引擎状态
 const fetchEngineStatus = () => {
@@ -280,7 +342,8 @@ const fetchEngineStatus = () => {
       }
 
       if (response.code === 200 && response.data) {
-        state.engineData = response.data
+        warnInvalidEngineStatsOnce(response.data)
+        state.engineData = normalizeTaskEngineData(response.data)
 
         return
       }

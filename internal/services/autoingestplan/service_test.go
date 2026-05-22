@@ -130,6 +130,18 @@ func TestServiceCRUD(t *testing.T) {
 	}
 }
 
+func TestQueryRejectsInvalidID(t *testing.T) {
+	tDB := setupTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	for _, id := range []int64{0, -1} {
+		if _, err := svc.Query(ctx, id); !errors.Is(err, errInvalidAutoIngestPlanID) {
+			t.Fatalf("expected invalid plan id for %d, got %v", id, err)
+		}
+	}
+}
+
 func TestServiceDeleteReturnsNotFoundWhenAdminPlanMissing(t *testing.T) {
 	tDB := setupTestDB(t)
 	svc := NewService(tDB)

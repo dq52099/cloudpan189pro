@@ -1,17 +1,16 @@
 package autoingest
 
 import (
-	"encoding/json"
 	"sync"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/autoingest"
-	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 )
 
 // BatchRetryRequest 批量重试请求
 type BatchRetryRequest struct {
-	IDs []int64 `json:"ids" binding:"required,min=1,max=500"`
+	IDs []int64 `json:"ids" binding:"required,min=1"`
 }
 
 // BatchRetry 批量重试计划
@@ -70,41 +69,11 @@ func (h *handler) BatchRetry() httpcontext.HandlerFunc {
 
 			sem <- struct{}{}
 
-			go func(planId int64) {
+			go func(plan *models.AutoIngestPlan) {
 				defer wg.Done()
 				defer func() { <-sem }()
 
-				if err := h.planService.UpdateOffset(ctx.GetContext(), planId, 1); err != nil {
-					mu.Lock()
-					failCnt++
-					mu.Unlock()
-
-					return
-				}
-
-				if err := h.planService.ResetCounters(ctx.GetContext(), planId); err != nil {
-					mu.Lock()
-					failCnt++
-					mu.Unlock()
-
-					return
-				}
-
-				taskReq := &topic.AutoIngestRefreshSubscribeRequest{
-					PlanId:  planId,
-					IsRetry: true,
-				}
-
-				body, err := json.Marshal(taskReq)
-				if err != nil {
-					mu.Lock()
-					failCnt++
-					mu.Unlock()
-
-					return
-				}
-
-				if err := h.taskEngine.PushMessage(ctx.GetContext(), taskReq.Topic(), body); err != nil {
+				if err := h.dispatchRetryWithRollback(ctx, plan, 1, true, true); err != nil {
 					mu.Lock()
 					failCnt++
 					mu.Unlock()
@@ -115,7 +84,7 @@ func (h *handler) BatchRetry() httpcontext.HandlerFunc {
 				mu.Lock()
 				successCnt++
 				mu.Unlock()
-			}(plan.ID)
+			}(plan)
 		}
 
 		wg.Wait()

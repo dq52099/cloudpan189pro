@@ -3,6 +3,7 @@ package group2file
 import (
 	"errors"
 
+	pkgErrors "github.com/pkg/errors"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"go.uber.org/zap"
@@ -24,6 +25,16 @@ func (s *service) BatchBindFiles(ctx context.Context, groupId int64, fileIds []i
 	}
 
 	if err := s.getDB(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := ensureUserGroupExists(tx, groupId); err != nil {
+			return err
+		}
+
+		if len(uniqueFileIDs) > 0 {
+			if err := ensureVirtualFilesExist(tx, uniqueFileIDs); err != nil {
+				return err
+			}
+		}
+
 		// 删除所有旧绑定
 		if err := tx.Where("group_id = ?", groupId).Delete(new(models.Group2File)).Error; err != nil {
 			return err
@@ -50,6 +61,32 @@ func (s *service) BatchBindFiles(ctx context.Context, groupId int64, fileIds []i
 	}
 
 	ctx.Info("批量绑定文件权限成功", zap.Int64("groupId", groupId), zap.Int("fileCount", len(uniqueFileIDs)))
+
+	return nil
+}
+
+func ensureUserGroupExists(tx *gorm.DB, groupID int64) error {
+	var count int64
+	if err := tx.Model(new(models.UserGroup)).Where("id = ?", groupID).Count(&count).Error; err != nil {
+		return err
+	}
+
+	if count != 1 {
+		return pkgErrors.Wrap(gorm.ErrRecordNotFound, "用户组不存在")
+	}
+
+	return nil
+}
+
+func ensureVirtualFilesExist(tx *gorm.DB, fileIDs []int64) error {
+	var count int64
+	if err := tx.Model(new(models.VirtualFile)).Where("id IN ?", fileIDs).Count(&count).Error; err != nil {
+		return err
+	}
+
+	if count != int64(len(fileIDs)) {
+		return pkgErrors.Wrap(gorm.ErrRecordNotFound, "部分文件不存在")
+	}
 
 	return nil
 }

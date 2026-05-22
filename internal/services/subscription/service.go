@@ -46,6 +46,7 @@ type MountStorageRequest struct {
 	RefreshInterval   int
 	EnableDeepRefresh bool
 	CreatorUserID     int64
+	IsAdmin           bool
 }
 
 // MountService 挂载服务接口（storagefacade 子集），避免直接依赖具体实现。

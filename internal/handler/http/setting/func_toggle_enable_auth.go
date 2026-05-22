@@ -6,7 +6,7 @@ import (
 )
 
 type toggleEnableAuthRequest struct {
-	EnableAuth bool `json:"enableAuth" example:"true"` // 是否启用鉴权
+	EnableAuth *bool `json:"enableAuth" binding:"required" example:"true"` // 是否启用鉴权
 }
 
 // ToggleEnableAuth 切换系统鉴权开关
@@ -32,7 +32,7 @@ func (h *handler) ToggleEnableAuth() httpcontext.HandlerFunc {
 		}
 
 		if err := h.settingService.Update(ctx.GetContext(),
-			utils.WithField("enable_auth", req.EnableAuth),
+			utils.WithField("enable_auth", *req.EnableAuth),
 		); err != nil {
 			ctx.Fail(codeToggleEnableAuthFailed.WithError(err))
 

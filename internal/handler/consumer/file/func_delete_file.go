@@ -36,12 +36,6 @@ func (h *handler) HandleBatchDelete() taskcontext.HandlerFunc {
 			return err
 		}
 
-		if len(requestIDs) == 0 {
-			h.logger.Info("批量删除任务为空，跳过")
-
-			return nil
-		}
-
 		h.logger.Info("消费者开始处理批量删除", zap.Int("count", len(requestIDs)))
 
 		// 获取父任务tracker（用于存储批量删除任务汇总进度）
@@ -197,6 +191,12 @@ func (h *handler) HandleDelete() taskcontext.HandlerFunc {
 		}
 
 		targetFileID := req.FileId
+		if targetFileID <= 0 {
+			h.logger.Warn("单文件删除任务 ID 非法", zap.Int64("file_id", targetFileID), zap.Error(errInvalidFileTaskID))
+
+			return errInvalidFileTaskID
+		}
+
 		h.logger.Info("消费者开始处理单个文件删除", zap.Int64("file_id", targetFileID))
 
 		// 获取父任务tracker（用于批量任务汇总进度）

@@ -117,6 +117,7 @@ func (h *handler) BatchAdd() httpcontext.HandlerFunc {
 				RefreshInterval:   item.RefreshInterval,
 				EnableDeepRefresh: item.EnableDeepRefresh,
 				CreatorUserID:     userID,
+				IsAdmin:           isAdmin,
 				AllowExisting:     true, // 批量场景下允许幂等
 			})
 			if createErr != nil {

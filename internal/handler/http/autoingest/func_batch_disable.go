@@ -8,7 +8,7 @@ import (
 
 // BatchDisableRequest 批量停用请求
 type BatchDisableRequest struct {
-	IDs []int64 `json:"ids" binding:"required,min=1,max=500"`
+	IDs []int64 `json:"ids" binding:"required,min=1"`
 }
 
 // BatchDisable 批量停用计划

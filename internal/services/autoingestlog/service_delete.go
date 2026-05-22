@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pkg/errors"
 	appContext "github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/autoingest"
+	"gorm.io/gorm"
 )
 
 // DeleteByPlanIds 根据计划 ID 批量删除日志。
@@ -37,8 +39,15 @@ func (s *service) DeleteByIds(ctx appContext.Context, ids []int64) (int64, error
 	}
 
 	result := s.getDB(ctx).Where("id IN ?", normalizedIds).Delete(&models.AutoIngestLog{})
+	if result.Error != nil {
+		return result.RowsAffected, result.Error
+	}
 
-	return result.RowsAffected, result.Error
+	if result.RowsAffected != int64(len(normalizedIds)) {
+		return result.RowsAffected, errors.Wrap(gorm.ErrRecordNotFound, "部分自动入库日志不存在")
+	}
+
+	return result.RowsAffected, nil
 }
 
 // DeleteErrorLogsByPlanId 删除指定计划的所有错误日志。

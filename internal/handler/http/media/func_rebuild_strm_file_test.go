@@ -94,6 +94,102 @@ func TestRebuildStrmFileRejectsInvalidMountPointID(t *testing.T) {
 	}
 }
 
+func TestRebuildStrmFileEmptyMountPointIDsDoesNotTriggerFullRebuild(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockRebuildTaskEngine{}
+	mountPointService := &mockRebuildMountPointService{list: []*models.MountPoint{
+		{ID: 7, FileId: 11, FullPath: "/movie"},
+	}}
+	router := gin.New()
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/rebuild", wrapper.Wrap(NewHandler(
+		&mockRebuildMediaConfigService{},
+		nil,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		taskEngine,
+	).RebuildStrmFile()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/rebuild", strings.NewReader(`{"mountPointIds":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Data rebuildStrmResponse `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.Data.Total != 0 || response.Data.Success != 0 || response.Data.Failed != 0 {
+		t.Fatalf("expected empty scoped rebuild response, got %+v", response.Data)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no rebuild task for explicit empty mountPointIds, got %d", len(taskEngine.payloads))
+	}
+
+	if mountPointService.req == nil {
+		t.Fatal("expected scoped path to query mount points")
+	}
+}
+
+func TestRebuildStrmFileMissingMountPointIDsTriggersFullRebuild(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockRebuildTaskEngine{}
+	router := gin.New()
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/rebuild", wrapper.Wrap(NewHandler(
+		&mockRebuildMediaConfigService{},
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		taskEngine,
+	).RebuildStrmFile()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/rebuild", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Data rebuildStrmResponse `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.Data.Total != 1 || response.Data.Success != 1 || response.Data.Failed != 0 {
+		t.Fatalf("expected full rebuild response, got %+v", response.Data)
+	}
+
+	if len(taskEngine.payloads) != 1 {
+		t.Fatalf("expected one full rebuild task, got %d", len(taskEngine.payloads))
+	}
+
+	var payload topic.MediaRebuildStrmFileRequest
+	if err := json.Unmarshal(taskEngine.payloads[0], &payload); err != nil {
+		t.Fatalf("decode full rebuild payload: %v", err)
+	}
+}
+
 func TestRebuildStrmFileCountsMissingMountPointsAsFailed(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

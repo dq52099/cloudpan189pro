@@ -16,6 +16,7 @@ type configInitRequest struct {
 	IncludedSuffixes    []string                 `json:"includedSuffixes" binding:"omitempty" example:"['.mp4','.mkv','.avi']"`
 	AutoRebuildEnable   bool                     `json:"autoRebuildEnable" example:"false"`
 	AutoRebuildInterval int                      `json:"autoRebuildInterval" example:"24"`
+	AutoRebuildCron     string                   `json:"autoRebuildCron" binding:"omitempty" example:"0 2 * * *"`
 }
 
 // ConfigInit 初始化媒体配置
@@ -47,6 +48,7 @@ func (h *handler) ConfigInit() httpcontext.HandlerFunc {
 			IncludedSuffixes:    req.IncludedSuffixes,
 			AutoRebuildEnable:   req.AutoRebuildEnable,
 			AutoRebuildInterval: req.AutoRebuildInterval,
+			AutoRebuildCron:     req.AutoRebuildCron,
 		}
 
 		if err := h.mediaConfigService.Init(ctx.GetContext(), iReq); err != nil {

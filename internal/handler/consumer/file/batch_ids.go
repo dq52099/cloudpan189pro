@@ -2,9 +2,16 @@ package file
 
 import "errors"
 
-var errInvalidFileTaskID = errors.New("文件任务 ID 必须大于 0")
+var (
+	errEmptyFileTaskIDs  = errors.New("文件任务 ID 列表不能为空")
+	errInvalidFileTaskID = errors.New("文件任务 ID 必须大于 0")
+)
 
 func normalizeFileTaskIDs(ids []int64) ([]int64, error) {
+	if len(ids) == 0 {
+		return nil, errEmptyFileTaskIDs
+	}
+
 	seen := make(map[int64]struct{}, len(ids))
 	normalized := make([]int64, 0, len(ids))
 

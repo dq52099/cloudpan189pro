@@ -3,6 +3,8 @@ package http
 import (
 	stdContext "context"
 	"encoding/json"
+	"errors"
+	"fmt"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
@@ -67,25 +69,40 @@ func (a *telegramMountAdapter) CreateMountPoint(ctx stdContext.Context, req *tel
 	}
 
 	// 下发扫描任务，与 BatchAdd 行为保持一致
+	if a.mountPointService == nil || a.taskEngine == nil {
+		return id, errors.New("telegram 挂载扫描依赖未初始化")
+	}
+
 	mp, queryErr := a.mountPointService.Query(bgCtx, id)
-	if queryErr == nil && mp != nil {
-		taskReq := &topic.FileScanFileRequest{
-			FileId: id,
-			Deep:   true,
-		}
+	if queryErr != nil {
+		return id, fmt.Errorf("查询挂载点以下发扫描任务失败: %w", queryErr)
+	}
 
-		body, _ := json.Marshal(taskReq)
+	if mp == nil {
+		return id, errors.New("查询挂载点以下发扫描任务失败: 挂载点为空")
+	}
 
-		fullPath := mp.FullPath
-		if fullPath == "" {
-			fullPath = mp.Name
-		}
+	taskReq := &topic.FileScanFileRequest{
+		FileId: id,
+		Deep:   true,
+	}
 
-		_ = a.taskEngine.PushMessage(
-			bgCtx.WithValue(consts.CtxKeyFullPath, fullPath).
-				WithValue(consts.CtxKeyInvokeHandlerName, "Telegram Bot 挂载扫描"),
-			taskReq.Topic(), body,
-		)
+	body, err := json.Marshal(taskReq)
+	if err != nil {
+		return id, fmt.Errorf("序列化 Telegram 挂载扫描任务失败: %w", err)
+	}
+
+	fullPath := mp.FullPath
+	if fullPath == "" {
+		fullPath = mp.Name
+	}
+
+	if err := a.taskEngine.PushMessage(
+		bgCtx.WithValue(consts.CtxKeyFullPath, fullPath).
+			WithValue(consts.CtxKeyInvokeHandlerName, "Telegram Bot 挂载扫描"),
+		taskReq.Topic(), body,
+	); err != nil {
+		return id, fmt.Errorf("下发 Telegram 挂载扫描任务失败: %w", err)
 	}
 
 	return id, nil

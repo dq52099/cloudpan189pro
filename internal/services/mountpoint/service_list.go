@@ -105,13 +105,17 @@ func (s *service) getListQuery(ctx context.Context, req *ListRequest) (*gorm.DB,
 		query = query.Where("file_id = ?", *req.FileId)
 	}
 
-	if len(req.FileIdList) > 0 {
+	if req.FileIdList != nil {
 		fileIDs, err := normalizeMountPointFileIDs(req.FileIdList)
 		if err != nil {
 			return nil, err
 		}
 
-		query = query.Where("file_id IN ?", fileIDs)
+		if len(fileIDs) == 0 {
+			query = query.Where("1 = 0")
+		} else {
+			query = query.Where("file_id IN ?", fileIDs)
+		}
 	}
 
 	if req.TokenId != nil {
@@ -157,7 +161,7 @@ func (s *service) getListQuery(ctx context.Context, req *ListRequest) (*gorm.DB,
 			}
 		}
 
-		query = query.Where(strings.Join(conditions, " OR "), args...)
+		query = query.Where("("+strings.Join(conditions, " OR ")+")", args...)
 	}
 
 	return query, nil

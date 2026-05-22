@@ -142,6 +142,10 @@ const clearLogOptions: DropdownOption[] = [
   { label: '保留最近 365 天', key: '365d' },
 ]
 
+const isValidClearCount = (value: unknown): value is number => {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
 // 分页
 const paginationReactive = reactive<PaginationProps>({
   page: 1,
@@ -365,7 +369,12 @@ const handleClearLogs = (key: string | number) => {
           }
 
           if (res.code === 200) {
-            message.success(`登录日志已清理${res.data ? `，删除 ${res.data} 条` : ''}`)
+            if (isValidClearCount(res.data)) {
+              message.success(`登录日志已清理，删除 ${res.data} 条`)
+            } else {
+              message.warning('清理完成但响应统计缺失/异常')
+            }
+
             paginationReactive.page = 1
             fetchList()
           } else {

@@ -1,6 +1,8 @@
 package user
 
 import (
+	"net/http"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	loginlogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/loginlog"
@@ -43,6 +45,8 @@ var (
 	codeNoUpdateFields      = bi.Next("请填写需要更新的字段")
 	codeUserPasswordFailed  = bi.Next("用户密码错误")
 	codeUserNotFound        = bi.Next("用户不存在")
+	codeUserResourceMissing = bi.Next("用户不存在").WithHTTPCode(http.StatusNotFound)
+	codeUserGroupMissing    = bi.Next("用户组不存在").WithHTTPCode(http.StatusNotFound)
 )
 
 type handler struct {

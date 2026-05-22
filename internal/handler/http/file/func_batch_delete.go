@@ -3,6 +3,7 @@ package file
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
@@ -15,6 +16,8 @@ import (
 type batchDeleteRequest struct {
 	IDs []int64 `json:"ids" binding:"required,min=1"`
 }
+
+const maxBatchDeleteIDs = 1000
 
 // BatchDelete 批量删除文件
 // @Router /api/file/batch_delete [post]
@@ -31,7 +34,7 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 		userID := ctx.GetInt64(consts.CtxKeyUserId)
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
 
-		requestIDs, err := normalizeBatchIDs(req.IDs)
+		requestIDs, err := normalizeBatchIDs(req.IDs, maxBatchDeleteIDs)
 		if err != nil {
 			ctx.AbortWithInvalidParams(err)
 
@@ -87,7 +90,14 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 
 		// 构造消息队列请求
 		task := &topic.FileBatchDeleteRequest{IDs: requestIDs}
-		body, _ := json.Marshal(task)
+
+		body, err := json.Marshal(task)
+		if err != nil {
+			ctx.GetContext().Error("序列化文件批量删除任务失败", zap.Error(err))
+			ctx.Fail(busCodeBatchDeleteError.WithError(err))
+
+			return
+		}
 
 		fullPath := ctx.GetContext().String(consts.CtxKeyFullPath, "unknown")
 
@@ -128,13 +138,17 @@ func uniqueInt64s(ids []int64) []int64 {
 	return result
 }
 
-func normalizeBatchIDs(ids []int64) ([]int64, error) {
+func normalizeBatchIDs(ids []int64, maxUnique int) ([]int64, error) {
 	result := uniqueInt64s(ids)
 
 	for _, id := range result {
 		if id <= 0 {
 			return nil, errors.New("ids 必须全部大于 0")
 		}
+	}
+
+	if maxUnique > 0 && len(result) > maxUnique {
+		return nil, fmt.Errorf("ids 去重后不能超过 %d 个", maxUnique)
 	}
 
 	return result, nil

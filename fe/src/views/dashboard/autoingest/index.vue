@@ -247,6 +247,7 @@ import {
   batchDeletePlan,
   batchEnablePlan,
   batchDisablePlan,
+  type AutoIngestBatchOperationResponse,
   type PlanLogResult,
 } from '@/api/autoingest'
 import { getCloudTokenList } from '@/api/cloudtoken'
@@ -254,11 +255,45 @@ import dayjs from 'dayjs'
 import { AUTO_INGEST_SOURCE_TYPE_OPTIONS } from '@/constants/autoIngest'
 import CreatePlanModal from '@/components/autoingest/CreatePlanModal.vue'
 import EditPlanModal from '@/components/autoingest/EditPlanModal.vue'
-import { type ApiResponse, type BatchOperationResponse } from '@/utils/api'
+import { type ApiResponse } from '@/utils/api'
 
 const message = useMessage()
 const dialog = useDialog()
 let isPageAlive = true
+
+const isAutoIngestBatchOperationResponse = (
+  result: unknown
+): result is AutoIngestBatchOperationResponse => {
+  if (!result || typeof result !== 'object') {
+    return false
+  }
+
+  const data = result as Partial<AutoIngestBatchOperationResponse>
+
+  return typeof data.success === 'number' && typeof data.failed === 'number'
+}
+
+const showBatchOperationResult = (
+  label: string,
+  result: AutoIngestBatchOperationResponse | undefined
+) => {
+  if (!isAutoIngestBatchOperationResponse(result)) {
+    message.error(`${label}完成，但响应统计缺失`)
+
+    return
+  }
+
+  const { success, failed } = result
+  const text = `${label}完成：成功 ${success}，失败 ${failed}`
+
+  if (failed > 0 && success > 0) {
+    message.warning(text)
+  } else if (failed > 0) {
+    message.error(text)
+  } else {
+    message.success(text)
+  }
+}
 
 const isActiveRequest = (requestId: number, latestRequestId: number) =>
   isPageAlive && requestId === latestRequestId
@@ -379,11 +414,9 @@ const handleBatchRetry = () => {
 
   batchActionLoading.value = true
   batchRetryPlan({ ids })
-    .then((res: ApiResponse<BatchOperationResponse>) => {
+    .then((res: ApiResponse<AutoIngestBatchOperationResponse>) => {
       if (res.code === 200) {
-        message.success(
-          `批量重试完成：成功 ${res.data?.success || 0}，失败 ${res.data?.failed || 0}`
-        )
+        showBatchOperationResult('批量重试', res.data)
         clearPlanSelection()
         fetchPlanList()
       } else {
@@ -411,11 +444,9 @@ const handleBatchRefresh = () => {
 
   batchActionLoading.value = true
   batchRefreshPlan({ ids })
-    .then((res: ApiResponse<BatchOperationResponse>) => {
+    .then((res: ApiResponse<AutoIngestBatchOperationResponse>) => {
       if (res.code === 200) {
-        message.success(
-          `批量扫描完成：成功 ${res.data?.success || 0}，失败 ${res.data?.failed || 0}`
-        )
+        showBatchOperationResult('批量扫描', res.data)
         clearPlanSelection()
       } else {
         message.error(res.msg || '批量扫描失败')
@@ -442,11 +473,9 @@ const handleBatchEnable = () => {
 
   batchActionLoading.value = true
   batchEnablePlan({ ids })
-    .then((res: ApiResponse<BatchOperationResponse>) => {
+    .then((res: ApiResponse<AutoIngestBatchOperationResponse>) => {
       if (res.code === 200) {
-        message.success(
-          `批量启用完成：成功 ${res.data?.success || 0}，失败 ${res.data?.failed || 0}`
-        )
+        showBatchOperationResult('批量启用', res.data)
         clearPlanSelection()
         fetchPlanList()
       } else {
@@ -474,11 +503,9 @@ const handleBatchDisable = () => {
 
   batchActionLoading.value = true
   batchDisablePlan({ ids })
-    .then((res: ApiResponse<BatchOperationResponse>) => {
+    .then((res: ApiResponse<AutoIngestBatchOperationResponse>) => {
       if (res.code === 200) {
-        message.success(
-          `批量停用完成：成功 ${res.data?.success || 0}，失败 ${res.data?.failed || 0}`
-        )
+        showBatchOperationResult('批量停用', res.data)
         clearPlanSelection()
         fetchPlanList()
       } else {
@@ -516,11 +543,9 @@ const handleBatchDelete = () => {
 
       batchActionLoading.value = true
       batchDeletePlan({ ids })
-        .then((res: ApiResponse<BatchOperationResponse>) => {
+        .then((res: ApiResponse<AutoIngestBatchOperationResponse>) => {
           if (res.code === 200) {
-            message.success(
-              `批量删除完成：成功 ${res.data?.success || 0}，失败 ${res.data?.failed || 0}`
-            )
+            showBatchOperationResult('批量删除', res.data)
             clearPlanSelection()
             fetchPlanList()
           } else {
@@ -1182,6 +1207,7 @@ const logColumns: DataTableColumns<Models.AutoIngestLog> = [
     render: (row) => {
       if (row.level === 'error') {
         const retryFailedPending = isPlanActionPending('retryFailed', row.planId)
+        const missingPlan = !row.planId
 
         return h(
           NButton,
@@ -1189,7 +1215,7 @@ const logColumns: DataTableColumns<Models.AutoIngestLog> = [
             size: 'small',
             type: 'warning',
             loading: retryFailedPending,
-            disabled: retryFailedPending,
+            disabled: retryFailedPending || missingPlan,
             onClick: () => onRetryFailed(row.planId),
           },
           { default: () => '重试' }
@@ -1202,6 +1228,12 @@ const logColumns: DataTableColumns<Models.AutoIngestLog> = [
 
 // 重试失败任务
 const onRetryFailed = (planId?: number) => {
+  if (!planId) {
+    message.warning('该日志缺少计划ID，无法重试')
+
+    return
+  }
+
   if (isPlanActionPending('retryFailed', planId)) {
     return
   }

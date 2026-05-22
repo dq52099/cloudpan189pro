@@ -28,7 +28,7 @@ export interface ModifyUserGroupNameRequest {
 // 批量绑定文件到用户组请求接口
 export interface BatchBindFilesRequest {
   groupId: number // 用户组ID
-  fileIds: number[] // 文件ID列表
+  fileIds: number[] // 文件ID列表，元素必须大于0；空数组表示清空绑定
 }
 
 // 获取用户组绑定文件响应接口

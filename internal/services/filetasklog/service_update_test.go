@@ -210,6 +210,64 @@ func TestRunningNoOpUpdateReturnsNil(t *testing.T) {
 	}
 }
 
+func TestTerminalTaskLogStatusDoesNotGetOverwritten(t *testing.T) {
+	tDB := setupFileTaskLogTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	failedTracker, err := svc.Create(ctx, "scan", "failed scan")
+	if err != nil {
+		t.Fatalf("create failed task log: %v", err)
+	}
+
+	if err := svc.Running(ctx, failedTracker); err != nil {
+		t.Fatalf("running failed task log: %v", err)
+	}
+
+	if err := svc.Failed(ctx, failedTracker); err != nil {
+		t.Fatalf("fail task log: %v", err)
+	}
+
+	if err := svc.Completed(ctx, failedTracker); err != nil {
+		t.Fatalf("late completed should be ignored without error: %v", err)
+	}
+
+	completedTracker, err := svc.Create(ctx, "scan", "completed scan")
+	if err != nil {
+		t.Fatalf("create completed task log: %v", err)
+	}
+
+	if err := svc.Running(ctx, completedTracker); err != nil {
+		t.Fatalf("running completed task log: %v", err)
+	}
+
+	if err := svc.Completed(ctx, completedTracker); err != nil {
+		t.Fatalf("complete task log: %v", err)
+	}
+
+	if err := svc.Failed(ctx, completedTracker); err != nil {
+		t.Fatalf("late failed should be ignored without error: %v", err)
+	}
+
+	var failedLog models.FileTaskLog
+	if err := tDB.db.First(&failedLog, failedTracker.GetID()).Error; err != nil {
+		t.Fatalf("query failed task log: %v", err)
+	}
+
+	if failedLog.Status != models.StatusFailed {
+		t.Fatalf("expected failed status to stay failed, got %q", failedLog.Status)
+	}
+
+	var completedLog models.FileTaskLog
+	if err := tDB.db.First(&completedLog, completedTracker.GetID()).Error; err != nil {
+		t.Fatalf("query completed task log: %v", err)
+	}
+
+	if completedLog.Status != models.StatusCompleted {
+		t.Fatalf("expected completed status to stay completed, got %q", completedLog.Status)
+	}
+}
+
 func TestFlushCountNoOpUpdateReturnsNil(t *testing.T) {
 	tDB := setupFileTaskLogTestDB(t)
 	svc := NewService(tDB)

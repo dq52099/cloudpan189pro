@@ -42,14 +42,14 @@ CloudPan189 Share 是一款专为天翼云盘设计的智能文件分享管理�
 
 ```sh
 docker run -d \
-  --name cloudpan189-share \
+  --name cloudpan189pro \
   -p 12395:12395 \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/media_dir:/app/media_dir \
   --restart unless-stopped \
-  xxcheng123/cloudpan189-share:latest
+  dq52099/cloudpan189pro:latest
 ```
-更多请参考文档：[CloudPan189 Share 快速开始文档](docs/1.quick_start.md)
+更多请参考文档：[CloudPan189Pro 快速开始文档](docs/1.quick_start.md)
 
 ### 访问系统
 - Web 界面: `http://服务器IP:12395`
@@ -113,8 +113,8 @@ http://localhost:12395/dav
 
 ### 1. 克隆项目
 ```bash
-git clone https://github.com/xxcheng123/cloudpan189-share.git
-cd cloudpan189-share
+git clone https://github.com/dq52099/cloudpan189pro.git
+cd cloudpan189pro
 ```
 
 ### 2. 后端部署
@@ -173,7 +173,7 @@ cd fe && corepack pnpm@9.15.9 dev
 
 ### 项目结构
 ```
-cloudpan189-share/
+cloudpan189pro/
 ├── cmd/                 # 主程序入口
 ├── configs/             # 配置管理
 ├── etc/                 # 配置文件

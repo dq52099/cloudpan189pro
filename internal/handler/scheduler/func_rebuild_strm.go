@@ -128,7 +128,11 @@ func (s *RebuildStrmScheduler) tick() {
 		return
 	}
 
-	s.doRebuild()
+	if err := s.doRebuild(); err != nil {
+		s.ctx.Error("STRM定时重建任务下发失败，保留下次重试时间", zap.Error(err))
+
+		return
+	}
 
 	// 计算下一次执行时间
 	schedule, err := cron.ParseStandard(s.currentCron)
@@ -147,10 +151,10 @@ func (s *RebuildStrmScheduler) tick() {
 	}
 }
 
-func (s *RebuildStrmScheduler) doRebuild() {
+func (s *RebuildStrmScheduler) doRebuild() error {
 	logger := s.ctx.Logger
 
-	logger.Info("STRM定时重建任务已下发",
+	logger.Info("准备下发STRM定时重建任务",
 		zap.String("cron", s.currentCron),
 		zap.Time("next_run_at", s.nextRunAt),
 	)
@@ -164,7 +168,7 @@ func (s *RebuildStrmScheduler) doRebuild() {
 	if err != nil {
 		logger.Error("序列化STRM定时重建任务失败", zap.Error(err))
 
-		return
+		return err
 	}
 
 	if err := s.taskEngine.PushMessage(
@@ -172,5 +176,14 @@ func (s *RebuildStrmScheduler) doRebuild() {
 			WithValue(consts.CtxKeyInvokeHandlerName, "STRM定时重建执行器"),
 		taskReq.Topic(), body); err != nil {
 		logger.Error("下发STRM定时重建任务失败", zap.Error(err))
+
+		return err
 	}
+
+	logger.Info("STRM定时重建任务已下发",
+		zap.String("cron", s.currentCron),
+		zap.Time("next_run_at", s.nextRunAt),
+	)
+
+	return nil
 }

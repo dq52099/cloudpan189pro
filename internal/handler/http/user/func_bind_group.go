@@ -48,7 +48,7 @@ func (h *handler) BindGroup() httpcontext.HandlerFunc {
 		// 检查用户是否存在
 		if _, err := h.userService.Query(ctx.GetContext(), req.UserID); err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				ctx.Fail(codeBindGroupFailed.WithError(err))
+				ctx.Fail(codeUserResourceMissing.WithError(err))
 
 				return
 			}
@@ -64,7 +64,7 @@ func (h *handler) BindGroup() httpcontext.HandlerFunc {
 		if req.GroupID > 0 {
 			if groupInfo, err := h.userGroupService.Query(ctx.GetContext(), req.GroupID); err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
-					ctx.Fail(codeBindGroupFailed.WithError(err))
+					ctx.Fail(codeUserGroupMissing.WithError(err))
 
 					return
 				}
@@ -79,7 +79,7 @@ func (h *handler) BindGroup() httpcontext.HandlerFunc {
 
 		if err := h.userService.BindGroup(ctx.GetContext(), serviceReq); err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				ctx.Fail(codeBindGroupFailed.WithError(err))
+				ctx.Fail(codeUserResourceMissing.WithError(err))
 
 				return
 			}

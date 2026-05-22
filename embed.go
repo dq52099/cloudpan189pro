@@ -5,17 +5,16 @@ import (
 	"io/fs"
 )
 
-//go:embed all:fe
+//go:embed all:fe/dist
 var topFileFs embed.FS
 
 func StaticFS() (fs.FS, bool) {
-	feFs, err := fs.Sub(topFileFs, "fe")
+	staticFS, err := fs.Sub(topFileFs, "fe/dist")
 	if err != nil {
 		return nil, false
 	}
 
-	staticFS, err := fs.Sub(feFs, "dist")
-	if err != nil {
+	if _, err = fs.Stat(staticFS, "index.html"); err != nil {
 		return nil, false
 	}
 

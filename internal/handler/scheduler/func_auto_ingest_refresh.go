@@ -131,13 +131,20 @@ func (s *AutoIngestRefreshScheduler) doJob() bool {
 				PlanId: plan.ID,
 			}
 
-			msgBody, _ := json.Marshal(taskReq)
+			msgBody, err := json.Marshal(taskReq)
+			if err != nil {
+				ctx.Error("序列化自动入库任务失败", zap.Int64("id", plan.ID), zap.Error(err))
 
-			if err = s.taskEngine.PushMessage(ctx, taskReq.Topic(), msgBody); err != nil {
-				ctx.Error("推送自动入库任务失败", zap.Error(err))
+				continue
 			}
 
-			ctx.Info("查询到需要自动入库的订阅计划", zap.Int64("id", plan.ID), zap.String("name", plan.Name))
+			if err = s.taskEngine.PushMessage(ctx, taskReq.Topic(), msgBody); err != nil {
+				ctx.Error("推送自动入库任务失败", zap.Int64("id", plan.ID), zap.String("name", plan.Name), zap.Error(err))
+
+				continue
+			}
+
+			ctx.Info("自动入库任务已下发", zap.Int64("id", plan.ID), zap.String("name", plan.Name))
 		}
 	}
 

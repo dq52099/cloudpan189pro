@@ -14,7 +14,7 @@ import (
 )
 
 type batchDeleteRequest struct {
-	IDs []int64 `json:"ids" binding:"required,min=1,max=1000"`
+	IDs []int64 `json:"ids" binding:"required,min=1"`
 }
 
 type batchDeleteResponse struct {
@@ -51,7 +51,7 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
 
 		// 查询所有挂载点并按权限过滤；缓存已查到的对象避免二次查询
-		requestIDs, err := normalizeBatchIDs(req.IDs)
+		requestIDs, err := normalizeBatchIDs(req.IDs, maxBatchIDs)
 		if err != nil {
 			ctx.AbortWithInvalidParams(err)
 
@@ -177,13 +177,17 @@ func uniqueInt64s(ids []int64) []int64 {
 	return result
 }
 
-func normalizeBatchIDs(ids []int64) ([]int64, error) {
+func normalizeBatchIDs(ids []int64, maxUnique int) ([]int64, error) {
 	result := uniqueInt64s(ids)
 
 	for _, id := range result {
 		if id <= 0 {
 			return nil, errors.New("ids 必须全部大于 0")
 		}
+	}
+
+	if maxUnique > 0 && len(result) > maxUnique {
+		return nil, fmt.Errorf("ids 去重后不能超过 %d 个", maxUnique)
 	}
 
 	return result, nil

@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	mysqlDriver "github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/taskcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/datatypes"
@@ -33,6 +35,28 @@ const (
 func isDuplicateEntryError(err error) bool {
 	if err == nil {
 		return false
+	}
+
+	var mysqlErr *mysqlDriver.MySQLError
+	if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+		return true
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return true
+	}
+
+	type sqliteCodeError interface {
+		Code() int
+	}
+
+	var sqliteErr sqliteCodeError
+	if errors.As(err, &sqliteErr) {
+		switch sqliteErr.Code() {
+		case 1555, 2067: // SQLITE_CONSTRAINT_PRIMARYKEY / SQLITE_CONSTRAINT_UNIQUE
+			return true
+		}
 	}
 
 	msg := err.Error()
@@ -168,7 +192,13 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 								Deep:   true,
 							}
 
-							scanBody, _ := json.Marshal(scanReq)
+							scanBody, marshalErr := json.Marshal(scanReq)
+							if marshalErr != nil {
+								logger.Error("序列化已存在文件扫描任务失败", zap.Error(marshalErr))
+
+								continue
+							}
+
 							if err = h.taskEngine.PushMessage(
 								ctx.GetContext().
 									WithValue(consts.CtxKeyFullPath, fullPath).
@@ -214,7 +244,10 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 				Deep:   true,
 			}
 
-			body, _ := json.Marshal(taskReq)
+			body, err := json.Marshal(taskReq)
+			if err != nil {
+				return err
+			}
 
 			return h.taskEngine.PushMessage(
 				ctx.GetContext().
@@ -414,7 +447,26 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 							Deep:   true,
 						}
 
-						body, _ := json.Marshal(taskReq)
+						body, err := json.Marshal(taskReq)
+						if err != nil {
+							logger.Error("序列化文件扫描任务失败", zap.Error(err))
+
+							mu.Lock()
+							localFailedCount++
+							mu.Unlock()
+
+							failedRecorded = true
+
+							if _, logErr := h.autoIngestLogService.Create(ctx.GetContext(),
+								req.PlanId, autoingest.LogLevelError,
+								fmt.Sprintf("新增入库失败：%s, 错误信息：序列化文件扫描任务失败: %s", fullPath, err.Error()),
+							); logErr != nil {
+								logger.Error("创建入库日志失败", zap.Error(logErr))
+							}
+
+							break
+						}
+
 						if err = h.taskEngine.PushMessage(
 							ctx.GetContext().
 								WithValue(consts.CtxKeyFullPath, fullPath).

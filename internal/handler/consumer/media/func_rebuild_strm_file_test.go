@@ -296,6 +296,45 @@ func setupRebuildStrmMediaConfig(t *testing.T) {
 	shared.BaseURL = "http://example.test"
 }
 
+func TestRebuildStrmFileByMountPointRejectsMissingFileID(t *testing.T) {
+	tDB := setupRebuildStrmTestDB(t)
+	fileTaskLogService := filetasklog.NewService(tDB)
+
+	setupRebuildStrmMediaConfig(t)
+
+	virtualFileService := &mockRebuildStrmVirtualFileService{
+		filesByParent: map[int64][]*models.VirtualFile{
+			0: {
+				{ID: 1, ParentId: 0, Name: "unexpected.mp4", IsDir: false},
+			},
+		},
+		errByParent: map[int64]error{},
+	}
+	handler := NewHandler(
+		&mockRebuildStrmMediaFileService{},
+		&mockRebuildStrmMountPointService{},
+		virtualFileService,
+		&mockRebuildStrmVerifyService{errByFileID: map[int64]error{}},
+		fileTaskLogService,
+	)
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.RebuildStrmFileByMountPoint())
+	err := processor.Process(stdctx.Background(), []byte(`{}`))
+
+	if !errors.Is(err, errInvalidRebuildMountPointFileID) {
+		t.Fatalf("expected invalid mount point file id error, got %v", err)
+	}
+
+	var count int64
+	if err := tDB.db.Model(&models.FileTaskLog{}).Count(&count).Error; err != nil {
+		t.Fatalf("count task logs: %v", err)
+	}
+
+	if count != 0 {
+		t.Fatalf("expected invalid task not to create task log, got %d", count)
+	}
+}
+
 func TestRebuildStrmFileByMountPointReturnsCompletedStatusError(t *testing.T) {
 	tDB := setupRebuildStrmTestDB(t)
 	statusErr := errors.New("completed status write failed")

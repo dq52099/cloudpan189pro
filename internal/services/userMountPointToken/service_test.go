@@ -3,10 +3,13 @@ package userMountPointToken
 import (
 	stdctx "context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	mysqlDriver "github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/xxcheng123/cloudpan189-share/internal/bootstrap"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/taskengine"
@@ -60,6 +63,53 @@ func setupUserMountPointTokenTestDB(t *testing.T) *userMountPointTokenTestDB {
 	}
 
 	return &userMountPointTokenTestDB{db: db}
+}
+
+func TestIsMissingTableErrorRecognizesSupportedDatabases(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "mysql missing table",
+			err:  &mysqlDriver.MySQLError{Number: 1146, Message: "Table 'share.user_mount_point_tokens' doesn't exist"},
+			want: true,
+		},
+		{
+			name: "wrapped postgres undefined table",
+			err:  fmt.Errorf("query bindings: %w", &pgconn.PgError{Code: "42P01", Message: `relation "user_mount_point_tokens" does not exist`}),
+			want: true,
+		},
+		{
+			name: "sqlite missing table text",
+			err:  errors.New("SQL logic error: no such table: user_mount_point_tokens"),
+			want: true,
+		},
+		{
+			name: "mysql text fallback",
+			err:  errors.New("Error 1146: Table 'share.user_mount_point_tokens' doesn't exist"),
+			want: true,
+		},
+		{
+			name: "unrelated missing table",
+			err:  errors.New("no such table: other_table"),
+			want: false,
+		},
+		{
+			name: "nil",
+			err:  nil,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isMissingTableError(tt.err); got != tt.want {
+				t.Fatalf("expected %v, got %v", tt.want, got)
+			}
+		})
+	}
 }
 
 func createBinding(t *testing.T, db *gorm.DB, userID, mountPointID, tokenID int64) {
@@ -229,6 +279,25 @@ func TestGetTokenIDReturnsZeroWhenBindingMissing(t *testing.T) {
 
 	if tokenID != 0 {
 		t.Fatalf("expected missing token id to be 0, got %d", tokenID)
+	}
+}
+
+func TestGetTokenIDReturnsZeroWhenBindingTableMissing(t *testing.T) {
+	tDB := setupUserMountPointTokenTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	if err := tDB.db.Migrator().DropTable(&models.UserMountPointToken{}); err != nil {
+		t.Fatalf("drop binding table: %v", err)
+	}
+
+	tokenID, err := svc.GetTokenID(ctx, 1, 10)
+	if err != nil {
+		t.Fatalf("expected missing binding table to be treated as no binding, got %v", err)
+	}
+
+	if tokenID != 0 {
+		t.Fatalf("expected missing binding table token id to be 0, got %d", tokenID)
 	}
 }
 

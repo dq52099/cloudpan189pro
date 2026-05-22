@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 
+	mysqlDriver "github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/xxcheng123/cloudpan189-share/internal/bootstrap"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
@@ -97,7 +99,7 @@ func (s *service) GetTokenID(ctx context.Context, userID, mountPointID int64) (i
 	var binding models.UserMountPointToken
 
 	err := s.getDB(ctx).Where("user_id = ? AND mount_point_id = ?", userID, mountPointID).First(&binding).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	if errors.Is(err, gorm.ErrRecordNotFound) || isMissingTableError(err) {
 		return 0, nil
 	}
 
@@ -245,8 +247,19 @@ func isMissingTableError(err error) bool {
 		return false
 	}
 
-	msg := err.Error()
+	var mysqlErr *mysqlDriver.MySQLError
+	if errors.As(err, &mysqlErr) && mysqlErr.Number == 1146 {
+		return true
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "42P01" {
+		return true
+	}
+
+	msg := strings.ToLower(err.Error())
 
 	return strings.Contains(msg, "no such table: user_mount_point_tokens") ||
-		(strings.Contains(msg, "user_mount_point_tokens") && strings.Contains(msg, "does not exist"))
+		(strings.Contains(msg, "user_mount_point_tokens") &&
+			(strings.Contains(msg, "does not exist") || strings.Contains(msg, "doesn't exist")))
 }

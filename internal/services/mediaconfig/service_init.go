@@ -21,6 +21,7 @@ type InitRequest struct {
 	IncludedSuffixes    []string
 	AutoRebuildEnable   bool
 	AutoRebuildInterval int
+	AutoRebuildCron     string
 }
 
 var (
@@ -68,6 +69,10 @@ func (s *service) Init(ctx context.Context, req *InitRequest) error {
 		req.AutoRebuildInterval = 24
 	}
 
+	if req.AutoRebuildCron == "" {
+		req.AutoRebuildCron = "0 2 * * *"
+	}
+
 	newCfg := &models.MediaConfig{
 		Enable:              req.Enable,
 		StoragePath:         req.StoragePath,
@@ -77,6 +82,7 @@ func (s *service) Init(ctx context.Context, req *InitRequest) error {
 		IncludedSuffixes:    req.IncludedSuffixes,
 		AutoRebuildEnable:   req.AutoRebuildEnable,
 		AutoRebuildInterval: req.AutoRebuildInterval,
+		AutoRebuildCron:     req.AutoRebuildCron,
 	}
 
 	if createErr := s.svc.GetDB(ctx).Create(newCfg).Error; createErr != nil {

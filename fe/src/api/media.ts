@@ -37,6 +37,13 @@ export interface ConfigToggleRequest {
   enable: boolean
 }
 
+// 重建 STRM 文件 - 响应体
+export interface RebuildStrmFilesResponse {
+  total: number // 总派发数量
+  success: number // 成功派发数量
+  failed: number // 派发失败数量
+}
+
 // ===== 媒体配置管理接口（管理员权限） =====
 
 // 获取媒体配置（用于判断是否需要初始化）
@@ -67,6 +74,6 @@ export const clearMediaFiles = (): Promise<ApiResponse> => {
 }
 
 // 重建strm文件 - 扫描所有挂载点并重新生成strm文件
-export const rebuildStrmFiles = (): Promise<ApiResponse> => {
+export const rebuildStrmFiles = (): Promise<ApiResponse<RebuildStrmFilesResponse>> => {
   return api.post('/media/rebuild_strm_file').then((res) => res.data)
 }

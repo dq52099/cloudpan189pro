@@ -13,8 +13,8 @@ import (
 )
 
 type rebuildStrmRequest struct {
-	// MountPointIDs 可选，仅重建指定挂载点；为空时重建全部。
-	MountPointIDs []int64 `json:"mountPointIds,omitempty" example:"[1001,1002]"`
+	// MountPointIDs 可选；未传时重建全部，显式空数组不派发任务。
+	MountPointIDs *[]int64 `json:"mountPointIds,omitempty" example:"[1001,1002]"`
 }
 
 type rebuildStrmResponse struct {
@@ -62,10 +62,17 @@ func (h *handler) RebuildStrmFile() httpcontext.HandlerFunc {
 		}
 
 		// 未指定挂载点：下发全量重建任务（消费侧自带挂载点级并发）
-		if len(req.MountPointIDs) == 0 {
+		if req.MountPointIDs == nil {
 			fullReq := &topic.MediaRebuildStrmFileRequest{}
 
-			body, _ := json.Marshal(fullReq)
+			body, err := json.Marshal(fullReq)
+			if err != nil {
+				ctx.GetContext().Error("序列化 STRM 全量重建任务失败", zap.Error(err))
+				ctx.Fail(codeRebuildFailed.WithError(err))
+
+				return
+			}
+
 			if err := h.taskEngine.PushMessage(
 				ctx.GetContext().
 					WithValue(consts.CtxKeyInvokeHandlerName, "STRM 重建"),
@@ -82,7 +89,7 @@ func (h *handler) RebuildStrmFile() httpcontext.HandlerFunc {
 			return
 		}
 
-		requestedIDs, err := normalizeRebuildMountPointIDs(req.MountPointIDs)
+		requestedIDs, err := normalizeRebuildMountPointIDs(*req.MountPointIDs)
 		if err != nil {
 			ctx.AbortWithInvalidParams(err)
 
@@ -118,7 +125,16 @@ func (h *handler) RebuildStrmFile() httpcontext.HandlerFunc {
 				MountPointPath:   mp.FullPath,
 			}
 
-			body, _ := json.Marshal(taskReq)
+			body, err := json.Marshal(taskReq)
+			if err != nil {
+				ctx.GetContext().Warn("序列化 STRM 单点重建任务失败",
+					zap.Int64("mount_point_id", mp.ID),
+					zap.Int64("file_id", mp.FileId),
+					zap.Error(err))
+
+				continue
+			}
+
 			if err := h.taskEngine.PushMessage(
 				ctx.GetContext().
 					WithValue(consts.CtxKeyFullPath, mp.FullPath).

@@ -101,12 +101,12 @@
       <n-space>
         <n-button :disabled="submitting" @click="handleCancel">取消</n-button>
         <n-button
-          type="primary"
-          :loading="submitting"
-          :disabled="selectedStorageIds.length === 0 || submitting"
+          :type="selectedStorageIds.length === 0 ? 'warning' : 'primary'"
+          :loading="submitting || loadingBindFiles"
+          :disabled="submitting || loadingBindFiles || !bindFilesLoaded"
           @click="handleConfirm"
         >
-          确定绑定
+          {{ selectedStorageIds.length === 0 ? '清空绑定' : '确定绑定' }}
         </n-button>
       </n-space>
     </template>
@@ -163,6 +163,8 @@ const visible = computed({
 
 const searchKeyword = ref('')
 const loading = ref(false)
+const loadingBindFiles = ref(false)
+const bindFilesLoaded = ref(false)
 const submitting = ref(false)
 const selectingAll = ref(false)
 const storageList = ref<StorageSelectItem[]>([])
@@ -217,6 +219,8 @@ watch(
 
     if (!newShow) {
       loading.value = false
+      loadingBindFiles.value = false
+      bindFilesLoaded.value = false
       submitting.value = false
       selectingAll.value = false
       return
@@ -230,6 +234,8 @@ watch(
     pagination.pageSize = 10
     pagination.itemCount = 0
     loading.value = false
+    loadingBindFiles.value = false
+    bindFilesLoaded.value = false
     submitting.value = false
     selectingAll.value = false
 
@@ -263,17 +269,28 @@ const loadBindFiles = async (
 ) => {
   if (userGroupId == null || !isCurrentOperation(version, userGroupId)) return
 
+  loadingBindFiles.value = true
+  bindFilesLoaded.value = false
+
   try {
     const response = await getBindFiles(userGroupId)
     if (!isCurrentOperation(version, userGroupId)) return
 
     if (response.code === 200 && response.data) {
       selectedStorageIds.value = response.data.fileIds || []
+      bindFilesLoaded.value = true
+    } else {
+      message.error(response.msg || '获取已绑定存储失败')
     }
   } catch (error) {
     if (!isCurrentOperation(version, userGroupId)) return
 
     console.error('获取已绑定文件失败:', error)
+    message.error('获取已绑定存储失败')
+  } finally {
+    if (isCurrentOperation(version, userGroupId)) {
+      loadingBindFiles.value = false
+    }
   }
 }
 
@@ -434,8 +451,12 @@ const handleConfirm = async () => {
   const userGroupId = getCurrentUserGroupId()
   const fileIds = [...selectedStorageIds.value]
 
-  if (userGroupId == null || fileIds.length === 0 || !isCurrentOperation(version, userGroupId)) {
-    message.warning('请选择要绑定的存储')
+  if (
+    userGroupId == null ||
+    loadingBindFiles.value ||
+    !bindFilesLoaded.value ||
+    !isCurrentOperation(version, userGroupId)
+  ) {
     return
   }
 
@@ -449,7 +470,7 @@ const handleConfirm = async () => {
     if (!isCurrentOperation(version, userGroupId)) return
 
     if (response.code === 200) {
-      message.success('存储绑定成功')
+      message.success(fileIds.length === 0 ? '存储绑定已清空' : '存储绑定成功')
       invalidateOperation()
       visible.value = false
       emit('success')

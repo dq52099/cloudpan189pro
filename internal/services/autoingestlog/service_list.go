@@ -89,13 +89,17 @@ func (s *service) getListQuery(ctx context.Context, req *ListRequest) (*gorm.DB,
 		return nil, errInvalidAutoIngestLogPlanID
 	}
 
-	if len(req.PlanIdList) > 0 {
+	if req.PlanIdList != nil {
 		planIDs, err := normalizeAutoIngestLogIDs(req.PlanIdList, errInvalidAutoIngestLogPlanID)
 		if err != nil {
 			return nil, err
 		}
 
-		query = query.Where("plan_id IN ?", planIDs)
+		if len(planIDs) == 0 {
+			query = query.Where("1 = 0")
+		} else {
+			query = query.Where("plan_id IN ?", planIDs)
+		}
 	}
 
 	if req.Level != "" {

@@ -1,12 +1,9 @@
 package autoingest
 
 import (
-	"encoding/json"
 	"errors"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
-	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
-	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -60,37 +57,8 @@ func (h *handler) RetryPlan() httpcontext.HandlerFunc {
 			return
 		}
 
-		// 重置 offset 为 1
-		if err := h.planService.UpdateOffset(ctx.GetContext(), req.ID, 1); err != nil {
-			ctx.Fail(codePlanUpdateFailed.WithError(err))
-
-			return
-		}
-
-		// 重置计数
-		if err := h.planService.ResetCounters(ctx.GetContext(), req.ID); err != nil {
-			ctx.Fail(codePlanUpdateFailed.WithError(err))
-
-			return
-		}
-
-		// 触发刷新任务
-		taskReq := &topic.AutoIngestRefreshSubscribeRequest{
-			PlanId:  req.ID,
-			IsRetry: true,
-		}
-
-		taskBody, jerr := json.Marshal(taskReq)
-		if jerr != nil {
-			ctx.GetContext().Warn("序列化重试任务失败", zap.Int64("plan_id", req.ID), zap.Error(jerr))
-			ctx.Fail(codePlanRefreshFailed.WithError(jerr))
-
-			return
-		}
-
-		if perr := h.taskEngine.PushMessage(ctx.GetContext(), taskReq.Topic(), taskBody); perr != nil {
-			ctx.GetContext().Warn("下发重试任务失败", zap.Int64("plan_id", req.ID), zap.Error(perr))
-			ctx.Fail(codePlanRefreshFailed.WithError(perr))
+		if err := h.dispatchRetryWithRollback(ctx, plan, 1, true, true); err != nil {
+			failAutoIngestRetryError(ctx, err)
 
 			return
 		}

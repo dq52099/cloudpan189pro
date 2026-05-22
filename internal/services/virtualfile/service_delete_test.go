@@ -186,6 +186,28 @@ func TestBatchCreateRenamesWhenSanitizedNameAlreadyExists(t *testing.T) {
 	}
 }
 
+func TestBatchCreateEmptyFilesReturnsWithoutHooks(t *testing.T) {
+	tDB := setupVirtualFileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+	hookCalled := false
+
+	created, err := svc.BatchCreate(ctx, 1, nil, func(ctx context.Context, result *gorm.DB, files []*models.VirtualFile) {
+		hookCalled = true
+	})
+	if err != nil {
+		t.Fatalf("batch create empty files: %v", err)
+	}
+
+	if created != 0 {
+		t.Fatalf("expected zero created files, got %d", created)
+	}
+
+	if hookCalled {
+		t.Fatal("expected hooks not to run for empty batch")
+	}
+}
+
 func TestBatchCreateDeduplicatesSanitizedNamesWithinBatch(t *testing.T) {
 	tDB := setupVirtualFileTestDB(t)
 	svc := NewService(tDB)
@@ -606,7 +628,7 @@ func TestBatchDeleteVirtualFileReturnsMatchedIDsAndFiles(t *testing.T) {
 
 	var hookFiles []*models.VirtualFile
 
-	deletedIDs, err := svc.BatchDelete(ctx, []int64{first.ID, second.ID, 99999}, func(_ context.Context, _ *gorm.DB, files []*models.VirtualFile) {
+	deletedIDs, err := svc.BatchDelete(ctx, []int64{first.ID, second.ID, first.ID}, func(_ context.Context, _ *gorm.DB, files []*models.VirtualFile) {
 		hookFiles = files
 	})
 	if err != nil {
@@ -627,6 +649,34 @@ func TestBatchDeleteVirtualFileReturnsMatchedIDsAndFiles(t *testing.T) {
 
 	if count := countVirtualFiles(t, tDB.db, "id = ?", other.ID); count != 1 {
 		t.Fatalf("expected unrelated file to remain, got count %d", count)
+	}
+}
+
+func TestBatchDeleteVirtualFileReturnsNotFoundWhenSomeRequestedIDsMissing(t *testing.T) {
+	tDB := setupVirtualFileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	file := createVirtualFile(t, tDB.db, 1, "partial-missing.txt")
+	hookCalled := false
+
+	deletedIDs, err := svc.BatchDelete(ctx, []int64{file.ID, 99999}, func(_ context.Context, _ *gorm.DB, _ []*models.VirtualFile) {
+		hookCalled = true
+	})
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected record not found, got %v", err)
+	}
+
+	if len(deletedIDs) != 0 {
+		t.Fatalf("expected no deleted ids returned, got %v", deletedIDs)
+	}
+
+	if hookCalled {
+		t.Fatal("expected hook not to be called when requested ids are missing")
+	}
+
+	if count := countVirtualFiles(t, tDB.db, "id = ?", file.ID); count != 1 {
+		t.Fatalf("expected existing file to remain, got count %d", count)
 	}
 }
 

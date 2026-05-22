@@ -13,8 +13,8 @@ import (
 )
 
 type batchModifyTokenRequest struct {
-	IDs     []int64 `json:"ids" binding:"required,min=1,max=500"`
-	TokenID int64   `json:"tokenId"` // 新的令牌ID，0 表示解绑
+	IDs     []int64 `json:"ids" binding:"required,min=1"`
+	TokenID int64   `json:"tokenId" binding:"min=0"` // 新的令牌ID，0 表示解绑
 }
 
 // BatchModifyToken 批量修改存储挂载点令牌
@@ -46,7 +46,7 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
 		userGroupID := ctx.GetInt64(consts.CtxKeyUserGroupId)
 
-		requestIDs, err := normalizeBatchIDs(req.IDs)
+		requestIDs, err := normalizeBatchIDs(req.IDs, maxBatchModifyTokenIDs)
 		if err != nil {
 			ctx.AbortWithInvalidParams(err)
 

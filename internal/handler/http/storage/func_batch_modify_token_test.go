@@ -4,6 +4,7 @@ import (
 	stdctx "context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -126,6 +127,170 @@ func TestBatchModifyTokenDeduplicatesIDsBeforePermissionCheckAndQueueing(t *test
 	}
 }
 
+func TestBatchModifyTokenAllowsDuplicateIDsBeyondRawLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: {ID: 101, FileId: 11, FullPath: "/movies", CreatorUserID: 100},
+		},
+	}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/batch_modify_token", wrapper.Wrap(NewHandler(
+		taskEngine,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	).BatchModifyToken()))
+
+	ids := make([]string, maxBatchModifyTokenIDs+1)
+	for i := range ids {
+		ids[i] = "11"
+	}
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/batch_modify_token",
+		strings.NewReader(fmt.Sprintf(`{"ids":[%s],"tokenId":0}`, strings.Join(ids, ","))),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if got, want := mountPointService.queries, []int64{11}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected one deduplicated query %v, got %v", want, got)
+	}
+
+	var taskReq topic.FileBatchModifyTokenRequest
+	if err := json.Unmarshal(taskEngine.payloads[0], &taskReq); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := taskReq.IDs, []int64{11}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected queued IDs %v, got %v", want, got)
+	}
+}
+
+func TestBatchModifyTokenRejectsTooManyUniqueIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	mountPointService := &mockBatchDeleteMountPointService{}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/batch_modify_token", wrapper.Wrap(NewHandler(
+		taskEngine,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	).BatchModifyToken()))
+
+	ids := make([]string, maxBatchModifyTokenIDs+1)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("%d", i+1)
+	}
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/batch_modify_token",
+		strings.NewReader(fmt.Sprintf(`{"ids":[%s],"tokenId":0}`, strings.Join(ids, ","))),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if len(mountPointService.queries) != 0 {
+		t.Fatalf("expected request to stop before querying mount points, got %v", mountPointService.queries)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no queued task, got %d", len(taskEngine.payloads))
+	}
+}
+
+func TestBatchModifyTokenRejectsNegativeTokenIDBeforeQuerying(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	mountPointService := &mockBatchDeleteMountPointService{}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/batch_modify_token", wrapper.Wrap(NewHandler(
+		taskEngine,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	).BatchModifyToken()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_modify_token", strings.NewReader(`{"ids":[11],"tokenId":-1}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if len(mountPointService.queries) != 0 {
+		t.Fatalf("expected request to stop before querying mount points, got %v", mountPointService.queries)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no queued task, got %d", len(taskEngine.payloads))
+	}
+}
+
 func TestBatchModifyTokenAllowsUserBoundMountPoint(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -213,6 +378,64 @@ func TestBatchModifyTokenFailsWhenGroupBindingLookupFails(t *testing.T) {
 
 	if len(taskEngine.payloads) != 0 {
 		t.Fatalf("expected no queued task, got %d", len(taskEngine.payloads))
+	}
+}
+
+func TestModifyTokenRejectsInvalidIDsBeforeQuerying(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "zero mount point id",
+			body: `{"id":0,"tokenId":0}`,
+		},
+		{
+			name: "negative token id",
+			body: `{"id":11,"tokenId":-1}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mountPointService := &mockBatchDeleteMountPointService{}
+
+			router := gin.New()
+			router.Use(func(ctx *gin.Context) {
+				ctx.Set(consts.CtxKeyUserId, int64(100))
+				ctx.Set(consts.CtxKeyIsAdmin, false)
+			})
+
+			wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+			router.POST("/modify_token", wrapper.Wrap(NewHandler(
+				nil,
+				nil,
+				nil,
+				nil,
+				mountPointService,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+			).ModifyToken()))
+
+			req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/modify_token", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, req)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+			}
+
+			if len(mountPointService.queries) != 0 {
+				t.Fatalf("expected request to stop before querying mount points, got %v", mountPointService.queries)
+			}
+		})
 	}
 }
 

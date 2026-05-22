@@ -11,7 +11,7 @@ import (
 
 // BatchRefreshRequest 批量刷新请求
 type BatchRefreshRequest struct {
-	IDs []int64 `json:"ids" binding:"required,min=1,max=500"`
+	IDs []int64 `json:"ids" binding:"required,min=1"`
 }
 
 // BatchRefresh 批量刷新计划

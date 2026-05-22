@@ -82,6 +82,6 @@ export const createDownloadUrl = (
 }
 
 // 批量删除文件
-export const batchDeleteFiles = (data: BatchDeleteRequest): Promise<ApiResponse<null>> => {
+export const batchDeleteFiles = (data: BatchDeleteRequest): Promise<ApiResponse<string>> => {
   return api.post('/file/batch_delete', data).then((res) => res.data)
 }

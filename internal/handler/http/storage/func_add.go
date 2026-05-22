@@ -4,13 +4,11 @@ import (
 	"encoding/json"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
-
-	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
-
-	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/datatypes"
-
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/datatypes"
 	storagefacadeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/storagefacade"
+	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
+	"go.uber.org/zap"
 )
 
 type (
@@ -26,13 +24,15 @@ type (
 
 		EnableAutoRefresh bool `json:"enableAutoRefresh" binding:"omitempty" example:"true"`
 		AutoRefreshDays   int  `json:"autoRefreshDays" binding:"omitempty,min=1,max=365" example:"7"`
-		RefreshInterval   int  `json:"refreshInterval" binding:"omitempty,min=30,max=1440" example:"3600"`
+		RefreshInterval   int  `json:"refreshInterval" binding:"omitempty,min=30,max=1440" example:"30"`
 		EnableDeepRefresh bool `json:"enableDeepRefresh" example:"true"`
 	}
 
 	addResponse struct {
-		ID   int64  `json:"id" example:"1001"`    // 存储ID
-		Path string `json:"path" example:"/test"` // 存储路径
+		ID         int64  `json:"id" example:"1001"`         // 存储ID
+		Path       string `json:"path" example:"/test"`      // 存储路径
+		ScanQueued bool   `json:"scanQueued" example:"true"` // 初始化扫描任务是否已入队
+		ScanError  string `json:"scanError,omitempty"`       // 初始化扫描任务入队失败原因
 	}
 )
 
@@ -113,6 +113,7 @@ func (h *handler) Add() httpcontext.HandlerFunc {
 			RefreshInterval:   req.RefreshInterval,
 			EnableDeepRefresh: req.EnableDeepRefresh,
 			CreatorUserID:     userID,
+			IsAdmin:           isAdmin,
 			AllowExisting:     false,
 		})
 		if err != nil {
@@ -126,20 +127,33 @@ func (h *handler) Add() httpcontext.HandlerFunc {
 			Deep:   true,
 		}
 
-		body, _ := json.Marshal(taskReq)
+		resp := &addResponse{
+			ID:   id,
+			Path: req.LocalPath,
+		}
+
+		body, err := json.Marshal(taskReq)
+		if err != nil {
+			ctx.GetContext().Warn("序列化创建初始化扫描任务失败", zap.Int64("file_id", id), zap.Error(err))
+			resp.ScanError = err.Error()
+			ctx.Success(resp)
+
+			return
+		}
+
 		if err = h.taskEngine.PushMessage(
 			ctx.GetContext().
 				WithValue(consts.CtxKeyFullPath, req.LocalPath).
 				WithValue(consts.CtxKeyInvokeHandlerName, "创建初始化执行器"),
 			taskReq.Topic(), body); err != nil {
-			ctx.Fail(busCodeStorageAddTaskFailed.WithError(err))
+			ctx.GetContext().Warn("推送创建初始化扫描任务失败", zap.Int64("file_id", id), zap.Error(err))
+			resp.ScanError = err.Error()
+			ctx.Success(resp)
 
 			return
 		}
 
-		ctx.Success(&addResponse{
-			ID:   id,
-			Path: req.LocalPath,
-		})
+		resp.ScanQueued = true
+		ctx.Success(resp)
 	}
 }
