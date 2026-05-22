@@ -7,6 +7,8 @@ import type {
   ShareResourceInfo,
 } from '@/api/storage/advance'
 import type { ConfigInfoResponse } from '@/api/media'
+import type { PlanLogResult } from '@/api/autoingest'
+import type { StorageInfo } from '@/api/storage'
 import type {
   CategoriesResponse,
   CategoryOption,
@@ -35,6 +37,14 @@ const isString = (value: unknown): value is string => {
 
 const isOptionalString = (value: unknown): value is string | undefined => {
   return value === undefined || isString(value)
+}
+
+const isNullableString = (value: unknown): value is string | null => {
+  return value === null || isString(value)
+}
+
+const isOptionalNullableString = (value: unknown): value is string | null | undefined => {
+  return value === undefined || isNullableString(value)
 }
 
 const isBoolean = (value: unknown): value is boolean => {
@@ -100,6 +110,153 @@ export const normalizeDashboardCloudTokens = (value: unknown): Models.CloudToken
       isSafeNonNegativeInteger(item.loginType) &&
       isSafeNonNegativeInteger(item.status) &&
       isSafeNonNegativeInteger(item.expiresIn) &&
+      isString(item.updatedAt)
+    )
+  })
+}
+
+export const normalizeLoginLogs = (value: unknown): Models.LoginLog[] | null => {
+  return normalizeItems<Models.LoginLog>(value, (item) => {
+    if (!isRecord(item)) {
+      return false
+    }
+
+    return (
+      isSafePositiveInteger(item.id) &&
+      isSafeNonNegativeInteger(item.userId) &&
+      isString(item.username) &&
+      isString(item.addr) &&
+      isString(item.location) &&
+      isString(item.userAgent) &&
+      isString(item.traceId) &&
+      isString(item.reason) &&
+      isString(item.method) &&
+      isString(item.event) &&
+      isString(item.status) &&
+      isString(item.createdAt) &&
+      isString(item.updatedAt)
+    )
+  })
+}
+
+export const normalizeFileTaskLogs = (value: unknown): Models.FileTaskLog[] | null => {
+  return normalizeItems<Models.FileTaskLog>(value, (item) => {
+    if (!isRecord(item)) {
+      return false
+    }
+
+    return (
+      isSafePositiveInteger(item.id) &&
+      isString(item.title) &&
+      isString(item.type) &&
+      isString(item.desc) &&
+      isString(item.beginAt) &&
+      isNullableString(item.endAt) &&
+      isString(item.status) &&
+      isString(item.result) &&
+      isString(item.errorMsg) &&
+      isSafeNonNegativeInteger(item.duration) &&
+      isSafeNonNegativeInteger(item.fileId) &&
+      isSafeNonNegativeInteger(item.userId) &&
+      isSafeNonNegativeInteger(item.completed) &&
+      isSafeNonNegativeInteger(item.total) &&
+      isSafeNonNegativeInteger(item.failed) &&
+      isString(item.createdAt) &&
+      isString(item.updatedAt)
+    )
+  })
+}
+
+const isOptionalFileTaskLogs = (value: unknown): boolean => {
+  return value === undefined || value === null || normalizeFileTaskLogs(value) !== null
+}
+
+export const normalizeStorageInfos = (value: unknown): StorageInfo[] | null => {
+  return normalizeItems<StorageInfo>(value, (item) => {
+    if (!isRecord(item)) {
+      return false
+    }
+
+    return (
+      isSafePositiveInteger(item.id) &&
+      isSafePositiveInteger(item.mountPointId) &&
+      isSafeNonNegativeInteger(item.fileId) &&
+      isSafeNonNegativeInteger(item.tokenId) &&
+      isString(item.name) &&
+      isString(item.fullPath) &&
+      isString(item.osType) &&
+      isBoolean(item.enableAutoRefresh) &&
+      isSafeNonNegativeInteger(item.refreshInterval) &&
+      isBoolean(item.enableDeepRefresh) &&
+      isOptionalNullableString(item.autoRefreshBeginAt) &&
+      isSafeNonNegativeInteger(item.autoRefreshDays) &&
+      isString(item.lastState) &&
+      isString(item.createdAt) &&
+      isString(item.updatedAt) &&
+      isOptionalString(item.tokenName) &&
+      isBoolean(item.isInAutoRefreshPeriod) &&
+      isOptionalNullableString(item.nextRefreshTime) &&
+      isSafeNonNegativeInteger(item.fileCount) &&
+      isOptionalFileTaskLogs(item.taskLogs)
+    )
+  })
+}
+
+const isAutoIngestRefreshStrategy = (value: unknown): value is Models.RefreshStrategy => {
+  if (!isRecord(value)) {
+    return false
+  }
+
+  return (
+    isBoolean(value.enableAutoRefresh) &&
+    isBoolean(value.enableDeepRefresh) &&
+    isSafeNonNegativeInteger(value.autoRefreshDays) &&
+    isSafeNonNegativeInteger(value.refreshInterval)
+  )
+}
+
+export const normalizeAutoIngestPlans = (value: unknown): Models.AutoIngestPlan[] | null => {
+  return normalizeItems<Models.AutoIngestPlan>(value, (item) => {
+    if (!isRecord(item)) {
+      return false
+    }
+
+    return (
+      isSafePositiveInteger(item.id) &&
+      isString(item.name) &&
+      isSafeNonNegativeInteger(item.tokenId) &&
+      isString(item.parentPath) &&
+      isString(item.sourceType) &&
+      isSafeNonNegativeInteger(item.autoIngestInterval) &&
+      isString(item.onConflict) &&
+      isAutoIngestRefreshStrategy(item.refreshStrategy) &&
+      isSafeNonNegativeInteger(item.offset) &&
+      isBoolean(item.enabled) &&
+      isSafeNonNegativeInteger(item.addCount) &&
+      isSafeNonNegativeInteger(item.failedCount) &&
+      isString(item.createdAt) &&
+      isString(item.updatedAt)
+    )
+  })
+}
+
+const isAutoIngestLogLevel = (value: unknown): value is Models.AutoIngestLog['level'] => {
+  return value === 'info' || value === 'warn' || value === 'error'
+}
+
+export const normalizePlanLogResults = (value: unknown): PlanLogResult[] | null => {
+  return normalizeItems<PlanLogResult>(value, (item) => {
+    if (!isRecord(item)) {
+      return false
+    }
+
+    return (
+      isSafePositiveInteger(item.id) &&
+      isSafeNonNegativeInteger(item.planId) &&
+      isString(item.planName) &&
+      isString(item.content) &&
+      isAutoIngestLogLevel(item.level) &&
+      isString(item.createdAt) &&
       isString(item.updatedAt)
     )
   })

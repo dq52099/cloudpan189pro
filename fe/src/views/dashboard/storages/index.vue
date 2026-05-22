@@ -677,6 +677,7 @@ import { formatDateTime } from '@/utils/time'
 import { getOsTypeDisplayName, getOsTypeColor, mountTypeConfigs } from '@/utils/osType'
 import { getTaskStatusInfo } from '@/utils/taskStatus'
 import { getListItems, getListTotal } from '@/utils/pagination'
+import { normalizeCloudTokens, normalizeStorageInfos } from '@/utils/responseGuards'
 import { useSubscribeMount } from '@/composables/useSubscribeMount'
 import { useShareMount } from '@/composables/useShareMount'
 import { usePersonMount } from '@/composables/usePersonMount'
@@ -753,7 +754,8 @@ const loadCloudTokenOptions = (requestId: number) => {
       }
 
       if (isBusinessSuccess(response) && response.data) {
-        const items = getListItems<Models.CloudToken>(response.data)
+        const rawItems = getListItems<Models.CloudToken>(response.data)
+        const items = normalizeCloudTokens(rawItems)
         if (!items) {
           message.error('获取令牌列表失败：响应数据格式异常')
 
@@ -1011,7 +1013,8 @@ const fetchStorageList = () => {
       }
 
       if (isBusinessSuccess(response) && response.data) {
-        const items = getListItems<StorageInfo>(response.data)
+        const rawItems = getListItems<StorageInfo>(response.data)
+        const items = normalizeStorageInfos(rawItems)
         const total = getListTotal(response.data)
 
         if (!items) {
@@ -1257,7 +1260,8 @@ const selectAllPages = async () => {
         return
       }
 
-      const items = isBusinessSuccess(res) ? getListItems<StorageInfo>(res.data) : null
+      const rawItems = isBusinessSuccess(res) ? getListItems<StorageInfo>(res.data) : null
+      const items = normalizeStorageInfos(rawItems)
       if (!items) {
         message.error(res.msg || '获取全量数据失败')
         return

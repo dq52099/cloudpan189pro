@@ -105,6 +105,7 @@ import {
 import { getLoginLogList, clearLoginLogs, type LoginLogListQuery } from '@/api/loginlog'
 import { formatDate } from '@/utils/format'
 import { getListItems, getListTotal } from '@/utils/pagination'
+import { normalizeLoginLogs } from '@/utils/responseGuards'
 import {
   LOGIN_EVENT_OPTIONS,
   LOGIN_EVENT_TEXT_MAP,
@@ -301,7 +302,8 @@ const fetchList = () => {
       }
 
       if (res.code === 200 && res.data) {
-        const items = getListItems<Models.LoginLog>(res.data)
+        const rawItems = getListItems<Models.LoginLog>(res.data)
+        const items = normalizeLoginLogs(rawItems)
         const total = getListTotal(res.data)
 
         if (!items) {

@@ -257,6 +257,11 @@ import CreatePlanModal from '@/components/autoingest/CreatePlanModal.vue'
 import EditPlanModal from '@/components/autoingest/EditPlanModal.vue'
 import { type ApiResponse } from '@/utils/api'
 import { getListItems, getListTotal } from '@/utils/pagination'
+import {
+  normalizeAutoIngestPlans,
+  normalizeCloudTokens,
+  normalizePlanLogResults,
+} from '@/utils/responseGuards'
 
 const message = useMessage()
 const dialog = useDialog()
@@ -322,7 +327,8 @@ const loadCloudTokens = () => {
       }
 
       if (res.code === 200 && res.data) {
-        const items = getListItems<Models.CloudToken>(res.data)
+        const rawItems = getListItems<Models.CloudToken>(res.data)
+        const items = normalizeCloudTokens(rawItems)
         if (!items) {
           message.error('获取令牌列表失败：响应数据格式异常')
 
@@ -856,7 +862,8 @@ const fetchPlanList = () => {
       }
 
       if (res.code === 200 && res.data) {
-        const items = getListItems<Models.AutoIngestPlan>(res.data)
+        const rawItems = getListItems<Models.AutoIngestPlan>(res.data)
+        const items = normalizeAutoIngestPlans(rawItems)
         const total = getListTotal(res.data)
 
         if (!items) {
@@ -1313,7 +1320,8 @@ const fetchLogList = () => {
       }
 
       if (res.code === 200 && res.data) {
-        const items = getListItems<PlanLogResult>(res.data)
+        const rawItems = getListItems<PlanLogResult>(res.data)
+        const items = normalizePlanLogResults(rawItems)
         const total = getListTotal(res.data)
 
         if (!items) {

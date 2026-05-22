@@ -188,6 +188,7 @@ import {
 import { getFileLogList, clearTaskLogs } from '@/api/taskstate'
 import { formatDate } from '@/utils/format'
 import { getListItems, getListTotal } from '@/utils/pagination'
+import { normalizeFileTaskLogs } from '@/utils/responseGuards'
 import {
   TASK_TYPE_OPTIONS,
   TASK_TYPE_TEXT_MAP,
@@ -345,7 +346,8 @@ const fetchTaskLogList = (silent = false) => {
       }
 
       if (response.code === 200 && response.data) {
-        const items = getListItems<Models.FileTaskLog>(response.data)
+        const rawItems = getListItems<Models.FileTaskLog>(response.data)
+        const items = normalizeFileTaskLogs(rawItems)
         const total = getListTotal(response.data)
 
         if (!items) {
