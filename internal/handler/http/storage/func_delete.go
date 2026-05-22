@@ -12,12 +12,12 @@ import (
 )
 
 type deleteRequest struct {
-	ID int64 `json:"id" binding:"required" example:"1"` // 存储节点ID
+	ID int64 `json:"id" binding:"required" example:"1"` // 挂载点文件ID
 }
 
 // Delete 删除存储挂载
 // @Summary 删除存储挂载
-// @Description 删除指定的存储挂载点，同时清理相关文件
+// @Description 通过请求体 id 指定挂载点文件ID，删除对应的存储挂载点，同时清理相关文件
 // @Tags 存储管理
 // @Accept json
 // @Produce json

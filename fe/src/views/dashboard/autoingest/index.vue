@@ -299,6 +299,30 @@ const isValidClearCount = (value: unknown): value is number => {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }
 
+const isValidListTotal = (value: unknown): value is number => {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
+const getListItems = <T,>(value: unknown): T[] | null => {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const items = (value as { data?: unknown }).data
+
+  return Array.isArray(items) ? (items as T[]) : null
+}
+
+const getListTotal = (value: unknown): number | null => {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const total = (value as { total?: unknown }).total
+
+  return isValidListTotal(total) ? total : null
+}
+
 const isActiveRequest = (requestId: number, latestRequestId: number) =>
   isPageAlive && requestId === latestRequestId
 
@@ -848,13 +872,26 @@ const fetchPlanList = () => {
       }
 
       if (res.code === 200 && res.data) {
-        planTable.value = res.data.data
-        planPagination.itemCount = res.data.total
+        const items = getListItems<Models.AutoIngestPlan>(res.data)
+        const total = getListTotal(res.data)
+
+        if (!items) {
+          message.error('获取计划列表失败：响应数据格式异常')
+
+          return
+        }
+
+        planTable.value = items
+        if (total === null) {
+          message.warning('计划列表响应缺少有效总数，已保留原分页统计')
+        } else {
+          planPagination.itemCount = total
+        }
         syncSelectedPlanRows()
         // 更新 planOptions 供日志筛选使用
         planOptions.value = [
           { label: '全部计划', value: undefined },
-          ...res.data.data.map((p: Models.AutoIngestPlan) => ({
+          ...items.map((p: Models.AutoIngestPlan) => ({
             label: `${p.name || '#' + p.id}`,
             value: p.id,
           })),
@@ -1292,8 +1329,21 @@ const fetchLogList = () => {
       }
 
       if (res.code === 200 && res.data) {
-        logTable.value = res.data.data
-        logPagination.itemCount = res.data.total
+        const items = getListItems<PlanLogResult>(res.data)
+        const total = getListTotal(res.data)
+
+        if (!items) {
+          message.error('获取日志失败：响应数据格式异常')
+
+          return
+        }
+
+        logTable.value = items
+        if (total === null) {
+          message.warning('日志响应缺少有效总数，已保留原分页统计')
+        } else {
+          logPagination.itemCount = total
+        }
 
         return
       }

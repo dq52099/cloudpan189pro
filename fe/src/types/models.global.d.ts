@@ -119,6 +119,7 @@ declare namespace Models {
   // 系统附加设置（对应后端 models.SettingAddition）
   interface SettingAddition {
     localProxy: boolean
+    localProxyURL: string
     multipleStream: boolean
     multipleStreamThreadCount: number
     multipleStreamChunkSize: number

@@ -699,6 +699,30 @@ const batchModifyTokenId = ref<number | null>(null)
 let cloudTokenRequestId = 0
 
 const isBusinessSuccess = (response: { code: number }) => response.code === 200
+const isValidListTotal = (value: unknown): value is number => {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
+const getListItems = <T,>(value: unknown): T[] | null => {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const items = (value as { data?: unknown }).data
+
+  return Array.isArray(items) ? (items as T[]) : null
+}
+
+const getListTotal = (value: unknown): number | null => {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const total = (value as { total?: unknown }).total
+
+  return isValidListTotal(total) ? total : null
+}
+
 const isBatchDispatchResponse = (result: unknown): result is BatchDispatchResponse => {
   if (!result || typeof result !== 'object') {
     return false
@@ -998,8 +1022,21 @@ const fetchStorageList = () => {
       }
 
       if (isBusinessSuccess(response) && response.data) {
-        tableData.splice(0, tableData.length, ...response.data.data)
-        paginationReactive.itemCount = response.data.total
+        const items = getListItems<StorageInfo>(response.data)
+        const total = getListTotal(response.data)
+
+        if (!items) {
+          message.error('获取存储列表失败：响应数据格式异常')
+
+          return
+        }
+
+        tableData.splice(0, tableData.length, ...items)
+        if (total === null) {
+          message.warning('存储列表响应缺少有效总数，已保留原分页统计')
+        } else {
+          paginationReactive.itemCount = total
+        }
 
         return
       }
@@ -1231,14 +1268,15 @@ const selectAllPages = async () => {
         return
       }
 
-      if (!isBusinessSuccess(res) || !res.data?.data) {
+      const items = isBusinessSuccess(res) ? getListItems<StorageInfo>(res.data) : null
+      if (!items) {
         message.error(res.msg || '获取全量数据失败')
         return
       }
 
-      allIds.push(...res.data.data.map((item: StorageInfo) => item.mountPointId))
+      allIds.push(...items.map((item: StorageInfo) => item.mountPointId))
 
-      if (res.data.data.length < pageSize) {
+      if (items.length < pageSize) {
         break
       }
     }

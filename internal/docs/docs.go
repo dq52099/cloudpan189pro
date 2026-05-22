@@ -15,6 +15,104 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/api/auto_ingest/log/clear": {
+            "post": {
+                "description": "清理自动入库运行日志；duration 为空时清空全部，否则按保留时长清理",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "自动挂载管理"
+                ],
+                "summary": "清理日志",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "清理参数",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/autoingest.ClearLogsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "清空成功",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auto_ingest/log/delete_error": {
+            "post": {
+                "description": "删除指定计划的错误日志，如果不指定计划则删除所有计划的错误日志",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "自动挂载管理"
+                ],
+                "summary": "删除错误日志",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "删除请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/autoingest.deleteErrorLogsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "删除成功，data 为受影响记录数",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "参数验证失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/auto_ingest/log/list": {
             "get": {
                 "description": "分页获取自动挂载日志，支持按计划ID与级别筛选",
@@ -105,7 +203,7 @@ const docTemplate = `{
         },
         "/api/auto_ingest/plan/create_subscribe": {
             "post": {
-                "description": "创建订阅计划（占位实现，后续由你补充具体逻辑）",
+                "description": "创建订阅计划；enable 字段为空时回退到 AutoIngestInterval \u003e 0 的旧语义，传入 false 则计划创建后保持停用。",
                 "consumes": [
                     "application/json"
                 ],
@@ -125,7 +223,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "订阅计划参数（占位）",
+                        "description": "订阅计划参数",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -473,6 +571,112 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "下发订阅刷新任务失败，code=xxxx",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auto_ingest/plan/retry": {
+            "post": {
+                "description": "将计划的 offset 重置为 1，然后触发刷新任务，用于重新获取所有历史记录",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "自动挂载管理"
+                ],
+                "summary": "重试计划（重新获取历史记录）",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "计划ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/autoingest.RetryPlanRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "操作成功",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "查询计划失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auto_ingest/plan/retry_failed": {
+            "post": {
+                "description": "重置偏移量并重新扫描所有文件，用于修复之前的失败",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "自动挂载管理"
+                ],
+                "summary": "重试失败的入库任务",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "重试请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/autoingest.retryFailedRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "任务已下发",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "重试任务失败，code=xxxx",
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
@@ -1025,6 +1229,11 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/file/batch_delete": {
+            "post": {
+                "responses": {}
+            }
+        },
         "/api/file/create_download_url": {
             "post": {
                 "description": "为指定文件生成带签名的下载链接",
@@ -1356,6 +1565,64 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "计算文件完整路径失败，code=6003",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/login_log/clear": {
+            "post": {
+                "description": "清空登录日志，或按保留时长裁剪（传入 duration）。空字符串表示清空全部。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "登录日志"
+                ],
+                "summary": "清空登录日志",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "清理参数",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/loginlog.clearRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "清理成功，data=删除条数",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "参数验证失败",
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
@@ -1747,7 +2014,7 @@ const docTemplate = `{
         },
         "/api/media/rebuild_strm_file": {
             "post": {
-                "description": "扫描所有挂载点并重新生成strm文件",
+                "description": "重建 STRM 文件。不传 mountPointIds 时走全量重建（消费侧内部并发）；\n传入 mountPointIds 时按单挂载点派发多条任务，便于针对性重试。",
                 "consumes": [
                     "application/json"
                 ],
@@ -1765,17 +2032,37 @@ const docTemplate = `{
                         "name": "Authorization",
                         "in": "header",
                         "required": true
+                    },
+                    {
+                        "description": "重建参数",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/media.rebuildStrmRequest"
+                        }
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "重建任务已提交",
                         "schema": {
-                            "$ref": "#/definitions/httpcontext.Response"
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpcontext.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/media.rebuildStrmResponse"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     },
                     "400": {
-                        "description": "提交重建任务失败，code=xxxx",
+                        "description": "提交重建任务失败",
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
@@ -2468,6 +2755,70 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/storage/advance/get_subscribe_user_all": {
+            "get": {
+                "description": "根据订阅用户名获取该用户的共享资源列表（获取全部，不分页）",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "存储高级功能"
+                ],
+                "summary": "获取订阅用户所有资源列表",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "example": "\"user123\"",
+                        "description": "订阅用户名",
+                        "name": "subscribeUser",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取订阅用户资源列表成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpcontext.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/advance.getSubscribeUserAllResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "查询订阅信息失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/storage/advance/person/files": {
             "get": {
                 "description": "根据云盘令牌获取个人文件列表，支持分页查询",
@@ -2626,9 +2977,80 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/storage/batch_add": {
+            "post": {
+                "description": "批量添加存储挂载点（上限 500 个），每个条目都会走和单条 /add 相同的校验",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "存储管理"
+                ],
+                "summary": "批量添加存储挂载",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "批量存储挂载信息",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/storage.batchAddRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "批量添加结果",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpcontext.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/storage.batchAddResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数验证失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/storage/batch_delete": {
             "post": {
-                "description": "批量删除指定的存储挂载点，将任务推送到后台异步处理",
+                "description": "批量删除指定的存储挂载点，为每个挂载点创建独立任务，由工作流并发处理（上限 1000 个）",
                 "consumes": [
                     "application/json"
                 ],
@@ -2666,6 +3088,65 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "发送清理任务失败，code=4024",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/storage/batch_modify_token": {
+            "post": {
+                "description": "用户批量绑定自己的令牌到挂载点，异步提交后台处理（上限 500 个）",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "存储管理"
+                ],
+                "summary": "批量修改存储挂载点令牌",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "批量修改令牌请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/storage.batchModifyTokenRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "令牌修改任务已提交",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "下发任务失败，code=4024",
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
@@ -2738,9 +3219,126 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/storage/batch_refresh": {
+            "post": {
+                "description": "批量刷新指定的存储挂载点，触发文件扫描任务重新同步文件信息（上限 1000 个）",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "存储管理"
+                ],
+                "summary": "批量刷新存储挂载",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "批量刷新请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/storage.batchRefreshRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "刷新任务已提交，后台处理中",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "发送刷新任务失败，code=4024",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/storage/clear_all": {
+            "post": {
+                "description": "删除所有存储挂载点（仅管理员）。此操作不可逆，会顺序清理 MountPoint/VirtualFile/MediaFile 表；",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "存储管理"
+                ],
+                "summary": "清空所有挂载点",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "清空请求参数",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/storage.ClearAllRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "清空成功",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "参数验证失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/storage/delete": {
             "post": {
-                "description": "删除指定的存储挂载点，同时清理相关文件",
+                "description": "通过请求体 id 指定挂载点文件ID，删除对应的存储挂载点，同时清理相关文件",
                 "consumes": [
                     "application/json"
                 ],
@@ -2882,7 +3480,7 @@ const docTemplate = `{
         },
         "/api/storage/modify_token": {
             "post": {
-                "description": "修改指定存储挂载点关联的云盘令牌",
+                "description": "通过请求体 id 指定挂载点文件ID，用户绑定自己的令牌到挂载点（不影响其他用户）",
                 "consumes": [
                     "application/json"
                 ],
@@ -2941,7 +3539,7 @@ const docTemplate = `{
         },
         "/api/storage/refresh": {
             "post": {
-                "description": "刷新指定的存储挂载点，触发文件扫描任务重新同步文件信息",
+                "description": "通过请求体 id 指定挂载点文件ID，触发文件扫描任务重新同步文件信息",
                 "consumes": [
                     "application/json"
                 ],
@@ -3000,7 +3598,7 @@ const docTemplate = `{
         },
         "/api/storage/select_list": {
             "get": {
-                "description": "返回用于选择的简化数据（不分页），仅包含必要字段",
+                "description": "返回用于选择的简化数据，支持分页和搜索，仅包含必要字段",
                 "consumes": [
                     "application/json"
                 ],
@@ -3018,6 +3616,27 @@ const docTemplate = `{
                         "name": "Authorization",
                         "in": "header",
                         "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "当前页码，默认为1",
+                        "name": "currentPage",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "每页大小，默认为10",
+                        "name": "pageSize",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "是否不分页",
+                        "name": "noPaginate",
+                        "in": "query"
                     },
                     {
                         "type": "string",
@@ -3046,10 +3665,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "type": "array",
-                                            "items": {
-                                                "$ref": "#/definitions/storage.selectItem"
-                                            }
+                                            "$ref": "#/definitions/storage.selectListResponse"
                                         }
                                     }
                                 }
@@ -4223,6 +4839,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
+                    },
+                    "404": {
+                        "description": "用户组不存在",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
                     }
                 }
             }
@@ -4279,6 +4901,12 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "用户组不存在",
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
@@ -4476,6 +5104,24 @@ const docTemplate = `{
                 }
             }
         },
+        "advance.getSubscribeUserAllResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cloudbridge.ShareResourceInfo"
+                    }
+                },
+                "name": {
+                    "type": "string",
+                    "example": "订阅用户"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
         "advance.getSubscribeUserResponse": {
             "type": "object",
             "properties": {
@@ -4497,6 +5143,89 @@ const docTemplate = `{
                 },
                 "total": {
                     "type": "integer"
+                }
+            }
+        },
+        "autoingest.BatchDeleteRequest": {
+            "type": "object",
+            "required": [
+                "ids"
+            ],
+            "properties": {
+                "ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "autoingest.BatchDisableRequest": {
+            "type": "object",
+            "required": [
+                "ids"
+            ],
+            "properties": {
+                "ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "autoingest.BatchEnableRequest": {
+            "type": "object",
+            "required": [
+                "ids"
+            ],
+            "properties": {
+                "ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "autoingest.BatchRefreshRequest": {
+            "type": "object",
+            "required": [
+                "ids"
+            ],
+            "properties": {
+                "ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "autoingest.BatchRetryRequest": {
+            "type": "object",
+            "required": [
+                "ids"
+            ],
+            "properties": {
+                "ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "autoingest.ClearLogsRequest": {
+            "type": "object",
+            "properties": {
+                "duration": {
+                    "type": "string"
                 }
             }
         },
@@ -4524,6 +5253,19 @@ const docTemplate = `{
                 "OnConflictAbandon"
             ]
         },
+        "autoingest.RetryPlanRequest": {
+            "type": "object",
+            "required": [
+                "id"
+            ],
+            "properties": {
+                "id": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "example": 1
+                }
+            }
+        },
         "autoingest.SourceType": {
             "type": "string",
             "enum": [
@@ -4549,6 +5291,10 @@ const docTemplate = `{
                 },
                 "cloudToken": {
                     "type": "integer"
+                },
+                "enable": {
+                    "description": "Enable 显式控制是否立即启用；为 nil 时按 AutoIngestInterval 是否 \u003e 0 决定（保留向后兼容）",
+                    "type": "boolean"
                 },
                 "name": {
                     "type": "string",
@@ -4586,7 +5332,23 @@ const docTemplate = `{
         "autoingest.createSubscribePlanResponse": {
             "type": "object",
             "properties": {
+                "historyError": {
+                    "type": "string"
+                },
+                "historyQueued": {
+                    "type": "boolean",
+                    "example": true
+                },
                 "id": {
+                    "type": "integer",
+                    "example": 1
+                }
+            }
+        },
+        "autoingest.deleteErrorLogsRequest": {
+            "type": "object",
+            "properties": {
+                "planId": {
                     "type": "integer",
                     "example": 1
                 }
@@ -4719,6 +5481,7 @@ const docTemplate = `{
             "properties": {
                 "planId": {
                     "type": "integer",
+                    "minimum": 1,
                     "example": 1
                 }
             }
@@ -4740,8 +5503,9 @@ const docTemplate = `{
                     "example": false
                 },
                 "refreshInterval": {
-                    "description": "单位分钟，最小30",
+                    "description": "单位分钟，最小30，最大1440",
                     "type": "integer",
+                    "maximum": 1440,
                     "minimum": 30,
                     "example": 30
                 }
@@ -4764,10 +5528,24 @@ const docTemplate = `{
                     "example": false
                 },
                 "refreshInterval": {
-                    "description": "单位分钟，最小30",
+                    "description": "单位分钟，最小30，最大1440",
                     "type": "integer",
+                    "maximum": 1440,
                     "minimum": 30,
                     "example": 30
+                }
+            }
+        },
+        "autoingest.retryFailedRequest": {
+            "type": "object",
+            "required": [
+                "planId"
+            ],
+            "properties": {
+                "planId": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "example": 1
                 }
             }
         },
@@ -4933,6 +5711,15 @@ const docTemplate = `{
                     "description": "云盘令牌ID，可选",
                     "type": "integer",
                     "example": 1
+                },
+                "isAdmin": {
+                    "description": "是否管理员",
+                    "type": "boolean"
+                },
+                "userID": {
+                    "description": "创建令牌的用户ID",
+                    "type": "integer",
+                    "format": "int64"
                 },
                 "uuid": {
                     "description": "二维码UUID",
@@ -5422,6 +6209,16 @@ const docTemplate = `{
                 "StatusBlocked"
             ]
         },
+        "loginlog.clearRequest": {
+            "type": "object",
+            "properties": {
+                "duration": {
+                    "description": "Duration 保留时长（支持 1h/1d/7d/30d/90d 或 Go time.ParseDuration 格式），为空表示清空全部。",
+                    "type": "string",
+                    "example": "30d"
+                }
+            }
+        },
         "loginlog.listResponse": {
             "type": "object",
             "properties": {
@@ -5483,6 +6280,18 @@ const docTemplate = `{
                     "type": "boolean",
                     "example": true
                 },
+                "autoRebuildCron": {
+                    "type": "string",
+                    "example": "0 2 * * *"
+                },
+                "autoRebuildEnable": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "autoRebuildInterval": {
+                    "type": "integer",
+                    "example": 24
+                },
                 "baseURL": {
                     "type": "string",
                     "example": "http://localhost:12395"
@@ -5522,6 +6331,9 @@ const docTemplate = `{
         },
         "media.configToggleRequest": {
             "type": "object",
+            "required": [
+                "enable"
+            ],
             "properties": {
                 "enable": {
                     "type": "boolean",
@@ -5535,6 +6347,18 @@ const docTemplate = `{
                 "autoClean": {
                     "type": "boolean",
                     "example": true
+                },
+                "autoRebuildCron": {
+                    "type": "string",
+                    "example": "0 2 * * *"
+                },
+                "autoRebuildEnable": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "autoRebuildInterval": {
+                    "type": "integer",
+                    "example": 24
                 },
                 "baseURL": {
                     "type": "string",
@@ -5573,6 +6397,23 @@ const docTemplate = `{
                 }
             }
         },
+        "media.rebuildStrmRequest": {
+            "type": "object"
+        },
+        "media.rebuildStrmResponse": {
+            "type": "object",
+            "properties": {
+                "failed": {
+                    "type": "integer"
+                },
+                "success": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
         "models.AutoIngestPlan": {
             "type": "object",
             "properties": {
@@ -5587,6 +6428,10 @@ const docTemplate = `{
                     "description": "单位分钟",
                     "type": "integer"
                 },
+                "concurrentCount": {
+                    "description": "并发数",
+                    "type": "integer"
+                },
                 "createdAt": {
                     "type": "string"
                 },
@@ -5598,6 +6443,10 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "id": {
+                    "type": "integer"
+                },
+                "maxRetryCount": {
+                    "description": "最大重试次数",
                     "type": "integer"
                 },
                 "name": {
@@ -5630,6 +6479,10 @@ const docTemplate = `{
                 },
                 "updatedAt": {
                     "type": "string"
+                },
+                "userId": {
+                    "description": "所属用户ID",
+                    "type": "integer"
                 }
             }
         },
@@ -5665,6 +6518,10 @@ const docTemplate = `{
                 },
                 "updatedAt": {
                     "type": "string"
+                },
+                "userId": {
+                    "description": "所属用户ID",
+                    "type": "integer"
                 },
                 "username": {
                     "type": "string"
@@ -5707,6 +6564,10 @@ const docTemplate = `{
                 "errorMsg": {
                     "description": "错误信息",
                     "type": "string"
+                },
+                "failed": {
+                    "description": "失败数量",
+                    "type": "integer"
                 },
                 "fileId": {
                     "description": "关联信息",
@@ -5795,6 +6656,18 @@ const docTemplate = `{
                     "description": "AutoClean 自动清理空文件夹 文件删除后自动检查是否为空文件夹",
                     "type": "boolean"
                 },
+                "autoRebuildCron": {
+                    "description": "AutoRebuildCron 定时重建cron表达式",
+                    "type": "string"
+                },
+                "autoRebuildEnable": {
+                    "description": "AutoRebuildEnable 定时重建strm开关",
+                    "type": "boolean"
+                },
+                "autoRebuildInterval": {
+                    "description": "AutoRebuildInterval 定时重建间隔（小时）- 已废弃，使用Cron表达式",
+                    "type": "integer"
+                },
                 "baseURL": {
                     "type": "string"
                 },
@@ -5821,6 +6694,10 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "lastRebuildTime": {
+                    "description": "LastRebuildTime 上次重建时间",
+                    "type": "string"
                 },
                 "storagePath": {
                     "description": "StoragePath StoragePath 落盘根路径",
@@ -5880,8 +6757,15 @@ const docTemplate = `{
         "models.SettingAddition": {
             "type": "object",
             "properties": {
+                "enableStorageAutoRefresh": {
+                    "type": "boolean"
+                },
                 "localProxy": {
                     "type": "boolean"
+                },
+                "localProxyURL": {
+                    "description": "HTTP 代理地址，如 http://192.168.31.51:7890",
+                    "type": "string"
                 },
                 "multipleStream": {
                     "type": "boolean"
@@ -5893,6 +6777,18 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "taskThreadCount": {
+                    "type": "integer"
+                },
+                "webdavAllowedSuffixes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "webdavUserStrmOnly": {
+                    "type": "boolean"
+                },
+                "workerCount": {
                     "type": "integer"
                 }
             }
@@ -5995,6 +6891,11 @@ const docTemplate = `{
         "setting.modifyAdditionRequest": {
             "type": "object",
             "properties": {
+                "enableStorageAutoRefresh": {
+                    "description": "是否启用存储自动刷新（可选）",
+                    "type": "boolean",
+                    "example": true
+                },
                 "localProxy": {
                     "description": "是否启用本地代理（可选）",
                     "type": "boolean",
@@ -6024,6 +6925,29 @@ const docTemplate = `{
                     "maximum": 32,
                     "minimum": 1,
                     "example": 1
+                },
+                "webdavAllowedSuffixes": {
+                    "description": "普通用户 WebDAV 允许的后缀列表（可选）",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "['.mp4'",
+                        "'.mkv']"
+                    ]
+                },
+                "webdavUserStrmOnly": {
+                    "description": "是否限制普通用户 WebDAV 仅显示 STRM 支持格式（可选）",
+                    "type": "boolean",
+                    "example": false
+                },
+                "workerCount": {
+                    "description": "工作流数量（可选）",
+                    "type": "integer",
+                    "maximum": 32,
+                    "minimum": 1,
+                    "example": 5
                 }
             }
         },
@@ -6058,11 +6982,23 @@ const docTemplate = `{
         },
         "setting.toggleEnableAuthRequest": {
             "type": "object",
+            "required": [
+                "enableAuth"
+            ],
             "properties": {
                 "enableAuth": {
                     "description": "是否启用鉴权",
                     "type": "boolean",
                     "example": true
+                }
+            }
+        },
+        "storage.ClearAllRequest": {
+            "type": "object",
+            "properties": {
+                "deleteFiles": {
+                    "description": "是否同时删除本地媒体文件",
+                    "type": "boolean"
                 }
             }
         },
@@ -6118,7 +7054,7 @@ const docTemplate = `{
                     "type": "integer",
                     "maximum": 1440,
                     "minimum": 30,
-                    "example": 3600
+                    "example": 30
                 },
                 "shareAccessCode": {
                     "type": "string",
@@ -6146,6 +7082,77 @@ const docTemplate = `{
                     "description": "存储路径",
                     "type": "string",
                     "example": "/test"
+                },
+                "scanError": {
+                    "description": "初始化扫描任务入队失败原因",
+                    "type": "string"
+                },
+                "scanQueued": {
+                    "description": "初始化扫描任务是否已入队",
+                    "type": "boolean",
+                    "example": true
+                }
+            }
+        },
+        "storage.addResponseItem": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "localPath": {
+                    "type": "string"
+                },
+                "scanError": {
+                    "type": "string"
+                },
+                "scanQueued": {
+                    "type": "boolean"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "storage.batchAddRequest": {
+            "type": "object",
+            "required": [
+                "items"
+            ],
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "maxItems": 500,
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/storage.addRequest"
+                    }
+                }
+            }
+        },
+        "storage.batchAddResponse": {
+            "type": "object",
+            "properties": {
+                "failCount": {
+                    "type": "integer"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/storage.addResponseItem"
+                    }
+                },
+                "scanFailedCount": {
+                    "type": "integer"
+                },
+                "scanQueuedCount": {
+                    "type": "integer"
+                },
+                "successCount": {
+                    "type": "integer"
                 }
             }
         },
@@ -6164,6 +7171,45 @@ const docTemplate = `{
                 }
             }
         },
+        "storage.batchModifyTokenRequest": {
+            "type": "object",
+            "required": [
+                "ids"
+            ],
+            "properties": {
+                "ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "tokenId": {
+                    "description": "新的令牌ID，0 表示解绑",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "storage.batchRefreshRequest": {
+            "type": "object",
+            "required": [
+                "ids"
+            ],
+            "properties": {
+                "deep": {
+                    "description": "是否深度刷新",
+                    "type": "boolean"
+                },
+                "ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
         "storage.deleteRequest": {
             "type": "object",
             "required": [
@@ -6171,7 +7217,7 @@ const docTemplate = `{
             ],
             "properties": {
                 "id": {
-                    "description": "存储节点ID",
+                    "description": "挂载点文件ID",
                     "type": "integer",
                     "example": 1
                 }
@@ -6211,13 +7257,15 @@ const docTemplate = `{
             ],
             "properties": {
                 "id": {
-                    "description": "挂载点ID",
+                    "description": "挂载点文件ID",
                     "type": "integer",
+                    "minimum": 1,
                     "example": 1001
                 },
                 "tokenId": {
-                    "description": "新的令牌ID",
+                    "description": "新的令牌ID，0 表示解绑",
                     "type": "integer",
+                    "minimum": 0,
                     "example": 123
                 }
             }
@@ -6234,7 +7282,7 @@ const docTemplate = `{
                     "example": true
                 },
                 "id": {
-                    "description": "挂载点ID",
+                    "description": "挂载点文件ID",
                     "type": "integer",
                     "example": 1001
                 }
@@ -6249,7 +7297,7 @@ const docTemplate = `{
                     "example": 123
                 },
                 "name": {
-                    "description": "展示名称（挂载点名称）",
+                    "description": "展示名称",
                     "type": "string",
                     "example": "我的挂载点"
                 },
@@ -6257,6 +7305,29 @@ const docTemplate = `{
                     "description": "完整路径",
                     "type": "string",
                     "example": "/path/aaa"
+                }
+            }
+        },
+        "storage.selectListResponse": {
+            "type": "object",
+            "properties": {
+                "currentPage": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/storage.selectItem"
+                    }
+                },
+                "pageSize": {
+                    "type": "integer",
+                    "example": 10
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 100
                 }
             }
         },
@@ -6271,6 +7342,10 @@ const docTemplate = `{
                 },
                 "createdAt": {
                     "type": "string"
+                },
+                "creatorUserId": {
+                    "description": "创建者用户ID",
+                    "type": "integer"
                 },
                 "enableAutoRefresh": {
                     "type": "boolean"
@@ -6297,7 +7372,14 @@ const docTemplate = `{
                 "lastState": {
                     "type": "string"
                 },
+                "mountPointId": {
+                    "type": "integer"
+                },
                 "name": {
+                    "type": "string"
+                },
+                "nextRefreshTime": {
+                    "description": "下次刷新时间",
                     "type": "string"
                 },
                 "osType": {
@@ -6327,6 +7409,7 @@ const docTemplate = `{
         "storage.toggleAutoRefreshRequest": {
             "type": "object",
             "required": [
+                "enableAutoRefresh",
                 "id"
             ],
             "properties": {
@@ -6353,7 +7436,7 @@ const docTemplate = `{
                     "example": 1
                 },
                 "refreshBeginAt": {
-                    "description": "自动刷新开始时间，格式：yyyy-MM-dd HH:mm:ss，默认为当前时间",
+                    "description": "自动刷新开始时间，格式：yyyy-MM-dd，默认为当前时间",
                     "type": "string",
                     "example": "2023-01-01"
                 },

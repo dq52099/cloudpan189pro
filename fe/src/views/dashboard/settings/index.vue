@@ -418,6 +418,80 @@ const normalizeSuffixes = (input: string): string[] => {
   return Array.from(new Set(items))
 }
 
+const createDefaultAddition = (): Models.SettingAddition => ({
+  localProxy: false,
+  localProxyURL: '',
+  multipleStream: false,
+  multipleStreamThreadCount: 4,
+  multipleStreamChunkSize: 4 * 1024 * 1024,
+  taskThreadCount: 1,
+  workerCount: 5,
+  enableStorageAutoRefresh: true,
+  webdavUserStrmOnly: false,
+  webdavAllowedSuffixes: [...defaultWebdavAllowedSuffixes],
+})
+
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return value !== null && typeof value === 'object'
+}
+
+const normalizeBoolean = (value: unknown, fallback: boolean): boolean => {
+  return typeof value === 'boolean' ? value : fallback
+}
+
+const normalizeInteger = (value: unknown, fallback: number, min: number, max?: number): number => {
+  if (
+    typeof value !== 'number' ||
+    !Number.isSafeInteger(value) ||
+    value < min ||
+    (max !== undefined && value > max)
+  ) {
+    return fallback
+  }
+
+  return value
+}
+
+const normalizeSettingAddition = (value: unknown): Models.SettingAddition => {
+  const defaults = createDefaultAddition()
+  if (!isRecord(value)) {
+    return defaults
+  }
+
+  const suffixes = Array.isArray(value.webdavAllowedSuffixes)
+    ? normalizeSuffixes(
+        value.webdavAllowedSuffixes.filter((item) => typeof item === 'string').join(',')
+      )
+    : defaults.webdavAllowedSuffixes
+
+  return {
+    localProxy: normalizeBoolean(value.localProxy, defaults.localProxy),
+    localProxyURL:
+      typeof value.localProxyURL === 'string' ? value.localProxyURL : defaults.localProxyURL,
+    multipleStream: normalizeBoolean(value.multipleStream, defaults.multipleStream),
+    multipleStreamThreadCount: normalizeInteger(
+      value.multipleStreamThreadCount,
+      defaults.multipleStreamThreadCount,
+      1,
+      64
+    ),
+    multipleStreamChunkSize: normalizeInteger(
+      value.multipleStreamChunkSize,
+      defaults.multipleStreamChunkSize,
+      1048576,
+      67108864
+    ),
+    taskThreadCount: normalizeInteger(value.taskThreadCount, defaults.taskThreadCount, 1, 32),
+    workerCount: normalizeInteger(value.workerCount, defaults.workerCount, 1, 32),
+    enableStorageAutoRefresh: normalizeBoolean(
+      value.enableStorageAutoRefresh,
+      defaults.enableStorageAutoRefresh
+    ),
+    webdavUserStrmOnly: normalizeBoolean(value.webdavUserStrmOnly, defaults.webdavUserStrmOnly),
+    webdavAllowedSuffixes: suffixes.length ? suffixes : [...defaultWebdavAllowedSuffixes],
+  }
+}
+
 // 表单状态
 const form = reactive({
   title: systemInfo.title || '',
@@ -477,17 +551,7 @@ const handleToggleEnableAuth = (val: boolean) => {
 
 // ===== 附加设置表单 =====
 const originalAddition = ref<Models.SettingAddition | null>(null)
-const additionForm = reactive<Models.SettingAddition>({
-  localProxy: false,
-  multipleStream: false,
-  multipleStreamThreadCount: 4,
-  multipleStreamChunkSize: 4 * 1024 * 1024, // 4 MiB
-  taskThreadCount: 1,
-  workerCount: 4,
-  enableStorageAutoRefresh: true,
-  webdavUserStrmOnly: false,
-  webdavAllowedSuffixes: [...defaultWebdavAllowedSuffixes],
-})
+const additionForm = reactive<Models.SettingAddition>(createDefaultAddition())
 const webdavAllowedSuffixesText = ref(defaultWebdavAllowedSuffixes.join(', '))
 
 // 初始化完成标记，防止初始渲染触发自动保存
@@ -582,7 +646,12 @@ const saveAdditionField = (
   setLoading: (v: boolean) => void,
   isSaving: () => boolean
 ) => {
-  if (!additionLoaded.value || !isSettingsMounted) return
+  if (!isSettingsMounted) return
+  if (!additionLoaded.value) {
+    message.warning('附加设置尚未加载，请刷新后重试')
+
+    return
+  }
 
   const payloadKey = getAdditionPayloadKey(payload)
   if (isSaving()) {
@@ -880,24 +949,18 @@ onMounted(() => {
       message.error(err instanceof Error ? err.message : '获取系统信息失败')
     })
 
+  let loadedAddition = false
+
   getSettingAddition()
     .then((res) => {
       if (!isSettingsMounted) return
 
       if (res.code === 200 && res.data) {
-        additionForm.localProxy = !!res.data.localProxy
-        additionForm.multipleStream = !!res.data.multipleStream
-        additionForm.multipleStreamThreadCount = res.data.multipleStreamThreadCount ?? 4
-        additionForm.multipleStreamChunkSize = res.data.multipleStreamChunkSize ?? 4 * 1024 * 1024
-        additionForm.taskThreadCount = res.data.taskThreadCount ?? 1
-        additionForm.workerCount = res.data.workerCount ?? 4
-        additionForm.enableStorageAutoRefresh = res.data.enableStorageAutoRefresh ?? true
-        additionForm.webdavUserStrmOnly = res.data.webdavUserStrmOnly ?? false
-        additionForm.webdavAllowedSuffixes = res.data.webdavAllowedSuffixes?.length
-          ? [...res.data.webdavAllowedSuffixes]
-          : [...defaultWebdavAllowedSuffixes]
+        const normalizedAddition = normalizeSettingAddition(res.data)
+        Object.assign(additionForm, normalizedAddition)
         webdavAllowedSuffixesText.value = additionForm.webdavAllowedSuffixes.join(', ')
         originalAddition.value = cloneAddition(additionForm)
+        loadedAddition = true
       } else {
         message.error(res.msg || '获取附加设置失败')
       }
@@ -910,7 +973,7 @@ onMounted(() => {
     .finally(() => {
       if (!isSettingsMounted) return
 
-      additionLoaded.value = true
+      additionLoaded.value = loadedAddition
     })
 })
 

@@ -25,6 +25,18 @@ definitions:
       total:
         type: integer
     type: object
+  advance.getSubscribeUserAllResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/cloudbridge.ShareResourceInfo'
+        type: array
+      name:
+        example: 订阅用户
+        type: string
+      total:
+        type: integer
+    type: object
   advance.getSubscribeUserResponse:
     properties:
       currentPage:
@@ -40,6 +52,61 @@ definitions:
         type: integer
       total:
         type: integer
+    type: object
+  autoingest.BatchDeleteRequest:
+    properties:
+      ids:
+        items:
+          type: integer
+        minItems: 1
+        type: array
+    required:
+    - ids
+    type: object
+  autoingest.BatchDisableRequest:
+    properties:
+      ids:
+        items:
+          type: integer
+        minItems: 1
+        type: array
+    required:
+    - ids
+    type: object
+  autoingest.BatchEnableRequest:
+    properties:
+      ids:
+        items:
+          type: integer
+        minItems: 1
+        type: array
+    required:
+    - ids
+    type: object
+  autoingest.BatchRefreshRequest:
+    properties:
+      ids:
+        items:
+          type: integer
+        minItems: 1
+        type: array
+    required:
+    - ids
+    type: object
+  autoingest.BatchRetryRequest:
+    properties:
+      ids:
+        items:
+          type: integer
+        minItems: 1
+        type: array
+    required:
+    - ids
+    type: object
+  autoingest.ClearLogsRequest:
+    properties:
+      duration:
+        type: string
     type: object
   autoingest.LogLevel:
     enum:
@@ -59,6 +126,15 @@ definitions:
     x-enum-varnames:
     - OnConflictRename
     - OnConflictAbandon
+  autoingest.RetryPlanRequest:
+    properties:
+      id:
+        example: 1
+        minimum: 1
+        type: integer
+    required:
+    - id
+    type: object
   autoingest.SourceType:
     enum:
     - subscribe
@@ -74,6 +150,9 @@ definitions:
         type: integer
       cloudToken:
         type: integer
+      enable:
+        description: Enable 显式控制是否立即启用；为 nil 时按 AutoIngestInterval 是否 > 0 决定（保留向后兼容）
+        type: boolean
       name:
         example: 订阅计划A
         maxLength: 255
@@ -105,7 +184,18 @@ definitions:
     type: object
   autoingest.createSubscribePlanResponse:
     properties:
+      historyError:
+        type: string
+      historyQueued:
+        example: true
+        type: boolean
       id:
+        example: 1
+        type: integer
+    type: object
+  autoingest.deleteErrorLogsRequest:
+    properties:
+      planId:
         example: 1
         type: integer
     type: object
@@ -197,6 +287,7 @@ definitions:
     properties:
       planId:
         example: 1
+        minimum: 1
         type: integer
     required:
     - planId
@@ -214,8 +305,9 @@ definitions:
         example: false
         type: boolean
       refreshInterval:
-        description: 单位分钟，最小30
+        description: 单位分钟，最小30，最大1440
         example: 30
+        maximum: 1440
         minimum: 30
         type: integer
     type: object
@@ -232,10 +324,20 @@ definitions:
         example: false
         type: boolean
       refreshInterval:
-        description: 单位分钟，最小30
+        description: 单位分钟，最小30，最大1440
         example: 30
+        maximum: 1440
         minimum: 30
         type: integer
+    type: object
+  autoingest.retryFailedRequest:
+    properties:
+      planId:
+        example: 1
+        minimum: 1
+        type: integer
+    required:
+    - planId
     type: object
   autoingest.updatePlanRequest:
     properties:
@@ -345,6 +447,13 @@ definitions:
       id:
         description: 云盘令牌ID，可选
         example: 1
+        type: integer
+      isAdmin:
+        description: 是否管理员
+        type: boolean
+      userID:
+        description: 创建令牌的用户ID
+        format: int64
         type: integer
       uuid:
         description: 二维码UUID
@@ -692,6 +801,13 @@ definitions:
     - StatusSuccess
     - StatusFailed
     - StatusBlocked
+  loginlog.clearRequest:
+    properties:
+      duration:
+        description: Duration 保留时长（支持 1h/1d/7d/30d/90d 或 Go time.ParseDuration 格式），为空表示清空全部。
+        example: 30d
+        type: string
+    type: object
   loginlog.listResponse:
     properties:
       currentPage:
@@ -732,6 +848,15 @@ definitions:
       autoClean:
         example: true
         type: boolean
+      autoRebuildCron:
+        example: 0 2 * * *
+        type: string
+      autoRebuildEnable:
+        example: false
+        type: boolean
+      autoRebuildInterval:
+        example: 24
+        type: integer
       baseURL:
         example: http://localhost:12395
         type: string
@@ -766,12 +891,23 @@ definitions:
       enable:
         example: true
         type: boolean
+    required:
+    - enable
     type: object
   media.configUpdateRequest:
     properties:
       autoClean:
         example: true
         type: boolean
+      autoRebuildCron:
+        example: 0 2 * * *
+        type: string
+      autoRebuildEnable:
+        example: false
+        type: boolean
+      autoRebuildInterval:
+        example: 24
+        type: integer
       baseURL:
         example: http://localhost:12395
         type: string
@@ -797,6 +933,17 @@ definitions:
         example: /opt/media
         type: string
     type: object
+  media.rebuildStrmRequest:
+    type: object
+  media.rebuildStrmResponse:
+    properties:
+      failed:
+        type: integer
+      success:
+        type: integer
+      total:
+        type: integer
+    type: object
   models.AutoIngestPlan:
     properties:
       addCount:
@@ -807,6 +954,9 @@ definitions:
       autoIngestInterval:
         description: 单位分钟
         type: integer
+      concurrentCount:
+        description: 并发数
+        type: integer
       createdAt:
         type: string
       enabled:
@@ -815,6 +965,9 @@ definitions:
         description: 失败挂载数
         type: integer
       id:
+        type: integer
+      maxRetryCount:
+        description: 最大重试次数
         type: integer
       name:
         type: string
@@ -836,6 +989,9 @@ definitions:
         type: integer
       updatedAt:
         type: string
+      userId:
+        description: 所属用户ID
+        type: integer
     type: object
   models.CloudToken:
     properties:
@@ -860,6 +1016,9 @@ definitions:
         type: integer
       updatedAt:
         type: string
+      userId:
+        description: 所属用户ID
+        type: integer
       username:
         type: string
     type: object
@@ -888,6 +1047,9 @@ definitions:
       errorMsg:
         description: 错误信息
         type: string
+      failed:
+        description: 失败数量
+        type: integer
       fileId:
         description: 关联信息
         type: integer
@@ -948,6 +1110,15 @@ definitions:
       autoClean:
         description: AutoClean 自动清理空文件夹 文件删除后自动检查是否为空文件夹
         type: boolean
+      autoRebuildCron:
+        description: AutoRebuildCron 定时重建cron表达式
+        type: string
+      autoRebuildEnable:
+        description: AutoRebuildEnable 定时重建strm开关
+        type: boolean
+      autoRebuildInterval:
+        description: AutoRebuildInterval 定时重建间隔（小时）- 已废弃，使用Cron表达式
+        type: integer
       baseURL:
         type: string
       conflictPolicy:
@@ -965,6 +1136,9 @@ definitions:
         items:
           type: string
         type: array
+      lastRebuildTime:
+        description: LastRebuildTime 上次重建时间
+        type: string
       storagePath:
         description: StoragePath StoragePath 落盘根路径
         type: string
@@ -1010,8 +1184,13 @@ definitions:
     type: object
   models.SettingAddition:
     properties:
+      enableStorageAutoRefresh:
+        type: boolean
       localProxy:
         type: boolean
+      localProxyURL:
+        description: HTTP 代理地址，如 http://192.168.31.51:7890
+        type: string
       multipleStream:
         type: boolean
       multipleStreamChunkSize:
@@ -1019,6 +1198,14 @@ definitions:
       multipleStreamThreadCount:
         type: integer
       taskThreadCount:
+        type: integer
+      webdavAllowedSuffixes:
+        items:
+          type: string
+        type: array
+      webdavUserStrmOnly:
+        type: boolean
+      workerCount:
         type: integer
     type: object
   models.User:
@@ -1092,6 +1279,10 @@ definitions:
     type: object
   setting.modifyAdditionRequest:
     properties:
+      enableStorageAutoRefresh:
+        description: 是否启用存储自动刷新（可选）
+        example: true
+        type: boolean
       localProxy:
         description: 是否启用本地代理（可选）
         example: false
@@ -1114,6 +1305,24 @@ definitions:
       taskThreadCount:
         description: 任务线程数量（可选）
         example: 1
+        maximum: 32
+        minimum: 1
+        type: integer
+      webdavAllowedSuffixes:
+        description: 普通用户 WebDAV 允许的后缀列表（可选）
+        example:
+        - '[''.mp4'''
+        - '''.mkv'']'
+        items:
+          type: string
+        type: array
+      webdavUserStrmOnly:
+        description: 是否限制普通用户 WebDAV 仅显示 STRM 支持格式（可选）
+        example: false
+        type: boolean
+      workerCount:
+        description: 工作流数量（可选）
+        example: 5
         maximum: 32
         minimum: 1
         type: integer
@@ -1144,6 +1353,14 @@ definitions:
       enableAuth:
         description: 是否启用鉴权
         example: true
+        type: boolean
+    required:
+    - enableAuth
+    type: object
+  storage.ClearAllRequest:
+    properties:
+      deleteFiles:
+        description: 是否同时删除本地媒体文件
         type: boolean
     type: object
   storage.addRequest:
@@ -1181,7 +1398,7 @@ definitions:
         example: subscribe
         type: string
       refreshInterval:
-        example: 3600
+        example: 30
         maximum: 1440
         minimum: 30
         type: integer
@@ -1208,6 +1425,54 @@ definitions:
         description: 存储路径
         example: /test
         type: string
+      scanError:
+        description: 初始化扫描任务入队失败原因
+        type: string
+      scanQueued:
+        description: 初始化扫描任务是否已入队
+        example: true
+        type: boolean
+    type: object
+  storage.addResponseItem:
+    properties:
+      error:
+        type: string
+      id:
+        type: integer
+      localPath:
+        type: string
+      scanError:
+        type: string
+      scanQueued:
+        type: boolean
+      success:
+        type: boolean
+    type: object
+  storage.batchAddRequest:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/storage.addRequest'
+        maxItems: 500
+        minItems: 1
+        type: array
+    required:
+    - items
+    type: object
+  storage.batchAddResponse:
+    properties:
+      failCount:
+        type: integer
+      results:
+        items:
+          $ref: '#/definitions/storage.addResponseItem'
+        type: array
+      scanFailedCount:
+        type: integer
+      scanQueuedCount:
+        type: integer
+      successCount:
+        type: integer
     type: object
   storage.batchDeleteRequest:
     properties:
@@ -1219,10 +1484,37 @@ definitions:
     required:
     - ids
     type: object
+  storage.batchModifyTokenRequest:
+    properties:
+      ids:
+        items:
+          type: integer
+        minItems: 1
+        type: array
+      tokenId:
+        description: 新的令牌ID，0 表示解绑
+        minimum: 0
+        type: integer
+    required:
+    - ids
+    type: object
+  storage.batchRefreshRequest:
+    properties:
+      deep:
+        description: 是否深度刷新
+        type: boolean
+      ids:
+        items:
+          type: integer
+        minItems: 1
+        type: array
+    required:
+    - ids
+    type: object
   storage.deleteRequest:
     properties:
       id:
-        description: 存储节点ID
+        description: 挂载点文件ID
         example: 1
         type: integer
     required:
@@ -1251,12 +1543,14 @@ definitions:
   storage.modifyTokenRequest:
     properties:
       id:
-        description: 挂载点ID
+        description: 挂载点文件ID
         example: 1001
+        minimum: 1
         type: integer
       tokenId:
-        description: 新的令牌ID
+        description: 新的令牌ID，0 表示解绑
         example: 123
+        minimum: 0
         type: integer
     required:
     - id
@@ -1268,7 +1562,7 @@ definitions:
         example: true
         type: boolean
       id:
-        description: 挂载点ID
+        description: 挂载点文件ID
         example: 1001
         type: integer
     required:
@@ -1281,13 +1575,29 @@ definitions:
         example: 123
         type: integer
       name:
-        description: 展示名称（挂载点名称）
+        description: 展示名称
         example: 我的挂载点
         type: string
       path:
         description: 完整路径
         example: /path/aaa
         type: string
+    type: object
+  storage.selectListResponse:
+    properties:
+      currentPage:
+        example: 1
+        type: integer
+      data:
+        items:
+          $ref: '#/definitions/storage.selectItem'
+        type: array
+      pageSize:
+        example: 10
+        type: integer
+      total:
+        example: 100
+        type: integer
     type: object
   storage.storageDTO:
     properties:
@@ -1297,6 +1607,9 @@ definitions:
         type: integer
       createdAt:
         type: string
+      creatorUserId:
+        description: 创建者用户ID
+        type: integer
       enableAutoRefresh:
         type: boolean
       enableDeepRefresh:
@@ -1314,7 +1627,12 @@ definitions:
         type: boolean
       lastState:
         type: string
+      mountPointId:
+        type: integer
       name:
+        type: string
+      nextRefreshTime:
+        description: 下次刷新时间
         type: string
       osType:
         type: string
@@ -1353,7 +1671,7 @@ definitions:
         example: 1
         type: integer
       refreshBeginAt:
-        description: 自动刷新开始时间，格式：yyyy-MM-dd HH:mm:ss，默认为当前时间
+        description: 自动刷新开始时间，格式：yyyy-MM-dd，默认为当前时间
         example: "2023-01-01"
         type: string
       refreshInterval:
@@ -1363,6 +1681,7 @@ definitions:
         minimum: 30
         type: integer
     required:
+    - enableAutoRefresh
     - id
     type: object
   taskengine.ProcessorResult:
@@ -1863,6 +2182,70 @@ definitions:
 info:
   contact: {}
 paths:
+  /api/auto_ingest/log/clear:
+    post:
+      consumes:
+      - application/json
+      description: 清理自动入库运行日志；duration 为空时清空全部，否则按保留时长清理
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 清理参数
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/autoingest.ClearLogsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 清空成功
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 清理日志
+      tags:
+      - 自动挂载管理
+  /api/auto_ingest/log/delete_error:
+    post:
+      consumes:
+      - application/json
+      description: 删除指定计划的错误日志，如果不指定计划则删除所有计划的错误日志
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 删除请求参数
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/autoingest.deleteErrorLogsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 删除成功，data 为受影响记录数
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "400":
+          description: 参数验证失败
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 删除错误日志
+      tags:
+      - 自动挂载管理
   /api/auto_ingest/log/list:
     get:
       consumes:
@@ -1923,14 +2306,14 @@ paths:
     post:
       consumes:
       - application/json
-      description: 创建订阅计划（占位实现，后续由你补充具体逻辑）
+      description: 创建订阅计划；enable 字段为空时回退到 AutoIngestInterval > 0 的旧语义，传入 false 则计划创建后保持停用。
       parameters:
       - description: Bearer token
         in: header
         name: Authorization
         required: true
         type: string
-      - description: 订阅计划参数（占位）
+      - description: 订阅计划参数
         in: body
         name: request
         required: true
@@ -2169,6 +2552,76 @@ paths:
           schema:
             $ref: '#/definitions/httpcontext.Response'
       summary: 下发订阅计划刷新任务
+      tags:
+      - 自动挂载管理
+  /api/auto_ingest/plan/retry:
+    post:
+      consumes:
+      - application/json
+      description: 将计划的 offset 重置为 1，然后触发刷新任务，用于重新获取所有历史记录
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 计划ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/autoingest.RetryPlanRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 操作成功
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "400":
+          description: 查询计划失败
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 重试计划（重新获取历史记录）
+      tags:
+      - 自动挂载管理
+  /api/auto_ingest/plan/retry_failed:
+    post:
+      consumes:
+      - application/json
+      description: 重置偏移量并重新扫描所有文件，用于修复之前的失败
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 重试请求参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/autoingest.retryFailedRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 任务已下发
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "400":
+          description: 重试任务失败，code=xxxx
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "403":
+          description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 重试失败的入库任务
       tags:
       - 自动挂载管理
   /api/auto_ingest/plan/update:
@@ -2513,6 +2966,9 @@ paths:
       summary: 用户名密码登录
       tags:
       - 云盘令牌管理
+  /api/file/batch_delete:
+    post:
+      responses: {}
   /api/file/create_download_url:
     post:
       consumes:
@@ -2745,6 +3201,44 @@ paths:
       summary: 搜索文件
       tags:
       - 文件管理
+  /api/login_log/clear:
+    post:
+      consumes:
+      - application/json
+      description: 清空登录日志，或按保留时长裁剪（传入 duration）。空字符串表示清空全部。
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 清理参数
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/loginlog.clearRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 清理成功，data=删除条数
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "400":
+          description: 参数验证失败
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "403":
+          description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 清空登录日志
+      tags:
+      - 登录日志
   /api/login_log/list:
     get:
       consumes:
@@ -2988,22 +3482,34 @@ paths:
     post:
       consumes:
       - application/json
-      description: 扫描所有挂载点并重新生成strm文件
+      description: |-
+        重建 STRM 文件。不传 mountPointIds 时走全量重建（消费侧内部并发）；
+        传入 mountPointIds 时按单挂载点派发多条任务，便于针对性重试。
       parameters:
       - description: Bearer token
         in: header
         name: Authorization
         required: true
         type: string
+      - description: 重建参数
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/media.rebuildStrmRequest'
       produces:
       - application/json
       responses:
         "200":
           description: 重建任务已提交
           schema:
-            $ref: '#/definitions/httpcontext.Response'
+            allOf:
+            - $ref: '#/definitions/httpcontext.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/media.rebuildStrmResponse'
+              type: object
         "400":
-          description: 提交重建任务失败，code=xxxx
+          description: 提交重建任务失败
           schema:
             $ref: '#/definitions/httpcontext.Response'
         "401":
@@ -3447,6 +3953,46 @@ paths:
       summary: 获取订阅用户资源列表
       tags:
       - 存储高级功能
+  /api/storage/advance/get_subscribe_user_all:
+    get:
+      consumes:
+      - application/json
+      description: 根据订阅用户名获取该用户的共享资源列表（获取全部，不分页）
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 订阅用户名
+        example: '"user123"'
+        in: query
+        name: subscribeUser
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取订阅用户资源列表成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpcontext.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/advance.getSubscribeUserAllResponse'
+              type: object
+        "400":
+          description: 查询订阅信息失败
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 获取订阅用户所有资源列表
+      tags:
+      - 存储高级功能
   /api/storage/advance/person/files:
     get:
       consumes:
@@ -3549,11 +4095,55 @@ paths:
       summary: 获取分享信息
       tags:
       - 存储高级功能
+  /api/storage/batch_add:
+    post:
+      consumes:
+      - application/json
+      description: 批量添加存储挂载点（上限 500 个），每个条目都会走和单条 /add 相同的校验
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 批量存储挂载信息
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/storage.batchAddRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 批量添加结果
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpcontext.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/storage.batchAddResponse'
+              type: object
+        "400":
+          description: 参数验证失败
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "403":
+          description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 批量添加存储挂载
+      tags:
+      - 存储管理
   /api/storage/batch_delete:
     post:
       consumes:
       - application/json
-      description: 批量删除指定的存储挂载点，将任务推送到后台异步处理
+      description: 批量删除指定的存储挂载点，为每个挂载点创建独立任务，由工作流并发处理（上限 1000 个）
       parameters:
       - description: Bearer token
         in: header
@@ -3586,6 +4176,45 @@ paths:
           schema:
             $ref: '#/definitions/httpcontext.Response'
       summary: 批量删除存储挂载
+      tags:
+      - 存储管理
+  /api/storage/batch_modify_token:
+    post:
+      consumes:
+      - application/json
+      description: 用户批量绑定自己的令牌到挂载点，异步提交后台处理（上限 500 个）
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 批量修改令牌请求参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/storage.batchModifyTokenRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 令牌修改任务已提交
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "400":
+          description: 下发任务失败，code=4024
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "403":
+          description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 批量修改存储挂载点令牌
       tags:
       - 存储管理
   /api/storage/batch_parse_text:
@@ -3623,11 +4252,88 @@ paths:
       summary: 批量解析文本（预览）
       tags:
       - 存储管理
+  /api/storage/batch_refresh:
+    post:
+      consumes:
+      - application/json
+      description: 批量刷新指定的存储挂载点，触发文件扫描任务重新同步文件信息（上限 1000 个）
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 批量刷新请求参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/storage.batchRefreshRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 刷新任务已提交，后台处理中
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "400":
+          description: 发送刷新任务失败，code=4024
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "403":
+          description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 批量刷新存储挂载
+      tags:
+      - 存储管理
+  /api/storage/clear_all:
+    post:
+      consumes:
+      - application/json
+      description: 删除所有存储挂载点（仅管理员）。此操作不可逆，会顺序清理 MountPoint/VirtualFile/MediaFile 表；
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 清空请求参数
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/storage.ClearAllRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 清空成功
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "400":
+          description: 参数验证失败
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "403":
+          description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 清空所有挂载点
+      tags:
+      - 存储管理
   /api/storage/delete:
     post:
       consumes:
       - application/json
-      description: 删除指定的存储挂载点，同时清理相关文件
+      description: 通过请求体 id 指定挂载点文件ID，删除对应的存储挂载点，同时清理相关文件
       parameters:
       - description: Bearer token
         in: header
@@ -3719,7 +4425,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 修改指定存储挂载点关联的云盘令牌
+      description: 通过请求体 id 指定挂载点文件ID，用户绑定自己的令牌到挂载点（不影响其他用户）
       parameters:
       - description: Bearer token
         in: header
@@ -3758,7 +4464,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 刷新指定的存储挂载点，触发文件扫描任务重新同步文件信息
+      description: 通过请求体 id 指定挂载点文件ID，触发文件扫描任务重新同步文件信息
       parameters:
       - description: Bearer token
         in: header
@@ -3797,13 +4503,28 @@ paths:
     get:
       consumes:
       - application/json
-      description: 返回用于选择的简化数据（不分页），仅包含必要字段
+      description: 返回用于选择的简化数据，支持分页和搜索，仅包含必要字段
       parameters:
       - description: Bearer token
         in: header
         name: Authorization
         required: true
         type: string
+      - default: 1
+        description: 当前页码，默认为1
+        in: query
+        name: currentPage
+        type: integer
+      - default: 10
+        description: 每页大小，默认为10
+        in: query
+        name: pageSize
+        type: integer
+      - default: false
+        description: 是否不分页
+        in: query
+        name: noPaginate
+        type: boolean
       - description: 路径过滤（模糊匹配）
         example: '"/aaa"'
         in: query
@@ -3824,9 +4545,7 @@ paths:
             - $ref: '#/definitions/httpcontext.Response'
             - properties:
                 data:
-                  items:
-                    $ref: '#/definitions/storage.selectItem'
-                  type: array
+                  $ref: '#/definitions/storage.selectListResponse'
               type: object
         "400":
           description: 查询挂载点失败，code=3019
@@ -4573,6 +5292,10 @@ paths:
           description: 权限不足
           schema:
             $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 用户组不存在
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
       summary: 获取用户组绑定的文件列表
       tags:
       - 用户组管理
@@ -4610,6 +5333,10 @@ paths:
             $ref: '#/definitions/httpcontext.Response'
         "403":
           description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 用户组不存在
           schema:
             $ref: '#/definitions/httpcontext.Response'
       summary: 删除用户组
