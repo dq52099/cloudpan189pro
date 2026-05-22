@@ -18,6 +18,11 @@ var errMissingSourceTable = errors.New("source table is missing")
 
 const dataMigrationBatchSize = 1000
 
+type dataMigrationStep struct {
+	name string
+	run  func(*gorm.DB) error
+}
+
 func MigrateFromSQLite(cfg *configs.Config) error {
 	sqlitePath := cfg.DBFile
 	if sqlitePath == "" {
@@ -60,39 +65,42 @@ func MigrateFromSQLite(cfg *configs.Config) error {
 		fmt.Printf("检测到 SQLite 用户数: %d\n", userCount)
 	}
 
-	steps := []struct {
-		name string
-		run  func() error
-	}{
-		{name: "用户组", run: func() error { return migrateUserGroups(sqliteDB, pgDB) }},
-		{name: "用户", run: func() error { return migrateUsers(sqliteDB, pgDB) }},
-		{name: "云盘令牌", run: func() error { return migrateCloudTokens(sqliteDB, pgDB) }},
-		{name: "虚拟文件", run: func() error { return migrateVirtualFiles(sqliteDB, pgDB) }},
-		{name: "挂载点", run: func() error { return migrateMountPoints(sqliteDB, pgDB) }},
-		{name: "用户组文件关系", run: func() error { return migrateGroup2Files(sqliteDB, pgDB) }},
-		{name: "用户挂载点令牌", run: func() error { return migrateUserMountPointTokens(sqliteDB, pgDB) }},
-		{name: "自动订阅计划", run: func() error { return migrateAutoIngestPlans(sqliteDB, pgDB) }},
-		{name: "自动订阅日志", run: func() error { return migrateAutoIngestLogs(sqliteDB, pgDB) }},
-		{name: "媒体文件", run: func() error { return migrateMediaFiles(sqliteDB, pgDB) }},
-		{name: "媒体配置", run: func() error { return migrateMediaConfig(sqliteDB, pgDB) }},
-		{name: "文件任务日志", run: func() error { return migrateFileTaskLogs(sqliteDB, pgDB) }},
-		{name: "登录日志", run: func() error { return migrateLoginLogs(sqliteDB, pgDB) }},
-		{name: "Telegram 设置", run: func() error { return migrateTelegramSettings(sqliteDB, pgDB) }},
-		{name: "Telegram 用户", run: func() error { return migrateTelegramUsers(sqliteDB, pgDB) }},
-		{name: "订阅", run: func() error { return migrateSubscriptions(sqliteDB, pgDB) }},
-		{name: "订阅匹配历史", run: func() error { return migrateMatchHistory(sqliteDB, pgDB) }},
-		{name: "每日热门历史", run: func() error { return migrateDailyHotHistory(sqliteDB, pgDB) }},
-		{name: "系统设置", run: func() error { return migrateSystemSettings(sqliteDB, pgDB) }},
-		{name: "设置", run: func() error { return migrateSettings(sqliteDB, pgDB, userCount) }},
+	steps := []dataMigrationStep{
+		{name: "用户组", run: func(dst *gorm.DB) error { return migrateUserGroups(sqliteDB, dst) }},
+		{name: "用户", run: func(dst *gorm.DB) error { return migrateUsers(sqliteDB, dst) }},
+		{name: "云盘令牌", run: func(dst *gorm.DB) error { return migrateCloudTokens(sqliteDB, dst) }},
+		{name: "虚拟文件", run: func(dst *gorm.DB) error { return migrateVirtualFiles(sqliteDB, dst) }},
+		{name: "挂载点", run: func(dst *gorm.DB) error { return migrateMountPoints(sqliteDB, dst) }},
+		{name: "用户组文件关系", run: func(dst *gorm.DB) error { return migrateGroup2Files(sqliteDB, dst) }},
+		{name: "用户挂载点令牌", run: func(dst *gorm.DB) error { return migrateUserMountPointTokens(sqliteDB, dst) }},
+		{name: "自动订阅计划", run: func(dst *gorm.DB) error { return migrateAutoIngestPlans(sqliteDB, dst) }},
+		{name: "自动订阅日志", run: func(dst *gorm.DB) error { return migrateAutoIngestLogs(sqliteDB, dst) }},
+		{name: "媒体文件", run: func(dst *gorm.DB) error { return migrateMediaFiles(sqliteDB, dst) }},
+		{name: "媒体配置", run: func(dst *gorm.DB) error { return migrateMediaConfig(sqliteDB, dst) }},
+		{name: "文件任务日志", run: func(dst *gorm.DB) error { return migrateFileTaskLogs(sqliteDB, dst) }},
+		{name: "登录日志", run: func(dst *gorm.DB) error { return migrateLoginLogs(sqliteDB, dst) }},
+		{name: "Telegram 设置", run: func(dst *gorm.DB) error { return migrateTelegramSettings(sqliteDB, dst) }},
+		{name: "Telegram 用户", run: func(dst *gorm.DB) error { return migrateTelegramUsers(sqliteDB, dst) }},
+		{name: "订阅", run: func(dst *gorm.DB) error { return migrateSubscriptions(sqliteDB, dst) }},
+		{name: "订阅匹配历史", run: func(dst *gorm.DB) error { return migrateMatchHistory(sqliteDB, dst) }},
+		{name: "每日热门历史", run: func(dst *gorm.DB) error { return migrateDailyHotHistory(sqliteDB, dst) }},
+		{name: "系统设置", run: func(dst *gorm.DB) error { return migrateSystemSettings(sqliteDB, dst) }},
+		{name: "设置", run: func(dst *gorm.DB) error { return migrateSettings(sqliteDB, dst, userCount) }},
 	}
 
-	for _, step := range steps {
-		if err := runMigrationStep(step.name, step.run); err != nil {
-			return err
+	return runDataMigrationSteps(pgDB, steps)
+}
+
+func runDataMigrationSteps(dst *gorm.DB, steps []dataMigrationStep) error {
+	return dst.Transaction(func(tx *gorm.DB) error {
+		for _, step := range steps {
+			if err := runMigrationStep(step.name, func() error { return step.run(tx) }); err != nil {
+				return err
+			}
 		}
-	}
 
-	return nil
+		return nil
+	})
 }
 
 func migrateUsers(src, dst *gorm.DB) error {

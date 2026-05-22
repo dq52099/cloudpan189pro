@@ -295,6 +295,44 @@ func TestFindSourceRowsReturnsExistingTableQueryErrors(t *testing.T) {
 	}
 }
 
+func TestRunDataMigrationStepsRollsBackDestinationWritesOnError(t *testing.T) {
+	dst := openMigrationTestDB(t)
+
+	if err := dst.AutoMigrate(&models.UserGroup{}); err != nil {
+		t.Fatalf("migrate destination schema: %v", err)
+	}
+
+	migrateErr := errors.New("forced migration failure")
+	steps := []dataMigrationStep{
+		{
+			name: "用户组",
+			run: func(tx *gorm.DB) error {
+				return tx.Create(&models.UserGroup{ID: 1, Name: "admins"}).Error
+			},
+		},
+		{
+			name: "失败步骤",
+			run: func(*gorm.DB) error {
+				return migrateErr
+			},
+		},
+	}
+
+	err := runDataMigrationSteps(dst, steps)
+	if !errors.Is(err, migrateErr) {
+		t.Fatalf("expected wrapped migration error, got %v", err)
+	}
+
+	var count int64
+	if err := dst.Model(&models.UserGroup{}).Count(&count).Error; err != nil {
+		t.Fatalf("count user groups after rollback: %v", err)
+	}
+
+	if count != 0 {
+		t.Fatalf("expected destination writes to be rolled back, got %d rows", count)
+	}
+}
+
 func TestResetPostgresSequenceSkipsNonPostgresDialects(t *testing.T) {
 	db := openMigrationTestDB(t)
 
