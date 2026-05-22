@@ -1,4 +1,11 @@
-import type { FamilyInfo, FileNode, ShareInfo } from '@/api/storage/advance'
+import type {
+  FamilyInfo,
+  FileNode,
+  GetSubscribeUserAllResponse,
+  GetSubscribeUserResponse,
+  ShareInfo,
+  ShareResourceInfo,
+} from '@/api/storage/advance'
 import type { ConfigInfoResponse } from '@/api/media'
 import type {
   CategoriesResponse,
@@ -117,6 +124,98 @@ export const normalizeShareInfo = (value: unknown): ShareInfo | null => {
     shareTime: value.shareTime,
     isFolder: value.isFolder,
     accessCode: value.accessCode,
+  }
+}
+
+const normalizeShareResourceInfo = (value: unknown): ShareResourceInfo | null => {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  if (
+    !isString(value.id) ||
+    !isString(value.name) ||
+    !isFiniteNumber(value.shareId) ||
+    !isString(value.userId) ||
+    !isBoolean(value.isFolder) ||
+    !isString(value.accessCode) ||
+    !isString(value.shareTime)
+  ) {
+    return null
+  }
+
+  return {
+    id: value.id,
+    name: value.name,
+    shareId: value.shareId,
+    userId: value.userId,
+    isFolder: value.isFolder,
+    accessCode: value.accessCode,
+    shareTime: value.shareTime,
+  }
+}
+
+const normalizeShareResourceInfos = (value: unknown): ShareResourceInfo[] | null => {
+  if (!Array.isArray(value)) {
+    return null
+  }
+
+  const items: ShareResourceInfo[] = []
+  for (const item of value) {
+    const normalizedItem = normalizeShareResourceInfo(item)
+    if (!normalizedItem) {
+      return null
+    }
+
+    items.push(normalizedItem)
+  }
+
+  return items
+}
+
+export const normalizeGetSubscribeUserResponse = (
+  value: unknown
+): GetSubscribeUserResponse | null => {
+  if (
+    !isRecord(value) ||
+    !isString(value.name) ||
+    !isSafePositiveInteger(value.currentPage) ||
+    !isSafePositiveInteger(value.pageSize) ||
+    !isSafeNonNegativeInteger(value.total)
+  ) {
+    return null
+  }
+
+  const data = normalizeShareResourceInfos(value.data)
+  if (!data) {
+    return null
+  }
+
+  return {
+    name: value.name,
+    currentPage: value.currentPage,
+    pageSize: value.pageSize,
+    total: value.total,
+    data,
+  }
+}
+
+export const normalizeGetSubscribeUserAllResponse = (
+  value: unknown
+): GetSubscribeUserAllResponse | null => {
+  if (!isRecord(value) || !isString(value.name) || !isSafeNonNegativeInteger(value.total)) {
+    return null
+  }
+
+  const data = normalizeShareResourceInfos(value.data)
+  if (!data) {
+    return null
+  }
+
+  return {
+    name: value.name,
+    total: value.total,
+    data,
   }
 }
 

@@ -2,7 +2,10 @@ import { reactive, computed, type Ref } from 'vue'
 import { getSubscribeUser, getSubscribeUserAll } from '@/api/storage/advance'
 import type { ShareResourceInfo, GetSubscribeUserResponse } from '@/api/storage/advance'
 import type { ApiResponse } from '@/utils/api'
-import { getListItems, getListTotal } from '@/utils/pagination'
+import {
+  normalizeGetSubscribeUserAllResponse,
+  normalizeGetSubscribeUserResponse,
+} from '@/utils/responseGuards'
 import type { MessageApi } from 'naive-ui'
 
 // 常量定义
@@ -74,21 +77,16 @@ export function useSubscribeResource(
       return false
     }
 
-    const items = getListItems<ShareResourceInfo>(response.data)
-    const total = getListTotal(response.data)
-    if (!items || total === null) {
+    const data = normalizeGetSubscribeUserResponse(response.data)
+    if (!data) {
       message.error('获取用户资源失败：响应数据格式异常')
 
       return false
     }
 
-    resourceState.userInfo = {
-      ...response.data,
-      data: items,
-      total,
-    }
-    resourceState.list = items
-    resourcePagination.itemCount = total
+    resourceState.userInfo = data
+    resourceState.list = data.data
+    resourcePagination.itemCount = data.total
 
     if (isInitialSearch) {
       resourcePagination.page = PAGINATION_CONFIG.DEFAULT_PAGE
@@ -195,25 +193,24 @@ export function useSubscribeResource(
         return false
       }
 
-      const items = getListItems<ShareResourceInfo>(response.data)
-      const total = getListTotal(response.data)
-      if (!items || total === null) {
+      const data = normalizeGetSubscribeUserAllResponse(response.data)
+      if (!data) {
         message.error('获取全部资源失败：响应数据格式异常')
 
         return false
       }
 
-      const pageSize = total > 0 ? total : PAGINATION_CONFIG.DEFAULT_PAGE_SIZE
+      const pageSize = data.total > 0 ? data.total : PAGINATION_CONFIG.DEFAULT_PAGE_SIZE
 
-      resourceState.list = items
+      resourceState.list = data.data
       resourceState.userInfo = {
-        name: response.data.name,
-        data: items,
-        total,
+        name: data.name,
+        data: data.data,
+        total: data.total,
         currentPage: 1,
         pageSize,
       }
-      resourcePagination.itemCount = total
+      resourcePagination.itemCount = data.total
       resourcePagination.pageSize = pageSize
 
       return true

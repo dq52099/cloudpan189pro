@@ -239,7 +239,7 @@ import {
   type CreateSubscribePlanResponse,
 } from '@/api/autoingest'
 import { type ApiResponse } from '@/utils/api'
-import { getListTotal } from '@/utils/pagination'
+import { normalizeGetSubscribeUserResponse } from '@/utils/responseGuards'
 
 const message = useMessage()
 
@@ -446,16 +446,16 @@ const handleParseSubscribe = () => {
       }
 
       if (res.code === 200 && res.data) {
-        const total = getListTotal(res.data)
-        if (total === null) {
+        const data = normalizeGetSubscribeUserResponse(res.data)
+        if (!data) {
           message.error('解析失败：响应数据格式异常')
 
           return
         }
 
         parsedSubscribeUserId.value = subscribeUserId
-        parsedUserName.value = res.data.name
-        parsedShareTotal.value = total
+        parsedUserName.value = data.name
+        parsedShareTotal.value = data.total
         parsedLocked.value = true
         // 建议预填名称
         if (!detailForm.name) {
