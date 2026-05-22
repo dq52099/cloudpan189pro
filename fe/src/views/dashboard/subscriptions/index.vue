@@ -261,6 +261,7 @@ import {
   type SearchResult,
   type CategoryOption,
 } from '@/api/subscription'
+import { normalizeSearchResults } from '@/utils/responseGuards'
 
 const message = useMessage()
 
@@ -486,7 +487,14 @@ const handleSearch = async () => {
     }
 
     if (res.code === 200) {
-      searchResults.value = res.data || []
+      const results = normalizeSearchResults(res.data)
+      if (!results) {
+        message.error('搜索失败：响应数据格式异常')
+
+        return
+      }
+
+      searchResults.value = results
     } else {
       message.error(res.msg || '搜索失败')
       searchResults.value = []
@@ -523,11 +531,25 @@ const handleAISearch = async () => {
 
     if (res.code === 200 && res.data) {
       if (res.data.result) {
+        const results = normalizeSearchResults([res.data.result])
+        if (!results) {
+          message.error('AI搜索失败：响应数据格式异常')
+
+          return
+        }
+
         message.success('AI推荐: ' + res.data.keyword)
-        searchResults.value = [res.data.result]
+        searchResults.value = results
       } else if (Array.isArray(res.data.allResults) && res.data.allResults.length > 0) {
+        const results = normalizeSearchResults(res.data.allResults)
+        if (!results) {
+          message.error('AI搜索失败：响应数据格式异常')
+
+          return
+        }
+
         message.info('AI服务未配置，返回全部搜索结果')
-        searchResults.value = res.data.allResults || []
+        searchResults.value = results
       } else {
         message.warning(res.data.message || '未找到相关资源')
         searchResults.value = []

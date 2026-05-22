@@ -1,4 +1,6 @@
 import type { FamilyInfo, FileNode } from '@/api/storage/advance'
+import type { SearchResult } from '@/api/subscription'
+import type { TelegramUser } from '@/api/telegram'
 import type { UserGroupInfo } from '@/api/usergroup'
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
@@ -73,6 +75,48 @@ export const normalizeFileNodes = (value: unknown): FileNode[] | null => {
       isString(item.name) &&
       isString(item.parentId) &&
       (item.isFolder === 0 || item.isFolder === 1)
+    )
+  })
+}
+
+const isOptionalString = (value: unknown): value is string | undefined => {
+  return value === undefined || isString(value)
+}
+
+export const normalizeSearchResults = (value: unknown): SearchResult[] | null => {
+  return normalizeItems<SearchResult>(value, (item) => {
+    if (!isRecord(item)) {
+      return false
+    }
+
+    return (
+      isString(item.shareUrl) &&
+      isString(item.shareCode) &&
+      isString(item.name) &&
+      isString(item.uploadTime) &&
+      isString(item.source) &&
+      isOptionalString(item.size) &&
+      isOptionalString(item.cover) &&
+      isOptionalString(item.note)
+    )
+  })
+}
+
+export const normalizeTelegramUsers = (value: unknown): TelegramUser[] | null => {
+  return normalizeItems<TelegramUser>(value, (item) => {
+    if (!isRecord(item)) {
+      return false
+    }
+
+    return (
+      isSafePositiveInteger(item.userID) &&
+      isString(item.username) &&
+      isString(item.firstName) &&
+      isString(item.lastName) &&
+      isString(item.mountPath) &&
+      typeof item.isAdmin === 'boolean' &&
+      isString(item.lastSeenAt) &&
+      isString(item.createdAt)
     )
   })
 }

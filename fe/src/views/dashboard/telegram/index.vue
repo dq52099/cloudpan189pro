@@ -239,6 +239,7 @@ import {
   type TelegramSetting,
   type TelegramUser,
 } from '@/api/telegram'
+import { normalizeTelegramUsers } from '@/utils/responseGuards'
 
 const message = useMessage()
 
@@ -468,7 +469,14 @@ const loadUsers = async () => {
     }
 
     if (res.code === 200) {
-      users.value = res.data || []
+      const telegramUsers = normalizeTelegramUsers(res.data)
+      if (!telegramUsers) {
+        message.error('加载用户列表失败：响应数据格式异常')
+
+        return
+      }
+
+      users.value = telegramUsers
 
       return
     }
