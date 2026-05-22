@@ -12,6 +12,7 @@ on:
         type: string
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
   PROJECT_NAME: cloudpan189-share
   MODULE_NAME: github.com/xxcheng123/cloudpan189-share
   CONFIG_PACKAGE: github.com/xxcheng123/cloudpan189-share/internal/configs
@@ -34,7 +35,7 @@ jobs:
         with:
           version: 9
           run_install: true
-          package_json_path: fe/package.json
+          package_json_file: fe/package.json
 
       - name: 📦 设置 Node.js ${{ env.NODE_VERSION }}
         uses: actions/setup-node@v4
