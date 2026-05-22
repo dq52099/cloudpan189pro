@@ -102,6 +102,55 @@ func TestMigrateSettingsMarksInitializedWhenUsersExist(t *testing.T) {
 	}
 }
 
+func TestMigrateSystemSettingsPreservesSubscriptionConfigFields(t *testing.T) {
+	src := openMigrationTestDB(t)
+	dst := openMigrationTestDB(t)
+
+	if err := src.AutoMigrate(&SystemSetting{}); err != nil {
+		t.Fatalf("migrate source schema: %v", err)
+	}
+
+	if err := dst.AutoMigrate(&SystemSetting{}); err != nil {
+		t.Fatalf("migrate destination schema: %v", err)
+	}
+
+	setting := SystemSetting{
+		ID:   9,
+		Name: "subscription_config",
+		Value: models.SubscriptionConfig{
+			Enabled:          true,
+			CronExpression:   "0 2 * * *",
+			PanSearchURL:     "https://example.test/search",
+			EnableTMDB:       true,
+			EnableDouban:     true,
+			DefaultMountPath: "/subscriptions",
+			AutoMount:        true,
+			TMDBAPIKey:       "tmdb-key",
+			OpenAIAPIKey:     "openai-key",
+			OpenAIBaseURL:    "https://api.example.test",
+			OpenAIModel:      "gpt-test",
+		},
+	}
+	if err := src.Create(&setting).Error; err != nil {
+		t.Fatalf("seed source system setting: %v", err)
+	}
+
+	if err := migrateSystemSettings(src, dst); err != nil {
+		t.Fatalf("migrate system settings: %v", err)
+	}
+
+	var got SystemSetting
+	if err := dst.First(&got, 9).Error; err != nil {
+		t.Fatalf("query migrated system setting: %v", err)
+	}
+
+	if got.Value.OpenAIAPIKey != setting.Value.OpenAIAPIKey ||
+		got.Value.OpenAIBaseURL != setting.Value.OpenAIBaseURL ||
+		got.Value.OpenAIModel != setting.Value.OpenAIModel {
+		t.Fatalf("expected OpenAI config fields to be preserved, got %+v", got.Value)
+	}
+}
+
 func TestDedupeUserMountPointTokenRowsKeepsLatestID(t *testing.T) {
 	rows := []models.UserMountPointToken{
 		{ID: 1, UserID: 1, MountPointID: 10, TokenID: 100},
