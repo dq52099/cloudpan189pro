@@ -183,6 +183,7 @@ import {
 } from '@vicons/ionicons5'
 import { getFileLogList, clearTaskLogs } from '@/api/taskstate'
 import { formatDate } from '@/utils/format'
+import { getListItems, getListTotal } from '@/utils/pagination'
 import {
   TASK_TYPE_OPTIONS,
   TASK_TYPE_TEXT_MAP,
@@ -346,8 +347,26 @@ const fetchTaskLogList = (silent = false) => {
       }
 
       if (response.code === 200 && response.data) {
-        state.tableData = response.data.data || []
-        paginationReactive.itemCount = response.data.total || 0
+        const items = getListItems<Models.FileTaskLog>(response.data)
+        const total = getListTotal(response.data)
+
+        if (!items) {
+          stopAutoRefresh()
+          if (!silent) {
+            message.error('获取任务日志失败：响应数据格式异常')
+          }
+
+          return
+        }
+
+        state.tableData = items
+        if (total === null) {
+          if (!silent) {
+            message.warning('任务日志响应缺少有效总数，已保留原分页统计')
+          }
+        } else {
+          paginationReactive.itemCount = total
+        }
         syncCurrentTask()
         ensureAutoRefresh()
 

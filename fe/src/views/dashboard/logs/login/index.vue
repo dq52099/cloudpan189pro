@@ -104,6 +104,7 @@ import {
 } from '@vicons/ionicons5'
 import { getLoginLogList, clearLoginLogs, type LoginLogListQuery } from '@/api/loginlog'
 import { formatDate } from '@/utils/format'
+import { getListItems, getListTotal } from '@/utils/pagination'
 import {
   LOGIN_EVENT_OPTIONS,
   LOGIN_EVENT_TEXT_MAP,
@@ -300,8 +301,21 @@ const fetchList = () => {
       }
 
       if (res.code === 200 && res.data) {
-        state.tableData = res.data.data || []
-        paginationReactive.itemCount = res.data.total || 0
+        const items = getListItems<Models.LoginLog>(res.data)
+        const total = getListTotal(res.data)
+
+        if (!items) {
+          message.error('获取登录日志失败：响应数据格式异常')
+
+          return
+        }
+
+        state.tableData = items
+        if (total === null) {
+          message.warning('登录日志响应缺少有效总数，已保留原分页统计')
+        } else {
+          paginationReactive.itemCount = total
+        }
 
         return
       }

@@ -256,6 +256,7 @@ import { AUTO_INGEST_SOURCE_TYPE_OPTIONS } from '@/constants/autoIngest'
 import CreatePlanModal from '@/components/autoingest/CreatePlanModal.vue'
 import EditPlanModal from '@/components/autoingest/EditPlanModal.vue'
 import { type ApiResponse } from '@/utils/api'
+import { getListItems, getListTotal } from '@/utils/pagination'
 
 const message = useMessage()
 const dialog = useDialog()
@@ -299,30 +300,6 @@ const isValidClearCount = (value: unknown): value is number => {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }
 
-const isValidListTotal = (value: unknown): value is number => {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
-}
-
-const getListItems = <T,>(value: unknown): T[] | null => {
-  if (!value || typeof value !== 'object') {
-    return null
-  }
-
-  const items = (value as { data?: unknown }).data
-
-  return Array.isArray(items) ? (items as T[]) : null
-}
-
-const getListTotal = (value: unknown): number | null => {
-  if (!value || typeof value !== 'object') {
-    return null
-  }
-
-  const total = (value as { total?: unknown }).total
-
-  return isValidListTotal(total) ? total : null
-}
-
 const isActiveRequest = (requestId: number, latestRequestId: number) =>
   isPageAlive && requestId === latestRequestId
 
@@ -345,7 +322,14 @@ const loadCloudTokens = () => {
       }
 
       if (res.code === 200 && res.data) {
-        cloudTokenOptions.value = res.data.data.map((t) => ({
+        const items = getListItems<Models.CloudToken>(res.data)
+        if (!items) {
+          message.error('获取令牌列表失败：响应数据格式异常')
+
+          return
+        }
+
+        cloudTokenOptions.value = items.map((t) => ({
           label: t.name || `令牌${t.id}`,
           value: t.id,
         }))

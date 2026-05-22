@@ -676,6 +676,7 @@ import { getCloudTokenList } from '@/api/cloudtoken'
 import { formatDateTime } from '@/utils/time'
 import { getOsTypeDisplayName, getOsTypeColor, mountTypeConfigs } from '@/utils/osType'
 import { getTaskStatusInfo } from '@/utils/taskStatus'
+import { getListItems, getListTotal } from '@/utils/pagination'
 import { useSubscribeMount } from '@/composables/useSubscribeMount'
 import { useShareMount } from '@/composables/useShareMount'
 import { usePersonMount } from '@/composables/usePersonMount'
@@ -699,30 +700,6 @@ const batchModifyTokenId = ref<number | null>(null)
 let cloudTokenRequestId = 0
 
 const isBusinessSuccess = (response: { code: number }) => response.code === 200
-const isValidListTotal = (value: unknown): value is number => {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
-}
-
-const getListItems = <T,>(value: unknown): T[] | null => {
-  if (!value || typeof value !== 'object') {
-    return null
-  }
-
-  const items = (value as { data?: unknown }).data
-
-  return Array.isArray(items) ? (items as T[]) : null
-}
-
-const getListTotal = (value: unknown): number | null => {
-  if (!value || typeof value !== 'object') {
-    return null
-  }
-
-  const total = (value as { total?: unknown }).total
-
-  return isValidListTotal(total) ? total : null
-}
-
 const isBatchDispatchResponse = (result: unknown): result is BatchDispatchResponse => {
   if (!result || typeof result !== 'object') {
     return false
@@ -771,7 +748,14 @@ const loadCloudTokenOptions = (requestId: number) => {
       }
 
       if (isBusinessSuccess(response) && response.data) {
-        cloudTokenOptions.value = response.data.data.map((token) => ({
+        const items = getListItems<Models.CloudToken>(response.data)
+        if (!items) {
+          message.error('获取令牌列表失败：响应数据格式异常')
+
+          return false
+        }
+
+        cloudTokenOptions.value = items.map((token) => ({
           label: token.name,
           value: token.id,
         }))

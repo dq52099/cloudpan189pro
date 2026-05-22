@@ -70,6 +70,7 @@ import {
 import { PeopleOutline, TrashOutline, CreateOutline, LinkOutline } from '@vicons/ionicons5'
 import { getUserGroupList, deleteUserGroup } from '@/api/usergroup'
 import { AddUserGroupModal, ModifyUserGroupNameModal, BindFilesModal } from '@/components/usergroup'
+import { getListItems, getListTotal } from '@/utils/pagination'
 import { formatDateTime } from '@/utils/time'
 
 // 表格数据
@@ -127,8 +128,21 @@ const fetchUserGroupList = () => {
       if (currentRequestId !== userGroupListRequestId) return
 
       if (response.code === 200 && response.data) {
-        tableData.value = response.data.data || []
-        paginationReactive.itemCount = response.data.total || 0
+        const items = getListItems<Models.UserGroup>(response.data)
+        const total = getListTotal(response.data)
+
+        if (!items) {
+          message.error('获取用户组列表失败：响应数据格式异常')
+
+          return
+        }
+
+        tableData.value = items
+        if (total === null) {
+          message.warning('用户组列表响应缺少有效总数，已保留原分页统计')
+        } else {
+          paginationReactive.itemCount = total
+        }
       }
     })
     .catch((error) => {

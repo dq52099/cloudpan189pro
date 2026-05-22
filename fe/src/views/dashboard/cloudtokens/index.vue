@@ -129,8 +129,9 @@ import {
   KeyOutline,
 } from '@vicons/ionicons5'
 import { getCloudTokenList, deleteCloudToken, modifyCloudTokenName } from '@/api/cloudtoken'
-import { formatRemainingTime, formatDateTime } from '@/utils/time'
 import { QrcodeLoginModal, PasswordLoginModal } from '@/components/cloudtoken'
+import { getListItems, getListTotal } from '@/utils/pagination'
+import { formatRemainingTime, formatDateTime } from '@/utils/time'
 
 // 表格数据
 const tableData = ref<Models.CloudToken[]>([])
@@ -342,8 +343,21 @@ const fetchTokenList = () => {
       }
 
       if (response.code === 200 && response.data) {
-        tableData.value = response.data.data || []
-        paginationReactive.itemCount = response.data.total || 0
+        const items = getListItems<Models.CloudToken>(response.data)
+        const total = getListTotal(response.data)
+
+        if (!items) {
+          message.error('获取令牌列表失败：响应数据格式异常')
+
+          return
+        }
+
+        tableData.value = items
+        if (total === null) {
+          message.warning('令牌列表响应缺少有效总数，已保留原分页统计')
+        } else {
+          paginationReactive.itemCount = total
+        }
       }
     })
     .catch((error) => {

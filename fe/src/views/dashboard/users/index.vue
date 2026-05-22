@@ -77,6 +77,7 @@ import {
 } from '@vicons/ionicons5'
 import { getUserList, deleteUser, toggleUserStatus } from '@/api/user'
 import { AddUserModal, ResetPasswordModal, BindGroupModal } from '@/components/user'
+import { getListItems, getListTotal } from '@/utils/pagination'
 import { formatDateTime } from '@/utils/time'
 
 // 表格数据
@@ -134,8 +135,21 @@ const fetchUserList = () => {
       if (currentRequestId !== userListRequestId) return
 
       if (response.code === 200 && response.data) {
-        tableData.value = response.data.data || []
-        paginationReactive.itemCount = response.data.total || 0
+        const items = getListItems<Models.UserInfo>(response.data)
+        const total = getListTotal(response.data)
+
+        if (!items) {
+          message.error('获取用户列表失败：响应数据格式异常')
+
+          return
+        }
+
+        tableData.value = items
+        if (total === null) {
+          message.warning('用户列表响应缺少有效总数，已保留原分页统计')
+        } else {
+          paginationReactive.itemCount = total
+        }
       }
     })
     .catch((error) => {
