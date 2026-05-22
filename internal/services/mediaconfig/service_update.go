@@ -36,6 +36,10 @@ func (s *service) Update(ctx context.Context, fields ...utils.Field) error {
 			return result.Error
 		}
 
+		if err := checkMediaConfigUpdateResult(ctx, tx, result, cfg.ID); err != nil {
+			return err
+		}
+
 		// 回查写入，按原 ID 查询，避免多配置记录时同步到错误记录。
 		if err := tx.First(updatedCfg, "id = ?", cfg.ID).Error; err != nil {
 			ctx.Error("媒体配置回查写入失败", zap.Error(err), zap.Int64("id", cfg.ID))
@@ -50,6 +54,31 @@ func (s *service) Update(ctx context.Context, fields ...utils.Field) error {
 	}
 
 	shared.MediaConfig = updatedCfg
+
+	return nil
+}
+
+func checkMediaConfigUpdateResult(ctx context.Context, db *gorm.DB, result *gorm.DB, id int64) error {
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected != 0 {
+		return nil
+	}
+
+	var count int64
+	if err := db.Model(new(models.MediaConfig)).Where("id = ?", id).Count(&count).Error; err != nil {
+		ctx.Error("确认媒体配置是否存在失败", zap.Error(err), zap.Int64("id", id))
+
+		return err
+	}
+
+	if count == 0 {
+		ctx.Error("媒体配置更新失败，记录不存在", zap.Int64("id", id))
+
+		return gorm.ErrRecordNotFound
+	}
 
 	return nil
 }

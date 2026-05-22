@@ -163,7 +163,92 @@ func migrateMountPoints(src, dst *gorm.DB) error {
 }
 
 func migrateUserMountPointTokens(src, dst *gorm.DB) error {
-	return migrateRows[models.UserMountPointToken](src, dst, new(models.UserMountPointToken).TableName())
+	var rows []models.UserMountPointToken
+	if err := findSourceRows(src, &rows); err != nil {
+		return err
+	}
+
+	rows = dedupeUserMountPointTokenRows(rows)
+	if len(rows) == 0 {
+		return nil
+	}
+
+	if err := upsertUserMountPointTokenRows(dst, rows); err != nil {
+		return err
+	}
+
+	return resetPostgresSequence(dst, new(models.UserMountPointToken).TableName())
+}
+
+func upsertUserMountPointTokenRows(dst *gorm.DB, rows []models.UserMountPointToken) error {
+	for i := range rows {
+		row := rows[i]
+
+		var existing models.UserMountPointToken
+
+		err := dst.
+			Where("user_id = ? AND mount_point_id = ?", row.UserID, row.MountPointID).
+			Take(&existing).Error
+		if err == nil {
+			if err := dst.Model(new(models.UserMountPointToken)).
+				Where("id = ?", existing.ID).
+				Updates(map[string]any{
+					"token_id":   row.TokenID,
+					"updated_at": row.UpdatedAt,
+				}).Error; err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+
+		if err := dst.Clauses(clause.OnConflict{UpdateAll: true}).Create(&row).Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func dedupeUserMountPointTokenRows(rows []models.UserMountPointToken) []models.UserMountPointToken {
+	if len(rows) <= 1 {
+		return rows
+	}
+
+	type key struct {
+		userID       int64
+		mountPointID int64
+	}
+
+	kept := make(map[key]models.UserMountPointToken, len(rows))
+	order := make([]key, 0, len(rows))
+
+	for _, row := range rows {
+		k := key{userID: row.UserID, mountPointID: row.MountPointID}
+
+		current, ok := kept[k]
+		if !ok {
+			order = append(order, k)
+			kept[k] = row
+
+			continue
+		}
+
+		if row.ID > current.ID {
+			kept[k] = row
+		}
+	}
+
+	result := make([]models.UserMountPointToken, 0, len(kept))
+	for _, k := range order {
+		result = append(result, kept[k])
+	}
+
+	return result
 }
 
 func migrateTelegramSettings(src, dst *gorm.DB) error {

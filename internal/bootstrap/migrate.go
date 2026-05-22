@@ -57,6 +57,10 @@ func (sc *SubConfig) Scan(value interface{}) error {
 }
 
 func migrateDB(db *gorm.DB) (err error) {
+	if err := dedupeUserMountPointTokens(db); err != nil {
+		return err
+	}
+
 	return db.AutoMigrate(
 		new(models.Setting),
 		new(models.User),
@@ -79,6 +83,38 @@ func migrateDB(db *gorm.DB) (err error) {
 		new(models.DailyHotHistory),
 		new(SystemSetting),
 	)
+}
+
+type duplicatedUserMountPointTokenKey struct {
+	UserID       int64
+	MountPointID int64
+	KeepID       int64
+	Count        int64
+}
+
+func dedupeUserMountPointTokens(db *gorm.DB) error {
+	if !db.Migrator().HasTable(new(models.UserMountPointToken)) {
+		return nil
+	}
+
+	var duplicates []duplicatedUserMountPointTokenKey
+	if err := db.Model(new(models.UserMountPointToken)).
+		Select("user_id, mount_point_id, MAX(id) AS keep_id, COUNT(*) AS count").
+		Group("user_id, mount_point_id").
+		Having("COUNT(*) > 1").
+		Scan(&duplicates).Error; err != nil {
+		return err
+	}
+
+	for _, duplicate := range duplicates {
+		if err := db.
+			Where("user_id = ? AND mount_point_id = ? AND id <> ?", duplicate.UserID, duplicate.MountPointID, duplicate.KeepID).
+			Delete(new(models.UserMountPointToken)).Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 var (

@@ -209,6 +209,27 @@ func TestUpdateReturnsNotFoundWithoutSyncingSharedSetting(t *testing.T) {
 	}
 }
 
+func TestCheckSettingUpdateResultAllowsExistingNoop(t *testing.T) {
+	tDB := setupSettingTestDB(t)
+	ctx := context.NewContext(stdctx.Background())
+
+	setting := createSetting(t, tDB.db)
+
+	if err := checkSettingUpdateResult(ctx, tDB.db, &gorm.DB{RowsAffected: 0}, setting.ID); err != nil {
+		t.Fatalf("expected existing no-op update to succeed, got %v", err)
+	}
+}
+
+func TestCheckSettingUpdateResultReturnsNotFoundWhenMissing(t *testing.T) {
+	tDB := setupSettingTestDB(t)
+	ctx := context.NewContext(stdctx.Background())
+
+	err := checkSettingUpdateResult(ctx, tDB.db, &gorm.DB{RowsAffected: 0}, 99999)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected record not found, got %v", err)
+	}
+}
+
 func TestInitSystemRejectsInvalidRequestWithoutSyncingSharedSetting(t *testing.T) {
 	restoreSharedSetting(t)
 

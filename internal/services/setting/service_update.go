@@ -37,6 +37,10 @@ func (s *service) Update(ctx context.Context, fields ...utils.Field) error {
 			return result.Error
 		}
 
+		if err := checkSettingUpdateResult(ctx, tx, result, setting.ID); err != nil {
+			return err
+		}
+
 		if err := tx.First(updatedSetting, "id = ?", setting.ID).Error; err != nil {
 			ctx.Error("设置回查写入失败", zap.Error(err), zap.Int64("id", setting.ID))
 
@@ -50,6 +54,31 @@ func (s *service) Update(ctx context.Context, fields ...utils.Field) error {
 	}
 
 	syncSharedSetting(updatedSetting)
+
+	return nil
+}
+
+func checkSettingUpdateResult(ctx context.Context, db *gorm.DB, result *gorm.DB, id int64) error {
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected != 0 {
+		return nil
+	}
+
+	var count int64
+	if err := db.Model(new(models.Setting)).Where("id = ?", id).Count(&count).Error; err != nil {
+		ctx.Error("确认设置是否存在失败", zap.Error(err), zap.Int64("id", id))
+
+		return err
+	}
+
+	if count == 0 {
+		ctx.Error("设置更新失败，记录不存在", zap.Int64("id", id))
+
+		return gorm.ErrRecordNotFound
+	}
 
 	return nil
 }

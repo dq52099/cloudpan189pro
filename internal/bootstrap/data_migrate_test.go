@@ -3,11 +3,25 @@ package bootstrap
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"gorm.io/gorm"
 )
+
+type legacyUserMountPointToken struct {
+	ID           int64     `gorm:"primaryKey;autoIncrement"`
+	UserID       int64     `gorm:"column:user_id;type:bigint;not null;index"`
+	MountPointID int64     `gorm:"column:mount_point_id;type:bigint;not null;index"`
+	TokenID      int64     `gorm:"column:token_id;type:bigint;not null"`
+	CreatedAt    time.Time `gorm:"column:created_at;autoCreateTime;type:timestamp"`
+	UpdatedAt    time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp"`
+}
+
+func (legacyUserMountPointToken) TableName() string {
+	return new(models.UserMountPointToken).TableName()
+}
 
 func openMigrationTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -85,6 +99,108 @@ func TestMigrateSettingsMarksInitializedWhenUsersExist(t *testing.T) {
 
 	if !got.Initialized {
 		t.Fatalf("expected setting to be initialized after migrating existing users: %+v", got)
+	}
+}
+
+func TestDedupeUserMountPointTokenRowsKeepsLatestID(t *testing.T) {
+	rows := []models.UserMountPointToken{
+		{ID: 1, UserID: 1, MountPointID: 10, TokenID: 100},
+		{ID: 3, UserID: 1, MountPointID: 10, TokenID: 300},
+		{ID: 2, UserID: 2, MountPointID: 10, TokenID: 200},
+	}
+
+	got := dedupeUserMountPointTokenRows(rows)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 rows, got %d: %#v", len(got), got)
+	}
+
+	if got[0].ID != 3 || got[0].TokenID != 300 {
+		t.Fatalf("expected first key to keep latest row, got %#v", got[0])
+	}
+
+	if got[1].ID != 2 || got[1].TokenID != 200 {
+		t.Fatalf("expected unrelated binding preserved, got %#v", got[1])
+	}
+}
+
+func TestMigrateUserMountPointTokensDedupesLegacyRows(t *testing.T) {
+	src := openMigrationTestDB(t)
+	dst := openMigrationTestDB(t)
+
+	if err := src.AutoMigrate(&legacyUserMountPointToken{}); err != nil {
+		t.Fatalf("migrate source schema: %v", err)
+	}
+
+	if err := dst.AutoMigrate(&models.UserMountPointToken{}); err != nil {
+		t.Fatalf("migrate destination schema: %v", err)
+	}
+
+	rows := []legacyUserMountPointToken{
+		{ID: 1, UserID: 1, MountPointID: 10, TokenID: 100},
+		{ID: 3, UserID: 1, MountPointID: 10, TokenID: 300},
+		{ID: 2, UserID: 2, MountPointID: 10, TokenID: 200},
+	}
+	if err := src.Create(&rows).Error; err != nil {
+		t.Fatalf("seed legacy user mount point tokens: %v", err)
+	}
+
+	if err := migrateUserMountPointTokens(src, dst); err != nil {
+		t.Fatalf("migrate user mount point tokens: %v", err)
+	}
+
+	var got []models.UserMountPointToken
+	if err := dst.Order("id").Find(&got).Error; err != nil {
+		t.Fatalf("query migrated user mount point tokens: %v", err)
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("expected 2 migrated rows, got %d: %#v", len(got), got)
+	}
+
+	if got[0].ID != 2 || got[0].TokenID != 200 {
+		t.Fatalf("expected first migrated row to be ID 2, got %#v", got[0])
+	}
+
+	if got[1].ID != 3 || got[1].TokenID != 300 {
+		t.Fatalf("expected duplicate key to keep ID 3, got %#v", got[1])
+	}
+}
+
+func TestMigrateDBDedupesUserMountPointTokensBeforeUniqueIndex(t *testing.T) {
+	db := openMigrationTestDB(t)
+
+	if err := db.AutoMigrate(&legacyUserMountPointToken{}); err != nil {
+		t.Fatalf("migrate legacy binding schema: %v", err)
+	}
+
+	rows := []legacyUserMountPointToken{
+		{ID: 1, UserID: 1, MountPointID: 10, TokenID: 100},
+		{ID: 2, UserID: 1, MountPointID: 10, TokenID: 200},
+	}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatalf("seed duplicate legacy bindings: %v", err)
+	}
+
+	if err := migrateDB(db); err != nil {
+		t.Fatalf("migrate db: %v", err)
+	}
+
+	var count int64
+	if err := db.Model(&models.UserMountPointToken{}).Where("user_id = ? AND mount_point_id = ?", 1, 10).Count(&count).Error; err != nil {
+		t.Fatalf("count migrated bindings: %v", err)
+	}
+
+	if count != 1 {
+		t.Fatalf("expected duplicate bindings to be deduped, got %d", count)
+	}
+
+	err := db.Create(&models.UserMountPointToken{
+		UserID:       1,
+		MountPointID: 10,
+		TokenID:      300,
+	}).Error
+	if err == nil {
+		t.Fatal("expected unique index to reject duplicate binding after migrate")
 	}
 }
 

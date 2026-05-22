@@ -278,3 +278,24 @@ func TestUpdateReturnsNotFoundWithoutSyncingSharedMediaConfig(t *testing.T) {
 		t.Fatalf("expected shared media config unchanged, got %#v", shared.MediaConfig)
 	}
 }
+
+func TestCheckMediaConfigUpdateResultAllowsExistingNoop(t *testing.T) {
+	tDB := setupMediaConfigTestDB(t)
+	ctx := context.NewContext(stdctx.Background())
+
+	cfg := createMediaConfig(t, tDB.db)
+
+	if err := checkMediaConfigUpdateResult(ctx, tDB.db, &gorm.DB{RowsAffected: 0}, cfg.ID); err != nil {
+		t.Fatalf("expected existing no-op update to succeed, got %v", err)
+	}
+}
+
+func TestCheckMediaConfigUpdateResultReturnsNotFoundWhenMissing(t *testing.T) {
+	tDB := setupMediaConfigTestDB(t)
+	ctx := context.NewContext(stdctx.Background())
+
+	err := checkMediaConfigUpdateResult(ctx, tDB.db, &gorm.DB{RowsAffected: 0}, 99999)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected record not found, got %v", err)
+	}
+}

@@ -215,13 +215,12 @@ func TestUnbindTokenRejectsInvalidIDWithoutDeletingExistingBinding(t *testing.T)
 	}
 }
 
-func TestBindTokenReplacesDuplicateBindingsWithSingleBinding(t *testing.T) {
+func TestBindTokenUpsertsExistingBinding(t *testing.T) {
 	tDB := setupUserMountPointTokenTestDB(t)
 	svc := NewService(tDB)
 	ctx := context.NewContext(stdctx.Background())
 
 	createBinding(t, tDB.db, 1, 10, 100)
-	createBinding(t, tDB.db, 1, 10, 200)
 	createBinding(t, tDB.db, 2, 10, 300)
 
 	if err := svc.BindToken(ctx, 1, 10, 999); err != nil {
@@ -243,6 +242,21 @@ func TestBindTokenReplacesDuplicateBindingsWithSingleBinding(t *testing.T) {
 
 	if count := countBindings(t, tDB.db, "user_id = ? AND mount_point_id = ?", 2, 10); count != 1 {
 		t.Fatalf("expected other user's binding to remain, got count %d", count)
+	}
+}
+
+func TestBindTokenRejectsDuplicateUserMountPointRows(t *testing.T) {
+	tDB := setupUserMountPointTokenTestDB(t)
+
+	createBinding(t, tDB.db, 1, 10, 100)
+
+	err := tDB.db.Create(&models.UserMountPointToken{
+		UserID:       1,
+		MountPointID: 10,
+		TokenID:      200,
+	}).Error
+	if err == nil {
+		t.Fatal("expected unique user mount point binding to reject duplicates")
 	}
 }
 

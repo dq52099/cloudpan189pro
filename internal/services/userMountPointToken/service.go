@@ -11,6 +11,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Service interface {
@@ -50,18 +51,17 @@ func (s *service) BindToken(ctx context.Context, userID, mountPointID, tokenID i
 		return errInvalidBindTokenID
 	}
 
-	if err := s.getDB(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("user_id = ? AND mount_point_id = ?", userID, mountPointID).
-			Delete(new(models.UserMountPointToken)).Error; err != nil {
-			return err
-		}
-
-		return tx.Create(&models.UserMountPointToken{
-			UserID:       userID,
-			MountPointID: mountPointID,
-			TokenID:      tokenID,
-		}).Error
-	}); err != nil {
+	if err := s.getDB(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{
+			{Name: "user_id"},
+			{Name: "mount_point_id"},
+		},
+		DoUpdates: clause.AssignmentColumns([]string{"token_id", "updated_at"}),
+	}).Create(&models.UserMountPointToken{
+		UserID:       userID,
+		MountPointID: mountPointID,
+		TokenID:      tokenID,
+	}).Error; err != nil {
 		ctx.Error("绑定用户挂载点令牌失败", zap.Error(err))
 
 		return err
