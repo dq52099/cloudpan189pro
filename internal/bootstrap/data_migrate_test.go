@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,29 @@ func (legacyUserMountPointToken) TableName() string {
 	return new(models.UserMountPointToken).TableName()
 }
 
+type legacyUserGroupNaturalKey struct {
+	ID        int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	Name      string    `gorm:"column:name;type:varchar(255);not null"`
+	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime;type:timestamp"`
+	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp"`
+}
+
+func (legacyUserGroupNaturalKey) TableName() string {
+	return new(models.UserGroup).TableName()
+}
+
+type legacyVirtualFileNaturalKey struct {
+	ID        int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	ParentID  int64     `gorm:"column:parent_id;type:bigint;not null;default:0"`
+	Name      string    `gorm:"column:name;type:varchar(1024);not null"`
+	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime;type:timestamp"`
+	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp"`
+}
+
+func (legacyVirtualFileNaturalKey) TableName() string {
+	return new(models.VirtualFile).TableName()
+}
+
 func openMigrationTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
@@ -36,6 +60,91 @@ func openMigrationTestDB(t *testing.T) *gorm.DB {
 	})
 
 	return db
+}
+
+func TestPreflightSQLiteNaturalUniqueKeysSkipsMissingTables(t *testing.T) {
+	src := openMigrationTestDB(t)
+
+	if err := preflightSQLiteNaturalUniqueKeys(src); err != nil {
+		t.Fatalf("expected missing source tables to be skipped, got %v", err)
+	}
+}
+
+func TestPreflightSQLiteNaturalUniqueKeysRejectsDuplicateUserGroupNames(t *testing.T) {
+	src := openMigrationTestDB(t)
+
+	if err := src.AutoMigrate(&legacyUserGroupNaturalKey{}); err != nil {
+		t.Fatalf("migrate legacy user group schema: %v", err)
+	}
+
+	rows := []legacyUserGroupNaturalKey{
+		{ID: 7, Name: "admins"},
+		{ID: 3, Name: "admins"},
+	}
+	if err := src.Create(&rows).Error; err != nil {
+		t.Fatalf("seed duplicate user groups: %v", err)
+	}
+
+	err := preflightSQLiteNaturalUniqueKeys(src)
+
+	var conflictErr *migrationNaturalUniqueConflictError
+	if !errors.As(err, &conflictErr) {
+		t.Fatalf("expected natural unique conflict error, got %v", err)
+	}
+
+	if len(conflictErr.conflicts) != 1 {
+		t.Fatalf("expected one conflict, got %#v", conflictErr.conflicts)
+	}
+
+	conflict := conflictErr.conflicts[0]
+	if conflict.table != new(models.UserGroup).TableName() ||
+		conflict.key != `name="admins"` ||
+		len(conflict.ids) != 2 ||
+		conflict.ids[0] != 3 ||
+		conflict.ids[1] != 7 {
+		t.Fatalf("unexpected conflict: %#v", conflict)
+	}
+
+	if !strings.Contains(err.Error(), "user_groups") || !strings.Contains(err.Error(), "ids=[3 7]") {
+		t.Fatalf("expected conflict details in error message, got %v", err)
+	}
+}
+
+func TestPreflightSQLiteNaturalUniqueKeysRejectsSanitizedVirtualFileNameCollisions(t *testing.T) {
+	src := openMigrationTestDB(t)
+
+	if err := src.AutoMigrate(&legacyVirtualFileNaturalKey{}); err != nil {
+		t.Fatalf("migrate legacy virtual file schema: %v", err)
+	}
+
+	rows := []legacyVirtualFileNaturalKey{
+		{ID: 11, ParentID: 5, Name: "movie:a"},
+		{ID: 12, ParentID: 5, Name: "movie?a"},
+		{ID: 13, ParentID: 6, Name: "movie:a"},
+	}
+	if err := src.Create(&rows).Error; err != nil {
+		t.Fatalf("seed virtual files: %v", err)
+	}
+
+	err := preflightSQLiteNaturalUniqueKeys(src)
+
+	var conflictErr *migrationNaturalUniqueConflictError
+	if !errors.As(err, &conflictErr) {
+		t.Fatalf("expected natural unique conflict error, got %v", err)
+	}
+
+	if len(conflictErr.conflicts) != 1 {
+		t.Fatalf("expected one conflict, got %#v", conflictErr.conflicts)
+	}
+
+	conflict := conflictErr.conflicts[0]
+	if conflict.table != new(models.VirtualFile).TableName() ||
+		conflict.key != `parent_id=5,name="movie_a"` ||
+		len(conflict.ids) != 2 ||
+		conflict.ids[0] != 11 ||
+		conflict.ids[1] != 12 {
+		t.Fatalf("unexpected conflict: %#v", conflict)
+	}
 }
 
 func TestMigrateUsersPreservesPrimaryKeysAndUpserts(t *testing.T) {

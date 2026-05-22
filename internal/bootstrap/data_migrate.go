@@ -4,10 +4,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/glebarez/sqlite"
 	"github.com/xxcheng123/cloudpan189-share/internal/configs"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -21,6 +23,25 @@ const dataMigrationBatchSize = 1000
 type dataMigrationStep struct {
 	name string
 	run  func(*gorm.DB) error
+}
+
+type migrationNaturalUniqueConflict struct {
+	table string
+	key   string
+	ids   []int64
+}
+
+type migrationNaturalUniqueConflictError struct {
+	conflicts []migrationNaturalUniqueConflict
+}
+
+func (e *migrationNaturalUniqueConflictError) Error() string {
+	parts := make([]string, 0, len(e.conflicts))
+	for _, conflict := range e.conflicts {
+		parts = append(parts, fmt.Sprintf("%s %s ids=%v", conflict.table, conflict.key, conflict.ids))
+	}
+
+	return "SQLite 源数据存在自然唯一键冲突，无法安全自动合并，请先清理源数据: " + strings.Join(parts, "; ")
 }
 
 func MigrateFromSQLite(cfg *configs.Config) error {
@@ -37,6 +58,10 @@ func MigrateFromSQLite(cfg *configs.Config) error {
 
 	if err := sqliteDB.Exec("PRAGMA encoding = 'UTF-8'").Error; err != nil {
 		return fmt.Errorf("failed to set SQLite encoding: %w", err)
+	}
+
+	if err := preflightSQLiteNaturalUniqueKeys(sqliteDB); err != nil {
+		return err
 	}
 
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=Asia/Shanghai",
@@ -89,6 +114,216 @@ func MigrateFromSQLite(cfg *configs.Config) error {
 	}
 
 	return runDataMigrationSteps(pgDB, steps)
+}
+
+func preflightSQLiteNaturalUniqueKeys(src *gorm.DB) error {
+	checks := []func(*gorm.DB) ([]migrationNaturalUniqueConflict, error){
+		checkUserNaturalUniqueKeys,
+		checkUserGroupNaturalUniqueKeys,
+		checkVirtualFileNaturalUniqueKeys,
+		checkMountPointNaturalUniqueKeys,
+		checkMediaFileNaturalUniqueKeys,
+		checkTelegramUserNaturalUniqueKeys,
+		checkSystemSettingNaturalUniqueKeys,
+	}
+
+	conflicts := make([]migrationNaturalUniqueConflict, 0)
+
+	for _, check := range checks {
+		found, err := check(src)
+		if err != nil {
+			return err
+		}
+
+		conflicts = append(conflicts, found...)
+	}
+
+	if len(conflicts) == 0 {
+		return nil
+	}
+
+	sort.Slice(conflicts, func(i, j int) bool {
+		if conflicts[i].table == conflicts[j].table {
+			return conflicts[i].key < conflicts[j].key
+		}
+
+		return conflicts[i].table < conflicts[j].table
+	})
+
+	return &migrationNaturalUniqueConflictError{conflicts: conflicts}
+}
+
+type userNaturalKeyRow struct {
+	ID       int64  `gorm:"column:id"`
+	Username string `gorm:"column:username"`
+}
+
+type userGroupNaturalKeyRow struct {
+	ID   int64  `gorm:"column:id"`
+	Name string `gorm:"column:name"`
+}
+
+type virtualFileNaturalKeyRow struct {
+	ID       int64  `gorm:"column:id"`
+	ParentID int64  `gorm:"column:parent_id"`
+	Name     string `gorm:"column:name"`
+}
+
+type mountPointNaturalKeyRow struct {
+	ID     int64  `gorm:"column:id"`
+	FileID int64  `gorm:"column:file_id"`
+	Name   string `gorm:"column:name"`
+}
+
+type mediaFileNaturalKeyRow struct {
+	ID   int64  `gorm:"column:id"`
+	Path string `gorm:"column:path"`
+}
+
+type telegramUserNaturalKeyRow struct {
+	ID     int64 `gorm:"column:id"`
+	UserID int64 `gorm:"column:user_id"`
+}
+
+type systemSettingNaturalKeyRow struct {
+	ID   int64  `gorm:"column:id"`
+	Name string `gorm:"column:name"`
+}
+
+func checkUserNaturalUniqueKeys(src *gorm.DB) ([]migrationNaturalUniqueConflict, error) {
+	var rows []userNaturalKeyRow
+
+	return collectNaturalUniqueConflicts(src,
+		new(models.User).TableName(),
+		[]string{"id", "username"},
+		&rows,
+		func(row userNaturalKeyRow) string { return fmt.Sprintf("username=%q", row.Username) },
+		func(row userNaturalKeyRow) int64 { return row.ID },
+	)
+}
+
+func checkUserGroupNaturalUniqueKeys(src *gorm.DB) ([]migrationNaturalUniqueConflict, error) {
+	var rows []userGroupNaturalKeyRow
+
+	return collectNaturalUniqueConflicts(src,
+		new(models.UserGroup).TableName(),
+		[]string{"id", "name"},
+		&rows,
+		func(row userGroupNaturalKeyRow) string { return fmt.Sprintf("name=%q", row.Name) },
+		func(row userGroupNaturalKeyRow) int64 { return row.ID },
+	)
+}
+
+func checkVirtualFileNaturalUniqueKeys(src *gorm.DB) ([]migrationNaturalUniqueConflict, error) {
+	var rows []virtualFileNaturalKeyRow
+
+	return collectNaturalUniqueConflicts(src,
+		new(models.VirtualFile).TableName(),
+		[]string{"id", "parent_id", "name"},
+		&rows,
+		func(row virtualFileNaturalKeyRow) string {
+			return fmt.Sprintf("parent_id=%d,name=%q", row.ParentID, utils.SanitizeFileName(row.Name))
+		},
+		func(row virtualFileNaturalKeyRow) int64 { return row.ID },
+	)
+}
+
+func checkMountPointNaturalUniqueKeys(src *gorm.DB) ([]migrationNaturalUniqueConflict, error) {
+	var rows []mountPointNaturalKeyRow
+
+	return collectNaturalUniqueConflicts(src,
+		new(models.MountPoint).TableName(),
+		[]string{"id", "file_id", "name"},
+		&rows,
+		func(row mountPointNaturalKeyRow) string {
+			return fmt.Sprintf("file_id=%d,name=%q", row.FileID, row.Name)
+		},
+		func(row mountPointNaturalKeyRow) int64 { return row.ID },
+	)
+}
+
+func checkMediaFileNaturalUniqueKeys(src *gorm.DB) ([]migrationNaturalUniqueConflict, error) {
+	var rows []mediaFileNaturalKeyRow
+
+	return collectNaturalUniqueConflicts(src,
+		new(models.MediaFile).TableName(),
+		[]string{"id", "path"},
+		&rows,
+		func(row mediaFileNaturalKeyRow) string { return fmt.Sprintf("path=%q", row.Path) },
+		func(row mediaFileNaturalKeyRow) int64 { return row.ID },
+	)
+}
+
+func checkTelegramUserNaturalUniqueKeys(src *gorm.DB) ([]migrationNaturalUniqueConflict, error) {
+	var rows []telegramUserNaturalKeyRow
+
+	return collectNaturalUniqueConflicts(src,
+		new(models.TelegramUser).TableName(),
+		[]string{"id", "user_id"},
+		&rows,
+		func(row telegramUserNaturalKeyRow) string { return fmt.Sprintf("user_id=%d", row.UserID) },
+		func(row telegramUserNaturalKeyRow) int64 { return row.ID },
+	)
+}
+
+func checkSystemSettingNaturalUniqueKeys(src *gorm.DB) ([]migrationNaturalUniqueConflict, error) {
+	var rows []systemSettingNaturalKeyRow
+
+	return collectNaturalUniqueConflicts(src,
+		new(SystemSetting).TableName(),
+		[]string{"id", "name"},
+		&rows,
+		func(row systemSettingNaturalKeyRow) string { return fmt.Sprintf("name=%q", row.Name) },
+		func(row systemSettingNaturalKeyRow) int64 { return row.ID },
+	)
+}
+
+func collectNaturalUniqueConflicts[T any](
+	src *gorm.DB,
+	tableName string,
+	columns []string,
+	rows *[]T,
+	keyFn func(T) string,
+	idFn func(T) int64,
+) ([]migrationNaturalUniqueConflict, error) {
+	if !src.Migrator().HasTable(tableName) {
+		return nil, nil
+	}
+
+	if err := src.Table(tableName).Select(strings.Join(columns, ", ")).Find(rows).Error; err != nil {
+		return nil, fmt.Errorf("检查%s自然唯一键失败: %w", tableName, err)
+	}
+
+	idsByKey := make(map[string][]int64, len(*rows))
+	for _, row := range *rows {
+		key := keyFn(row)
+		idsByKey[key] = append(idsByKey[key], idFn(row))
+	}
+
+	keys := make([]string, 0, len(idsByKey))
+	for key := range idsByKey {
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	conflicts := make([]migrationNaturalUniqueConflict, 0)
+
+	for _, key := range keys {
+		ids := idsByKey[key]
+		if len(ids) <= 1 {
+			continue
+		}
+
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+		conflicts = append(conflicts, migrationNaturalUniqueConflict{
+			table: tableName,
+			key:   key,
+			ids:   ids,
+		})
+	}
+
+	return conflicts, nil
 }
 
 func runDataMigrationSteps(dst *gorm.DB, steps []dataMigrationStep) error {
