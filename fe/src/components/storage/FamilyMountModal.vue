@@ -269,6 +269,7 @@ import type {
   FamilyInfo,
   GetFamilyListQuery,
 } from '@/api/storage/advance'
+import { getListItems } from '@/utils/pagination'
 import { OS_TYPES } from '@/utils/osType'
 import { useMountPointBind } from '@/composables/useMountPointBind'
 
@@ -396,7 +397,14 @@ const fetchTokenList = () => {
       }
 
       if (response.code === 200 && response.data) {
-        tokenState.tokens = response.data.data || []
+        const tokens = getListItems<Models.CloudToken>(response.data)
+        if (!tokens) {
+          message.error('获取令牌列表失败：响应数据格式异常')
+
+          return
+        }
+
+        tokenState.tokens = tokens
       } else {
         message.error(response.msg || '获取令牌列表失败')
       }
@@ -541,7 +549,13 @@ const fetchFamilyFiles = (parentId: string = '') => {
       }
 
       if (response.code === 200 && response.data) {
-        const files = response.data.data || []
+        const files = getListItems<FileNode>(response.data)
+        if (!files) {
+          message.error('获取家庭文件列表失败：响应数据格式异常')
+
+          return
+        }
+
         if (parentId === '') {
           fileState.files = files
           fileState.currentParentId = parentId

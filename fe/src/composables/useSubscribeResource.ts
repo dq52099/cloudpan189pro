@@ -2,6 +2,7 @@ import { reactive, computed, type Ref } from 'vue'
 import { getSubscribeUser, getSubscribeUserAll } from '@/api/storage/advance'
 import type { ShareResourceInfo, GetSubscribeUserResponse } from '@/api/storage/advance'
 import type { ApiResponse } from '@/utils/api'
+import { getListItems, getListTotal } from '@/utils/pagination'
 import type { MessageApi } from 'naive-ui'
 
 // 常量定义
@@ -73,9 +74,21 @@ export function useSubscribeResource(
       return false
     }
 
-    resourceState.userInfo = response.data
-    resourceState.list = response.data.data || []
-    resourcePagination.itemCount = response.data.total || 0
+    const items = getListItems<ShareResourceInfo>(response.data)
+    const total = getListTotal(response.data)
+    if (!items || total === null) {
+      message.error('获取用户资源失败：响应数据格式异常')
+
+      return false
+    }
+
+    resourceState.userInfo = {
+      ...response.data,
+      data: items,
+      total,
+    }
+    resourceState.list = items
+    resourcePagination.itemCount = total
 
     if (isInitialSearch) {
       resourcePagination.page = PAGINATION_CONFIG.DEFAULT_PAGE
@@ -182,13 +195,20 @@ export function useSubscribeResource(
         return false
       }
 
-      const total = response.data.total || 0
+      const items = getListItems<ShareResourceInfo>(response.data)
+      const total = getListTotal(response.data)
+      if (!items || total === null) {
+        message.error('获取全部资源失败：响应数据格式异常')
+
+        return false
+      }
+
       const pageSize = total > 0 ? total : PAGINATION_CONFIG.DEFAULT_PAGE_SIZE
 
-      resourceState.list = response.data.data || []
+      resourceState.list = items
       resourceState.userInfo = {
         name: response.data.name,
-        data: response.data.data || [],
+        data: items,
         total,
         currentPage: 1,
         pageSize,

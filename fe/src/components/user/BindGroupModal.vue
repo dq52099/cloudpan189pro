@@ -60,7 +60,8 @@ import {
   useMessage,
 } from 'naive-ui'
 import { bindUserGroup, type BindGroupRequest } from '@/api/user'
-import { getUserGroupList } from '@/api/usergroup'
+import { getUserGroupList, type UserGroupInfo } from '@/api/usergroup'
+import { getListItems } from '@/utils/pagination'
 
 interface Props {
   show: boolean
@@ -140,6 +141,13 @@ const fetchUserGroups = (currentOperation = operationVersion) => {
       }
 
       if (response.code === 200 && response.data) {
+        const groups = getListItems<UserGroupInfo>(response.data)
+        if (!groups) {
+          message.error('获取用户组列表失败：响应数据格式异常')
+
+          return
+        }
+
         // 添加默认用户组选项
         const options: SelectOption[] = [
           {
@@ -149,14 +157,12 @@ const fetchUserGroups = (currentOperation = operationVersion) => {
         ]
 
         // 添加其他用户组选项
-        if (response.data.data) {
-          response.data.data.forEach((group) => {
-            options.push({
-              label: group.name,
-              value: group.id,
-            })
+        groups.forEach((group) => {
+          options.push({
+            label: group.name,
+            value: group.id,
           })
-        }
+        })
 
         groupOptions.value = options
 

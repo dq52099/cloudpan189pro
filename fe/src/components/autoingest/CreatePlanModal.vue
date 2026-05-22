@@ -239,6 +239,7 @@ import {
   type CreateSubscribePlanResponse,
 } from '@/api/autoingest'
 import { type ApiResponse } from '@/utils/api'
+import { getListTotal } from '@/utils/pagination'
 
 const message = useMessage()
 
@@ -445,9 +446,16 @@ const handleParseSubscribe = () => {
       }
 
       if (res.code === 200 && res.data) {
+        const total = getListTotal(res.data)
+        if (total === null) {
+          message.error('解析失败：响应数据格式异常')
+
+          return
+        }
+
         parsedSubscribeUserId.value = subscribeUserId
         parsedUserName.value = res.data.name
-        parsedShareTotal.value = res.data.total
+        parsedShareTotal.value = total
         parsedLocked.value = true
         // 建议预填名称
         if (!detailForm.name) {

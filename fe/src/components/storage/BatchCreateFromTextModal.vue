@@ -74,6 +74,7 @@ import {
 } from 'naive-ui'
 import { getCloudTokenList } from '@/api/cloudtoken'
 import { batchParseStorageText, type BatchParseItem } from '@/api/storage'
+import { getListItems } from '@/utils/pagination'
 
 interface Emits {
   (e: 'parsed', payload: { items: BatchParseItem[]; token: number }): void
@@ -176,7 +177,14 @@ const fetchCloudTokens = async (currentOperation = operationVersion) => {
     }
 
     if (res.code === 200 && res.data) {
-      state.cloudTokens = res.data.data
+      const tokens = getListItems<Models.CloudToken>(res.data)
+      if (!tokens) {
+        message.error('获取云盘账号失败：响应数据格式异常')
+
+        return
+      }
+
+      state.cloudTokens = tokens
       if (state.cloudTokens.length === 1) formModel.cloudToken = state.cloudTokens[0].id
 
       return
