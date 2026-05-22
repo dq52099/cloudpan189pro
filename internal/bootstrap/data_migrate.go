@@ -121,7 +121,7 @@ func migrateAutoIngestLogs(src, dst *gorm.DB) error {
 
 func migrateSettings(src, dst *gorm.DB, userCount int64) error {
 	var settings []models.Setting
-	if err := findSourceRows(src, &settings); err != nil {
+	if err := findSourceRows(src, &settings, new(models.Setting).TableName()); err != nil {
 		return err
 	}
 
@@ -164,7 +164,7 @@ func migrateMountPoints(src, dst *gorm.DB) error {
 
 func migrateUserMountPointTokens(src, dst *gorm.DB) error {
 	var rows []models.UserMountPointToken
-	if err := findSourceRows(src, &rows); err != nil {
+	if err := findSourceRows(src, &rows, new(models.UserMountPointToken).TableName()); err != nil {
 		return err
 	}
 
@@ -277,7 +277,7 @@ func migrateSystemSettings(src, dst *gorm.DB) error {
 
 func migrateVirtualFiles(src, dst *gorm.DB) error {
 	var files []models.VirtualFile
-	if err := findSourceRows(src, &files); err != nil {
+	if err := findSourceRows(src, &files, new(models.VirtualFile).TableName()); err != nil {
 		return err
 	}
 
@@ -318,7 +318,7 @@ func runMigrationStep(name string, run func() error) error {
 
 func migrateRows[T any](src, dst *gorm.DB, tableName string) error {
 	var rows []T
-	if err := findSourceRows(src, &rows); err != nil {
+	if err := findSourceRows(src, &rows, tableName); err != nil {
 		return err
 	}
 
@@ -333,12 +333,12 @@ func migrateRows[T any](src, dst *gorm.DB, tableName string) error {
 	return resetPostgresSequence(dst, tableName)
 }
 
-func findSourceRows[T any](src *gorm.DB, rows *[]T) error {
-	if err := src.Find(rows).Error; err != nil {
-		if isMissingTableError(err) {
-			return errMissingSourceTable
-		}
+func findSourceRows[T any](src *gorm.DB, rows *[]T, tableName string) error {
+	if !src.Migrator().HasTable(tableName) {
+		return errMissingSourceTable
+	}
 
+	if err := src.Table(tableName).Find(rows).Error; err != nil {
 		return err
 	}
 
@@ -382,14 +382,6 @@ func closeGormDB(db *gorm.DB) {
 	}
 
 	_ = sqlDB.Close()
-}
-
-func isMissingTableError(err error) bool {
-	msg := strings.ToLower(err.Error())
-
-	return strings.Contains(msg, "no such table") ||
-		strings.Contains(msg, "does not exist") ||
-		strings.Contains(msg, "unknown table")
 }
 
 func quotePostgresIdentifier(identifier string) string {

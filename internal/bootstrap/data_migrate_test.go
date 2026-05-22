@@ -258,9 +258,40 @@ func TestFindSourceRowsReturnsMissingSourceTableSentinel(t *testing.T) {
 
 	var users []models.User
 
-	err := findSourceRows(src, &users)
+	err := findSourceRows(src, &users, new(models.User).TableName())
 	if !errors.Is(err, errMissingSourceTable) {
 		t.Fatalf("expected missing table sentinel, got %v", err)
+	}
+}
+
+func TestFindSourceRowsReturnsExistingTableQueryErrors(t *testing.T) {
+	src := openMigrationTestDB(t)
+
+	if err := src.Exec(`
+		CREATE TABLE system_settings (
+			id INTEGER PRIMARY KEY,
+			name TEXT,
+			value INTEGER,
+			created_at DATETIME,
+			updated_at DATETIME
+		)
+	`).Error; err != nil {
+		t.Fatalf("create malformed system settings table: %v", err)
+	}
+
+	if err := src.Exec("INSERT INTO system_settings (id, name, value) VALUES (?, ?, ?)", 1, "subscription_config", 123).Error; err != nil {
+		t.Fatalf("seed malformed system setting: %v", err)
+	}
+
+	var settings []SystemSetting
+
+	err := findSourceRows(src, &settings, new(SystemSetting).TableName())
+	if err == nil {
+		t.Fatal("expected existing table query/scan error")
+	}
+
+	if errors.Is(err, errMissingSourceTable) {
+		t.Fatalf("expected real query error, got missing table sentinel: %v", err)
 	}
 }
 
