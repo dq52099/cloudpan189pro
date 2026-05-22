@@ -83,15 +83,8 @@ func newServiceContext(c *configs.RuntimeConfig) (ServiceContext, error) {
 		return nil, err
 	}
 
-	// 从 SQLite 迁移数据到 PostgreSQL
-	if ShouldMigrateData(c.Config) {
-		fmt.Println("检测到 SQLite 数据，正在迁移到 PostgreSQL...")
-
-		if err := MigrateFromSQLite(c.Config); err != nil {
-			fmt.Printf("数据迁移失败: %v\n", err)
-		} else {
-			fmt.Println("数据迁移完成!")
-		}
+	if err = migrateSQLiteDataIfNeeded(c.Config, ShouldMigrateData, MigrateFromSQLite); err != nil {
+		return nil, err
 	}
 
 	// 初始化日志
@@ -139,6 +132,26 @@ func newServiceContext(c *configs.RuntimeConfig) (ServiceContext, error) {
 		taskEngine: taskEngine,
 		httpEngine: httpEngine,
 	}, nil
+}
+
+func migrateSQLiteDataIfNeeded(
+	cfg *configs.Config,
+	shouldMigrate func(*configs.Config) bool,
+	migrate func(*configs.Config) error,
+) error {
+	if !shouldMigrate(cfg) {
+		return nil
+	}
+
+	fmt.Println("检测到 SQLite 数据，正在迁移到 PostgreSQL...")
+
+	if err := migrate(cfg); err != nil {
+		return fmt.Errorf("数据迁移失败: %w", err)
+	}
+
+	fmt.Println("数据迁移完成!")
+
+	return nil
 }
 
 type mockServiceContext struct {
