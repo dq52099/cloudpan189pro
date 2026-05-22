@@ -13,7 +13,6 @@ on:
 
 env:
   APP_NAME: cloudpan189pro
-  DOCKERHUB_REPO: ${{ secrets.DOCKERHUB_USERNAME }}/cloudpan189pro
   MODULE_NAME: github.com/xxcheng123/cloudpan189-share
 
 jobs:
@@ -23,15 +22,35 @@ jobs:
       - name: 📥 Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
           fetch-depth: 0  # 获取完整的 git 历史，用于生成构建信息
 
+      - name: 🔍 Resolve DockerHub settings
+        id: dockerhub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "repo=${DOCKERHUB_USERNAME}/${{ env.APP_NAME }}" >> "$GITHUB_OUTPUT"
+            echo "✅ DockerHub credentials configured"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "repo=${{ env.APP_NAME }}" >> "$GITHUB_OUTPUT"
+            echo "::notice::DockerHub secrets are not configured; Docker image publish will be skipped."
+          fi
+
       - name: 🔧 Set up QEMU
+        if: steps.dockerhub.outputs.enabled == 'true'
         uses: docker/setup-qemu-action@v3
 
       - name: 🔧 Set up Docker Buildx
+        if: steps.dockerhub.outputs.enabled == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: 🔑 Login to DockerHub
+        if: steps.dockerhub.outputs.enabled == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -62,19 +81,21 @@ jobs:
           echo "  Git Branch: $(git rev-parse --abbrev-ref HEAD)"
 
       - name: 🏷️ Generate Docker tags
+        if: steps.dockerhub.outputs.enabled == 'true'
         id: tags
         run: |
           # 生成 Docker 标签
-          TAGS="${{ env.DOCKERHUB_REPO }}:${{ env.APP_VERSION }}"
+          DOCKER_REPO="${{ steps.dockerhub.outputs.repo }}"
+          TAGS="${DOCKER_REPO}:${{ env.APP_VERSION }}"
           
           # 检查是否为 alpha 版本
           if [[ "${{ env.APP_VERSION }}" == *"alpha"* ]]; then
             # Alpha 版本：添加 alpha 标签，不添加 latest
-            TAGS="${TAGS},${{ env.DOCKERHUB_REPO }}:alpha"
+            TAGS="${TAGS},${DOCKER_REPO}:alpha"
             echo "🔖 检测到 Alpha 版本，将发布为 alpha 标签"
           elif [[ "${{ env.APP_VERSION }}" != *"-"* ]]; then
             # 正式版本：添加 latest 标签
-            TAGS="${TAGS},${{ env.DOCKERHUB_REPO }}:latest"
+            TAGS="${TAGS},${DOCKER_REPO}:latest"
             echo "🔖 检测到正式版本，将发布为 latest 标签"
           else
             # 其他预发布版本：不添加额外标签
@@ -85,6 +106,7 @@ jobs:
           echo "Generated tags: ${TAGS}"
 
       - name: 🔨 Build and push
+        if: steps.dockerhub.outputs.enabled == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -101,20 +123,22 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: 🔍 Inspect multi-arch image
+        if: steps.dockerhub.outputs.enabled == 'true'
         run: |
           echo "🔍 检查多架构镜像信息..."
-          docker buildx imagetools inspect ${{ env.DOCKERHUB_REPO }}:${{ env.APP_VERSION }}
+          docker buildx imagetools inspect ${{ steps.dockerhub.outputs.repo }}:${{ env.APP_VERSION }}
 
       - name: 📋 Docker Image Info
+        if: steps.dockerhub.outputs.enabled == 'true'
         run: |
           echo "🎉 Docker 镜像构建完成！"
           echo ""
           echo "📦 镜像标签:"
-          echo "  - ${{ env.DOCKERHUB_REPO }}:${{ env.APP_VERSION }}"
+          echo "  - ${{ steps.dockerhub.outputs.repo }}:${{ env.APP_VERSION }}"
           if [[ "${{ env.APP_VERSION }}" == *"alpha"* ]]; then
-            echo "  - ${{ env.DOCKERHUB_REPO }}:alpha"
+            echo "  - ${{ steps.dockerhub.outputs.repo }}:alpha"
           elif [[ "${{ env.APP_VERSION }}" != *"-"* ]]; then
-            echo "  - ${{ env.DOCKERHUB_REPO }}:latest"
+            echo "  - ${{ steps.dockerhub.outputs.repo }}:latest"
           fi
           echo ""
           echo "🏗️ 支持的架构:"
@@ -137,10 +161,10 @@ jobs:
             echo "  -p 12395:12395 \\"
             echo "  -v \$(pwd)/data:/app/data \\"
             echo "  --restart unless-stopped \\"
-            echo "  ${{ env.DOCKERHUB_REPO }}:alpha"
+            echo "  ${{ steps.dockerhub.outputs.repo }}:alpha"
             echo ""
             echo "# 指定版本运行"
-            echo "docker run -d ${{ env.DOCKERHUB_REPO }}:${{ env.APP_VERSION }}"
+            echo "docker run -d ${{ steps.dockerhub.outputs.repo }}:${{ env.APP_VERSION }}"
           else
             echo "# 基本运行"
             echo "docker run -d \\"
@@ -149,16 +173,16 @@ jobs:
             echo "  -v \$(pwd)/data:/app/data \\"
             echo "  --restart unless-stopped \\"
             if [[ "${{ env.APP_VERSION }}" != *"-"* ]]; then
-              echo "  ${{ env.DOCKERHUB_REPO }}:latest"
+              echo "  ${{ steps.dockerhub.outputs.repo }}:latest"
             else
-              echo "  ${{ env.DOCKERHUB_REPO }}:${{ env.APP_VERSION }}"
+              echo "  ${{ steps.dockerhub.outputs.repo }}:${{ env.APP_VERSION }}"
             fi
             echo ""
             echo "# 指定架构运行"
             if [[ "${{ env.APP_VERSION }}" != *"-"* ]]; then
-              echo "docker run --platform linux/arm64 -d ${{ env.DOCKERHUB_REPO }}:latest"
+              echo "docker run --platform linux/arm64 -d ${{ steps.dockerhub.outputs.repo }}:latest"
             else
-              echo "docker run --platform linux/arm64 -d ${{ env.DOCKERHUB_REPO }}:${{ env.APP_VERSION }}"
+              echo "docker run --platform linux/arm64 -d ${{ steps.dockerhub.outputs.repo }}:${{ env.APP_VERSION }}"
             fi
           fi
           echo ""
@@ -166,7 +190,7 @@ jobs:
           echo "version: '3.8'"
           echo "services:"
           echo "  cloudpan189pro:"
-          echo "    image: ${{ env.DOCKERHUB_REPO }}:${{ env.APP_VERSION }}"
+          echo "    image: ${{ steps.dockerhub.outputs.repo }}:${{ env.APP_VERSION }}"
           echo "    container_name: ${{ env.APP_NAME }}"
           echo "    ports:"
           echo "      - \"12395:12395\""
@@ -175,3 +199,9 @@ jobs:
           echo "    restart: unless-stopped"
           echo "    environment:"
           echo "      - TZ=Asia/Shanghai"
+
+      - name: ℹ️ Docker publish skipped
+        if: steps.dockerhub.outputs.enabled != 'true'
+        run: |
+          echo "DockerHub secrets are not configured, so Docker image publish was skipped."
+          echo "Required secrets: DOCKERHUB_USERNAME and DOCKERHUB_TOKEN."

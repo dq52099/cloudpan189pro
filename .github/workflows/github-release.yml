@@ -29,11 +29,12 @@ jobs:
     steps:
       - name: 📥 检出代码
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
 
       - name: 🧩 安装 pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
           run_install: true
           package_json_file: fe/package.json
 
@@ -133,6 +134,7 @@ jobs:
       - name: 📥 检出代码
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
           fetch-depth: 0  # 获取完整历史，用于生成版本信息
 
       - name: 🔧 设置 Go ${{ env.GO_VERSION }}
@@ -314,6 +316,7 @@ jobs:
       - name: 📥 检出代码
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
           fetch-depth: 0
 
       - name: 📊 生成发布变量
