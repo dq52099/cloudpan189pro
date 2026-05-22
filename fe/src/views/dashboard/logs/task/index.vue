@@ -185,6 +185,7 @@ import { getFileLogList, clearTaskLogs } from '@/api/taskstate'
 import { formatDate } from '@/utils/format'
 import { getListItems, getListTotal } from '@/utils/pagination'
 import { normalizeFileTaskLogs } from '@/utils/responseGuards'
+import { getErrorMessage } from '@/utils/api'
 import {
   TASK_TYPE_OPTIONS,
   TASK_TYPE_TEXT_MAP,
@@ -388,7 +389,7 @@ const fetchTaskLogList = (silent = false) => {
       console.error('获取任务日志失败:', error)
       stopAutoRefresh()
       if (!silent) {
-        message.error(error?.message || '获取任务日志失败')
+        message.error(getErrorMessage(error, '获取任务日志失败'))
       }
     })
     .finally(() => {
@@ -464,7 +465,7 @@ const handleClearLogs = (key: string | number) => {
             return
           }
 
-          message.error(err?.message || '清空失败')
+          message.error(getErrorMessage(err, '清空失败'))
         })
         .finally(() => {
           if (isLatestClearRequest(requestId)) {

@@ -108,6 +108,7 @@ import {
 } from '@vicons/ionicons5'
 import { type FileChild, createDownloadUrl } from '@/api/file'
 import { formatDateTime } from '@/utils/time'
+import { normalizeCreateDownloadUrlResponse } from '@/utils/responseGuards'
 import VideoPlayer from './preview/VideoPlayer.vue'
 import ImageViewer from './preview/ImageViewer.vue'
 
@@ -195,8 +196,15 @@ const openWithPlayer = (player: string) => {
   // 获取当前文件的下载链接，然后用指定播放器打开
   createDownloadUrl({ fileId: props.fileInfo.id })
     .then((response) => {
-      if (response.code === 200 && response.data) {
-        const url = response.data.downloadUrl
+      if (response.code === 200) {
+        const data = normalizeCreateDownloadUrlResponse(response.data)
+        if (!data) {
+          message.error('获取播放链接失败：响应数据格式异常')
+
+          return
+        }
+
+        const url = data.downloadUrl
 
         // 根据不同播放器生成对应的协议链接
         let playerUrl = ''
@@ -270,9 +278,16 @@ const fallbackCopyToClipboard = (text: string) => {
 const downloadFile = () => {
   createDownloadUrl({ fileId: props.fileInfo.id })
     .then((response) => {
-      if (response.code === 200 && response.data) {
+      if (response.code === 200) {
+        const data = normalizeCreateDownloadUrlResponse(response.data)
+        if (!data) {
+          message.error('创建下载链接失败：响应数据格式异常')
+
+          return
+        }
+
         const link = document.createElement('a')
-        link.href = response.data.downloadUrl
+        link.href = data.downloadUrl
         link.download = props.fileInfo.name || 'download'
         document.body.appendChild(link)
         link.click()

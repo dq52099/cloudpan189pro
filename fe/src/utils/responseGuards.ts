@@ -6,7 +6,7 @@ import type {
   ShareInfo,
   ShareResourceInfo,
 } from '@/api/storage/advance'
-import type { FileSearchItem } from '@/api/file'
+import type { CreateDownloadUrlResponse, FileSearchItem } from '@/api/file'
 import type { ConfigInfoResponse } from '@/api/media'
 import type { CreateSubscribePlanResponse, PlanLogResult } from '@/api/autoingest'
 import type { StorageInfo } from '@/api/storage'
@@ -295,6 +295,21 @@ export const normalizeFileSearchItems = (value: unknown): FileSearchItem[] | nul
       isString(item.fullPath)
     )
   })
+}
+
+export const normalizeCreateDownloadUrlResponse = (
+  value: unknown
+): CreateDownloadUrlResponse | null => {
+  if (!isRecord(value) || !isString(value.downloadUrl)) {
+    return null
+  }
+
+  const downloadUrl = value.downloadUrl.trim()
+  if (!downloadUrl) {
+    return null
+  }
+
+  return { downloadUrl }
 }
 
 export const normalizeCloudTokens = (value: unknown): Models.CloudToken[] | null => {

@@ -678,6 +678,7 @@ import { getOsTypeDisplayName, getOsTypeColor, mountTypeConfigs } from '@/utils/
 import { getTaskStatusInfo } from '@/utils/taskStatus'
 import { getListItems, getListTotal } from '@/utils/pagination'
 import { normalizeCloudTokens, normalizeStorageInfos } from '@/utils/responseGuards'
+import { getErrorMessage } from '@/utils/api'
 import { useSubscribeMount } from '@/composables/useSubscribeMount'
 import { useShareMount } from '@/composables/useShareMount'
 import { usePersonMount } from '@/composables/usePersonMount'
@@ -782,7 +783,7 @@ const loadCloudTokenOptions = (requestId: number) => {
       }
 
       console.error('获取云盘令牌列表失败:', error)
-      message.error(error?.message || '获取令牌列表失败')
+      message.error(getErrorMessage(error, '获取令牌列表失败'))
       return false
     })
 }
@@ -1040,7 +1041,7 @@ const fetchStorageList = () => {
       }
 
       console.error('获取存储列表失败:', error)
-      message.error(error?.message || '获取存储列表失败')
+      message.error(getErrorMessage(error, '获取存储列表失败'))
     })
     .finally(() => {
       if (isPageMounted && requestId === storageListRequestId) {
@@ -1171,7 +1172,7 @@ const handleRefresh = (mountPointId: number, deep: boolean) => {
     })
     .catch((error) => {
       console.error('刷新存储失败:', error)
-      message.error(error?.message || '刷新失败')
+      message.error(getErrorMessage(error, '刷新失败'))
     })
 }
 
@@ -1197,7 +1198,7 @@ const handleDelete = (storage: StorageInfo) => {
         })
         .catch((error) => {
           console.error('删除存储失败:', error)
-          message.error(error?.message || '删除失败')
+          message.error(getErrorMessage(error, '删除失败'))
         })
     },
   })
@@ -1376,7 +1377,7 @@ const handleBatchDelete = () => {
           fetchStorageList()
         })
         .catch((error) => {
-          message.error(error?.message || '批量删除失败')
+          message.error(getErrorMessage(error, '批量删除失败'))
         })
         .finally(() => {
           batchSubmitting.value = false
@@ -1412,7 +1413,7 @@ const handleClearAll = () => {
           fetchStorageList()
         })
         .catch((error) => {
-          message.error(error?.message || '清空失败')
+          message.error(getErrorMessage(error, '清空失败'))
         })
     },
   })
@@ -1451,7 +1452,7 @@ const handleBatchRefresh = (deep: boolean) => {
           exitBatchMode()
         })
         .catch((error) => {
-          message.error(error?.message || `批量${refreshType}失败`)
+          message.error(getErrorMessage(error, `批量${refreshType}失败`))
         })
         .finally(() => {
           batchSubmitting.value = false
@@ -1517,7 +1518,7 @@ const handleBatchModifyTokenConfirm = () => {
       }
 
       console.error('批量修改令牌失败:', error)
-      message.error(error?.message || '批量修改令牌失败')
+      message.error(getErrorMessage(error, '批量修改令牌失败'))
     })
     .finally(() => {
       if (
@@ -1644,7 +1645,7 @@ const handleAutoRefreshConfirm = () => {
         }
 
         console.error('更新自动刷新配置失败:', error)
-        message.error(error?.message || '配置更新失败')
+        message.error(getErrorMessage(error, '配置更新失败'))
       })
       .finally(() => {
         if (
@@ -1854,7 +1855,7 @@ const handleModifyTokenConfirm = () => {
       }
 
       console.error('修改令牌失败:', error)
-      message.error(error?.message || '令牌修改失败')
+      message.error(getErrorMessage(error, '令牌修改失败'))
     })
     .finally(() => {
       if (

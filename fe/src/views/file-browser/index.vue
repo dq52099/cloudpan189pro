@@ -122,6 +122,7 @@ import {
   type FileSearchItem,
 } from '@/api/file'
 import { FileList, FileDetail, SearchFilesDialog } from '@/components/file-browser'
+import { normalizeCreateDownloadUrlResponse } from '@/utils/responseGuards'
 
 const route = useRoute()
 const router = useRouter()
@@ -399,9 +400,16 @@ const goBack = () => {
 const downloadFile = (file: FileChild) => {
   createDownloadUrl({ fileId: file.id })
     .then((response) => {
-      if (response.code === 200 && response.data) {
+      if (response.code === 200) {
+        const data = normalizeCreateDownloadUrlResponse(response.data)
+        if (!data) {
+          message.error('创建下载链接失败：响应数据格式异常')
+
+          return
+        }
+
         const link = document.createElement('a')
-        link.href = response.data.downloadUrl
+        link.href = data.downloadUrl
         link.download = file.name
         document.body.appendChild(link)
         link.click()

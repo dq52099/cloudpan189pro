@@ -97,6 +97,7 @@ import {
   DownloadOutline,
 } from '@vicons/ionicons5'
 import { createDownloadUrl, type FileChild } from '@/api/file'
+import { normalizeCreateDownloadUrlResponse } from '@/utils/responseGuards'
 
 // Props
 const props = defineProps<{
@@ -313,8 +314,18 @@ const initSource = () => {
         return
       }
 
-      if (res.code === 200 && res.data?.downloadUrl) {
-        innerImageUrl.value = res.data.downloadUrl
+      if (res.code === 200) {
+        const data = normalizeCreateDownloadUrlResponse(res.data)
+        if (!data) {
+          error.value = true
+          loading.value = false
+          errorMessage.value = '获取图片链接失败：响应数据格式异常'
+          message.error(errorMessage.value)
+
+          return
+        }
+
+        innerImageUrl.value = data.downloadUrl
         // 加载完成由 img 的 @load/@error 驱动
       } else {
         error.value = true

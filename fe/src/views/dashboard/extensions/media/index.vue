@@ -318,6 +318,7 @@ import {
   rebuildStrmFiles,
 } from '@/api/media'
 import { normalizeMediaConfigInfoResponse } from '@/utils/responseGuards'
+import { getErrorMessage } from '@/utils/api'
 
 const message = useMessage()
 const dialog = useDialog()
@@ -496,7 +497,7 @@ const reload = () => {
     .catch((err) => {
       if (!isCurrentConfigRequest(requestId)) return
 
-      message.error(err?.message || '获取媒体配置失败')
+      message.error(getErrorMessage(err, '获取媒体配置失败'))
     })
     .finally(() => {
       if (isCurrentConfigRequest(requestId)) {
@@ -538,7 +539,7 @@ const handleInit = () => {
     .catch((err) => {
       if (!isCurrentInitRequest(requestId)) return
 
-      message.error(err?.message || '初始化媒体配置失败')
+      message.error(getErrorMessage(err, '初始化媒体配置失败'))
     })
     .finally(() => {
       if (isCurrentInitRequest(requestId)) {
@@ -653,7 +654,7 @@ const handleSaveEdit = () => {
     .catch((err) => {
       if (!isCurrentEditRequest(requestId)) return
 
-      message.error(err?.message || '更新媒体配置失败')
+      message.error(getErrorMessage(err, '更新媒体配置失败'))
     })
     .finally(() => {
       if (isCurrentEditRequest(requestId)) {
@@ -690,7 +691,7 @@ const handleToggleEnable = (val: boolean) => {
     .catch((err) => {
       if (!isComponentMounted) return
 
-      message.error(err?.message || '切换媒体配置启用状态失败')
+      message.error(getErrorMessage(err, '切换媒体配置启用状态失败'))
       if (config.value) {
         config.value = { ...config.value, enable: previousEnable }
       }
@@ -735,7 +736,7 @@ const handleClearMedia = () => {
         .catch((err) => {
           if (!isComponentMounted) return
 
-          message.error(err?.message || '清理媒体文件失败')
+          message.error(getErrorMessage(err, '清理媒体文件失败'))
         })
         .finally(() => {
           if (isComponentMounted) {
@@ -803,7 +804,7 @@ const handleRebuildStrm = () => {
         .catch((err) => {
           if (!isComponentMounted) return
 
-          message.error(err?.message || '重建strm文件失败')
+          message.error(getErrorMessage(err, '重建strm文件失败'))
         })
         .finally(() => {
           if (isComponentMounted) {

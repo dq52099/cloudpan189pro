@@ -106,6 +106,7 @@ import { getLoginLogList, clearLoginLogs, type LoginLogListQuery } from '@/api/l
 import { formatDate } from '@/utils/format'
 import { getListItems, getListTotal } from '@/utils/pagination'
 import { normalizeLoginLogs } from '@/utils/responseGuards'
+import { getErrorMessage } from '@/utils/api'
 import {
   LOGIN_EVENT_OPTIONS,
   LOGIN_EVENT_TEXT_MAP,
@@ -330,7 +331,7 @@ const fetchList = () => {
       }
 
       console.error(err)
-      message.error(err?.message || '获取登录日志失败')
+      message.error(getErrorMessage(err, '获取登录日志失败'))
     })
     .finally(() => {
       if (isComponentMounted && requestId === loginLogListRequestId) {

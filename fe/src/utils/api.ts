@@ -22,6 +22,25 @@ const isRefreshTokenRequest = (url?: string) => url?.includes('/user/refresh_tok
 const getApiErrorMessage = (data: ApiResponse | undefined, fallback: string) =>
   data?.msg || fallback
 
+export const getErrorMessage = (error: unknown, fallback: string) => {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+
+  if (typeof error === 'string' && error.trim()) {
+    return error
+  }
+
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = (error as { message?: unknown }).message
+    if (typeof message === 'string' && message.trim()) {
+      return message
+    }
+  }
+
+  return fallback
+}
+
 // 创建 axios 实例
 export const api = axios.create({
   baseURL: '/api',

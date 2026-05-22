@@ -9,6 +9,7 @@ import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import 'plyr/dist/plyr.css'
 import { useMessage } from 'naive-ui'
 import { createDownloadUrl, type FileChild } from '@/api/file'
+import { normalizeCreateDownloadUrlResponse } from '@/utils/responseGuards'
 import type Plyr from 'plyr'
 import type Hls from 'hls.js'
 
@@ -49,8 +50,15 @@ const initSource = async () => {
     const res = await createDownloadUrl({ fileId: props.file.id })
     if (!isCurrentSource(requestId)) return
 
-    if (res.code === 200 && res.data?.downloadUrl) {
-      sourceUrl.value = res.data.downloadUrl
+    if (res.code === 200) {
+      const data = normalizeCreateDownloadUrlResponse(res.data)
+      if (!data) {
+        message.error('获取播放链接失败：响应数据格式异常')
+
+        return
+      }
+
+      sourceUrl.value = data.downloadUrl
       await setupPlayer(requestId)
     } else {
       message.error(res.msg || '获取播放链接失败')

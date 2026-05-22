@@ -87,11 +87,10 @@ export function useSubscribeResource(
     resourceState.userInfo = data
     resourceState.list = data.data
     resourcePagination.itemCount = data.total
+    resourcePagination.page = data.currentPage
+    resourcePagination.pageSize = data.pageSize
 
     if (isInitialSearch) {
-      resourcePagination.page = PAGINATION_CONFIG.DEFAULT_PAGE
-      resourcePagination.pageSize = PAGINATION_CONFIG.DEFAULT_PAGE_SIZE
-
       if (resourceState.list.length > 0) {
         message.success(`找到 ${resourcePagination.itemCount} 个资源`)
 
@@ -114,6 +113,12 @@ export function useSubscribeResource(
     allResourcesRequestVersion++
     resourceState.loading = true
     resourceState.loadingAll = false
+
+    if (isInitialSearch) {
+      resourcePagination.page = PAGINATION_CONFIG.DEFAULT_PAGE
+      resourcePagination.pageSize = PAGINATION_CONFIG.DEFAULT_PAGE_SIZE
+      resourceState.selected = []
+    }
 
     try {
       const response = await getSubscribeUser({
@@ -211,6 +216,7 @@ export function useSubscribeResource(
         pageSize,
       }
       resourcePagination.itemCount = data.total
+      resourcePagination.page = PAGINATION_CONFIG.DEFAULT_PAGE
       resourcePagination.pageSize = pageSize
 
       return true

@@ -245,6 +245,7 @@ import {
 import { RefreshOutline, PlayCircleOutline, StopCircleOutline } from '@vicons/ionicons5'
 import { getTaskEngineList } from '@/api/taskstate'
 import { formatDateTime } from '@/utils/time'
+import { getErrorMessage } from '@/utils/api'
 import type { TaskEngineListResponse } from '@/api/taskstate'
 
 type NormalizedTaskEngineListResponse = {
@@ -356,7 +357,7 @@ const fetchEngineStatus = () => {
       }
 
       console.error('获取执行日志失败:', error)
-      message.error(error?.message || '获取执行日志失败')
+      message.error(getErrorMessage(error, '获取执行日志失败'))
     })
     .finally(() => {
       if (isComponentMounted && requestId === engineStatusRequestId) {

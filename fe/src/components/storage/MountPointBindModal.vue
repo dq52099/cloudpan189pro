@@ -160,7 +160,7 @@ import {
   type AddStorageRequest,
   type BatchAddStorageResponse,
 } from '@/api/storage'
-import type { ApiResponse } from '@/utils/api'
+import { getErrorMessage, type ApiResponse } from '@/utils/api'
 import { getCloudTokenList } from '@/api/cloudtoken'
 import { getListItems } from '@/utils/pagination'
 import { normalizeCloudTokens } from '@/utils/responseGuards'
@@ -421,7 +421,7 @@ const fetchCloudTokens = () => {
         return
       }
 
-      message.error(error?.message || '获取云盘令牌列表失败')
+      message.error(getErrorMessage(error, '获取云盘令牌列表失败'))
     })
 }
 
