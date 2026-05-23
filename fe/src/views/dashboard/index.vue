@@ -21,8 +21,8 @@
               <n-text>{{ userInfo.groupName || '-' }}</n-text>
             </n-descriptions-item>
             <n-descriptions-item label="管理员权限">
-              <n-tag :type="userInfo.isAdmin ? 'success' : 'default'" size="small">
-                {{ userInfo.isAdmin ? '是' : '否' }}
+              <n-tag :type="canUseAdminFeatures ? 'success' : 'default'" size="small">
+                {{ canUseAdminFeatures ? '是' : '否' }}
               </n-tag>
             </n-descriptions-item>
           </n-descriptions>
@@ -56,7 +56,7 @@
       </n-grid-item>
 
       <!-- 资源统计展示区 -->
-      <n-grid-item v-if="userInfo.isAdmin" :span="24">
+      <n-grid-item v-if="canUseAdminFeatures" :span="24">
         <n-card title="资源统计" class="resource-card">
           <div v-if="loadingSummary" class="summary-loading">资源统计加载中...</div>
           <n-grid v-else :cols="5" :x-gap="24" :y-gap="24">
@@ -169,7 +169,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import {
   NGrid,
   NGridItem,
@@ -201,6 +201,7 @@ const message = useMessage()
 
 const userInfo = userStore.get()
 const systemInfo = systemStore.get()
+const canUseAdminFeatures = computed(() => !systemInfo.enableAuth || userInfo.isAdmin)
 
 const loadingSummary = ref(false)
 const summaryData = ref<ResourceSummary>({
@@ -349,7 +350,7 @@ const getUserStatusText = (status: number) => {
 }
 
 onMounted(() => {
-  if (userInfo.isAdmin) {
+  if (canUseAdminFeatures.value) {
     loadSummary()
   }
 })
