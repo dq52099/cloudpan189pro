@@ -32,7 +32,7 @@ func (h *handler) Info() httpcontext.HandlerFunc {
 		user, err := h.userService.Query(ctx.GetContext(), uid)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				ctx.Fail(codeUserInfoFailed.WithError(err))
+				ctx.Fail(codeUserResourceMissing.WithError(err))
 
 				return
 			}

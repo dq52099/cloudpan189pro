@@ -1,9 +1,12 @@
 package autoingest
 
 import (
+	"errors"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	autoingestplanSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestplan"
+	"gorm.io/gorm"
 )
 
 type deletePlanRequest struct {
@@ -44,6 +47,12 @@ func (h *handler) DeletePlan() httpcontext.HandlerFunc {
 		}
 
 		if err := h.planService.Delete(ctx.GetContext(), deleteReq); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(codePlanNotFound.WithError(err))
+
+				return
+			}
+
 			ctx.Fail(codePlanDeleteFailed.WithError(err))
 
 			return

@@ -2,6 +2,7 @@ package autoingest
 
 import (
 	stdctx "context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,7 @@ import (
 	autoingestplanSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestplan"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/autoingest"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 type mockPlanAccessService struct {
@@ -31,11 +33,18 @@ type mockPlanAccessService struct {
 	updatedFields   [][]utils.Field
 	offsetIDs       []int64
 	resetCounterIDs []int64
+	queryErr        error
+	deleteErr       error
+	updateErr       error
 }
 
 func (m *mockPlanAccessService) Query(ctx appContext.Context, id int64) (*models.AutoIngestPlan, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if m.queryErr != nil {
+		return nil, m.queryErr
+	}
 
 	return m.plans[id], nil
 }
@@ -62,10 +71,21 @@ func (m *mockPlanAccessService) Update(ctx appContext.Context, id int64, fields 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+
 	m.updatedIDs = append(m.updatedIDs, id)
 	m.updatedFields = append(m.updatedFields, append([]utils.Field(nil), fields...))
 
 	return nil
+}
+
+func (m *mockPlanAccessService) Delete(ctx appContext.Context, req *autoingestplanSvi.DeleteRequest) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.deleteErr
 }
 
 func (m *mockPlanAccessService) UpdateOffset(ctx appContext.Context, id int64, offset int64) error {
@@ -123,6 +143,147 @@ func newPlanAccessRouter(handler httpcontext.HandlerFunc) *gin.Engine {
 	router.POST("/action", wrapper.Wrap(handler))
 
 	return router
+}
+
+func assertPlanNotFoundResponse(t *testing.T, recorder *httptest.ResponseRecorder) {
+	t.Helper()
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response httpcontext.Response
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.Code != codePlanNotFound.GetCode() {
+		t.Fatalf("expected business code %d, got %d", codePlanNotFound.GetCode(), response.Code)
+	}
+
+	if response.Msg != codePlanNotFound.GetMessage() {
+		t.Fatalf("expected message %q, got %q", codePlanNotFound.GetMessage(), response.Msg)
+	}
+}
+
+func TestDeletePlanReturnsNotFoundWhenPlanMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	planService := &mockPlanAccessService{deleteErr: gorm.ErrRecordNotFound}
+
+	router := newPlanAccessRouter(NewHandler(nil, planService, nil, nil).DeletePlan())
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/action", strings.NewReader(`{"id":11}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertPlanNotFoundResponse(t, recorder)
+}
+
+func TestUpdatePlanReturnsNotFoundWhenQueryMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	planService := &mockPlanAccessService{queryErr: gorm.ErrRecordNotFound}
+
+	router := newPlanAccessRouter(NewHandler(nil, planService, nil, nil).UpdatePlan())
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/action", strings.NewReader(`{"id":11,"name":"new-name"}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertPlanNotFoundResponse(t, recorder)
+
+	if len(planService.updatedIDs) != 0 {
+		t.Fatalf("expected update not to be called, got %v", planService.updatedIDs)
+	}
+}
+
+func TestUpdatePlanReturnsNotFoundWhenUpdateSeesMissingPlan(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	planService := &mockPlanAccessService{
+		plans: map[int64]*models.AutoIngestPlan{
+			11: {ID: 11, UserID: 100, SourceType: autoingest.SourceTypeSubscribe},
+		},
+		updateErr: gorm.ErrRecordNotFound,
+	}
+
+	router := newPlanAccessRouter(NewHandler(nil, planService, nil, nil).UpdatePlan())
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/action", strings.NewReader(`{"id":11,"name":"new-name"}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertPlanNotFoundResponse(t, recorder)
+}
+
+func TestPlanActionsReturnNotFoundWhenQueryMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name    string
+		body    string
+		handler func(Handler) httpcontext.HandlerFunc
+	}{
+		{
+			name: "enable",
+			body: `{"id":11}`,
+			handler: func(h Handler) httpcontext.HandlerFunc {
+				return h.EnablePlan()
+			},
+		},
+		{
+			name: "disable",
+			body: `{"id":11}`,
+			handler: func(h Handler) httpcontext.HandlerFunc {
+				return h.DisablePlan()
+			},
+		},
+		{
+			name: "refresh",
+			body: `{"planId":11}`,
+			handler: func(h Handler) httpcontext.HandlerFunc {
+				return h.Refresh()
+			},
+		},
+		{
+			name: "retry failed",
+			body: `{"planId":11}`,
+			handler: func(h Handler) httpcontext.HandlerFunc {
+				return h.RetryFailed()
+			},
+		},
+		{
+			name: "retry plan",
+			body: `{"id":11}`,
+			handler: func(h Handler) httpcontext.HandlerFunc {
+				return h.RetryPlan()
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			taskEngine := &mockPlanAccessTaskEngine{}
+			planService := &mockPlanAccessService{queryErr: gorm.ErrRecordNotFound}
+
+			router := newPlanAccessRouter(tt.handler(NewHandler(taskEngine, planService, nil, nil)))
+			req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/action", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, req)
+
+			assertPlanNotFoundResponse(t, recorder)
+
+			if len(taskEngine.payloads) != 0 {
+				t.Fatalf("expected no queued tasks, got %d", len(taskEngine.payloads))
+			}
+		})
+	}
 }
 
 func TestEnablePlanRejectsOtherUsersPlan(t *testing.T) {

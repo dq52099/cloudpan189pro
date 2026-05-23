@@ -86,6 +86,9 @@ func newUserNotFoundRouter(
 	router.POST("/bind_group", wrapper.Wrap(handler.BindGroup()))
 	router.POST("/update", wrapper.Wrap(handler.Update()))
 	router.POST("/toggle_status", wrapper.Wrap(handler.ToggleStatus()))
+	router.GET("/info", func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(99))
+	}, wrapper.Wrap(handler.Info()))
 	router.POST("/modify_own_pass", func(ctx *gin.Context) {
 		ctx.Set(consts.CtxKeyUserId, int64(99))
 	}, wrapper.Wrap(handler.ModifyOwnPass()))
@@ -129,6 +132,22 @@ func TestModifyPassReturnsNotFoundWhenUserMissing(t *testing.T) {
 		strings.NewReader(`{"id":99,"password":"new-pass"}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertUserHTTPError(t, recorder, codeUserResourceMissing)
+}
+
+func TestInfoReturnsNotFoundWhenCurrentUserMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := newUserNotFoundRouter(
+		&userNotFoundServiceStub{queryErr: gorm.ErrRecordNotFound},
+		&userGroupNotFoundServiceStub{},
+	)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/info", nil)
 
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)

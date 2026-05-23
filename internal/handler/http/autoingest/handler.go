@@ -1,6 +1,8 @@
 package autoingest
 
 import (
+	"net/http"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/taskengine"
@@ -55,7 +57,7 @@ var (
 	codeUpUserIdInvalid   = bi.Next("订阅号查询失败")
 	codeCreatePlanFailed  = bi.Next("创建自动挂载计划失败")
 	codePlanRefreshFailed = bi.Next("下发订阅刷新任务失败")
-	codePlanNotFound      = bi.Next("自动挂载计划不存在")
+	codePlanNotFound      = bi.Next("自动挂载计划不存在").WithHTTPCode(http.StatusNotFound)
 	codePlanInvalidSource = bi.Next("自动挂载计划来源类型不支持刷新")
 	codePlanQueryFailed   = bi.Next("查询自动挂载计划失败")
 	codeLogDeleteFailed   = bi.Next("删除日志失败")

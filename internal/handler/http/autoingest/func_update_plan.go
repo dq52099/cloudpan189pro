@@ -1,9 +1,12 @@
 package autoingest
 
 import (
+	"errors"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/autoingest"
+	"gorm.io/gorm"
 )
 
 type refreshStrategyUpdateRequest struct {
@@ -51,6 +54,12 @@ func (h *handler) UpdatePlan() httpcontext.HandlerFunc {
 		// 查询计划是否存在
 		plan, err := h.planService.Query(ctx.GetContext(), req.ID)
 		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(codePlanNotFound.WithError(err))
+
+				return
+			}
+
 			ctx.Fail(codePlanQueryFailed.WithError(err))
 
 			return
@@ -133,6 +142,12 @@ func (h *handler) UpdatePlan() httpcontext.HandlerFunc {
 		}
 
 		if err := h.planService.Update(ctx.GetContext(), req.ID, fields...); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(codePlanNotFound.WithError(err))
+
+				return
+			}
+
 			ctx.Fail(codePlanUpdateFailed.WithError(err))
 
 			return

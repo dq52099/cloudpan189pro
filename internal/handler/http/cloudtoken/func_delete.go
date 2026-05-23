@@ -1,10 +1,13 @@
 package cloudtoken
 
 import (
+	"errors"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
 	mountPointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
+	"gorm.io/gorm"
 )
 
 type deleteRequest = cloudtoken.DeleteRequest
@@ -51,6 +54,12 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 		}
 
 		if err := h.cloudTokenService.Delete(ctx.GetContext(), req); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(codeTokenNotFound.WithError(err))
+
+				return
+			}
+
 			ctx.Fail(codeDeleteFailed.WithError(err))
 
 			return
