@@ -1,6 +1,7 @@
 package setting
 
 import (
+	"github.com/xxcheng123/cloudpan189-share/internal/bootstrap"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
@@ -51,6 +52,12 @@ func (s *service) Update(ctx context.Context, fields ...utils.Field) error {
 	})
 	if err != nil {
 		return err
+	}
+
+	if bootstrap.AddAfterCommitHook(ctx, func() {
+		syncSharedSetting(updatedSetting)
+	}) {
+		return nil
 	}
 
 	syncSharedSetting(updatedSetting)

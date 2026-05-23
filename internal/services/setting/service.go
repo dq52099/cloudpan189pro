@@ -12,6 +12,7 @@ type Service interface {
 	Query(ctx context.Context) (*models.Setting, error)
 	Update(ctx context.Context, fields ...utils.Field) error
 	InitSystem(ctx context.Context, req *InitSystemRequest) error
+	RunInTransaction(ctx context.Context, run func(context.Context) error) error
 }
 
 type service struct {

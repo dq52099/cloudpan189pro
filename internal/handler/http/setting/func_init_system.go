@@ -1,6 +1,7 @@
 package setting
 
 import (
+	appContext "github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/setting"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/user"
@@ -35,21 +36,31 @@ func (h *handler) InitSystem() httpcontext.HandlerFunc {
 			return
 		}
 
-		if err := h.settingService.InitSystem(ctx.GetContext(), &setting.InitSystemRequest{
-			Title:      req.Title,
-			EnableAuth: *req.EnableAuth,
-			BaseURL:    req.BaseURL,
+		if err := h.settingService.RunInTransaction(ctx.GetContext(), func(txCtx appContext.Context) error {
+			if initErr := h.settingService.InitSystem(txCtx, &setting.InitSystemRequest{
+				Title:      req.Title,
+				EnableAuth: *req.EnableAuth,
+				BaseURL:    req.BaseURL,
+			}); initErr != nil {
+				return codeInitSettingErr.WithError(initErr)
+			}
+
+			if _, addErr := h.userService.Add(txCtx, &user.AddRequest{
+				Username: req.SuperUsername,
+				Password: req.SuperPassword,
+			}, user.WithAdmin()); addErr != nil {
+				return codeInitSuperUserErr.WithError(addErr)
+			}
+
+			return nil
 		}); err != nil {
+			if busErr, ok := err.(httpcontext.BusinessError); ok {
+				ctx.Fail(busErr)
+
+				return
+			}
+
 			ctx.Fail(codeInitSettingErr.WithError(err))
-
-			return
-		}
-
-		if _, err := h.userService.Add(ctx.GetContext(), &user.AddRequest{
-			Username: req.SuperUsername,
-			Password: req.SuperPassword,
-		}, user.WithAdmin()); err != nil {
-			ctx.Fail(codeInitSuperUserErr.WithError(err))
 
 			return
 		}

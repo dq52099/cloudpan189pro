@@ -35,7 +35,7 @@ type serviceContext struct {
 }
 
 func (s *serviceContext) GetDB(ctx context.Context) *gorm.DB {
-	return s.db.WithContext(ctx)
+	return DBFromContext(ctx, s.db)
 }
 
 func (s *serviceContext) GetDBWithoutContext() *gorm.DB {
