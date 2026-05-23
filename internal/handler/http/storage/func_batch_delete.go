@@ -78,7 +78,7 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 		}
 
 		if len(validMountPoints) == 0 {
-			ctx.Fail(busCodeStorageMountPointDeleteFail.WithError(errors.New("挂载点不存在或无权限删除")))
+			ctx.Fail(busCodeStorageMountPointNotFound.WithMessage("挂载点不存在或无权限删除"))
 
 			return
 		}

@@ -204,10 +204,12 @@ const handleInit = () => {
       if (response.code === 200) {
         message.success('系统初始化成功')
         // 刷新系统信息
-        systemStore.refresh().then(() => {
-          router.push('/@login')
+        systemStore.refresh().then((refreshResponse) => {
+          const systemInfo = systemStore.get()
+          const refreshEnableAuth = refreshResponse?.data?.enableAuth
+          const enableAuth = (refreshEnableAuth ?? systemInfo.enableAuth) && formData.enableAuth
+          router.push(enableAuth ? '/@login' : '/@dashboard')
         })
-        // 跳转到登录页面
       } else {
         message.error(response.msg || '初始化失败')
       }

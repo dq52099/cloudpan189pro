@@ -339,7 +339,7 @@ const showChangePasswordModal = ref(false)
 
 const filterMenuTree = (items: AppMenuItem[]): AppMenuItem[] => {
   return items
-    .filter((item) => !item.adminOnly || userStore.isAdmin)
+    .filter((item) => !item.adminOnly || !systemInfo.enableAuth || userStore.isAdmin)
     .map((item) => ({
       ...item,
       children: item.children ? filterMenuTree(item.children) : undefined,

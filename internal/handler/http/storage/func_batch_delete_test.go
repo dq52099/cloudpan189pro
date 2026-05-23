@@ -272,8 +272,8 @@ func TestBatchDeleteRejectsWhenAllDeduplicatedIDsMissingOrUnauthorized(t *testin
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)
 
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
 	}
 
 	if got, want := mountPointService.queries, []int64{11, 22, 33}; !int64SlicesEqual(got, want) {
@@ -292,11 +292,11 @@ func TestBatchDeleteRejectsWhenAllDeduplicatedIDsMissingOrUnauthorized(t *testin
 		t.Fatal(err)
 	}
 
-	if response.Code != busCodeStorageMountPointDeleteFail.GetCode() {
-		t.Fatalf("expected business code %d, got %d", busCodeStorageMountPointDeleteFail.GetCode(), response.Code)
+	if response.Code != busCodeStorageMountPointNotFound.GetCode() {
+		t.Fatalf("expected business code %d, got %d", busCodeStorageMountPointNotFound.GetCode(), response.Code)
 	}
 
-	if response.Msg != "挂载点删除失败" {
+	if response.Msg != "挂载点不存在或无权限删除" {
 		t.Fatalf("expected business error message, got %q", response.Msg)
 	}
 

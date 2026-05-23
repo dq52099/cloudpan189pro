@@ -26,6 +26,7 @@ type userNotFoundServiceStub struct {
 
 	queryUser     *models.User
 	queryErr      error
+	delErr        error
 	modifyPassErr error
 	bindGroupErr  error
 	updateErr     error
@@ -42,6 +43,10 @@ func (s *userNotFoundServiceStub) Query(appContext.Context, int64) (*models.User
 
 func (s *userNotFoundServiceStub) ModifyPass(appContext.Context, int64, string) error {
 	return s.modifyPassErr
+}
+
+func (s *userNotFoundServiceStub) Del(appContext.Context, *userSvi.DelRequest) error {
+	return s.delErr
 }
 
 func (s *userNotFoundServiceStub) BindGroup(appContext.Context, *userSvi.BindGroupRequest) error {
@@ -86,6 +91,7 @@ func newUserNotFoundRouter(
 	router.POST("/bind_group", wrapper.Wrap(handler.BindGroup()))
 	router.POST("/update", wrapper.Wrap(handler.Update()))
 	router.POST("/toggle_status", wrapper.Wrap(handler.ToggleStatus()))
+	router.POST("/del", wrapper.Wrap(handler.Del()))
 	router.GET("/info", func(ctx *gin.Context) {
 		ctx.Set(consts.CtxKeyUserId, int64(99))
 	}, wrapper.Wrap(handler.Info()))
@@ -130,6 +136,28 @@ func TestModifyPassReturnsNotFoundWhenUserMissing(t *testing.T) {
 		http.MethodPost,
 		"/modify_pass",
 		strings.NewReader(`{"id":99,"password":"new-pass"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertUserHTTPError(t, recorder, codeUserResourceMissing)
+}
+
+func TestDelReturnsNotFoundWhenUserMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := newUserNotFoundRouter(
+		&userNotFoundServiceStub{delErr: gorm.ErrRecordNotFound},
+		&userGroupNotFoundServiceStub{},
+	)
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/del",
+		strings.NewReader(`{"id":99}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
 

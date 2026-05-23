@@ -1,9 +1,12 @@
 package cloudtoken
 
 import (
+	"errors"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
+	"gorm.io/gorm"
 )
 
 type checkQrcodeRequest = cloudtoken.CheckQrcodeRequest
@@ -36,6 +39,12 @@ func (h *handler) CheckQrcode() httpcontext.HandlerFunc {
 		req.IsAdmin = ctx.GetBool(consts.CtxKeyIsAdmin)
 
 		if err := h.cloudTokenService.CheckQrcode(ctx.GetContext(), req); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(codeTokenNotFound.WithError(err))
+
+				return
+			}
+
 			ctx.Fail(codeCheckQrcodeFailed.WithError(err))
 
 			return

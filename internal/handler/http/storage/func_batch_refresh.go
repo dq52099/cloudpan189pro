@@ -91,6 +91,12 @@ func (h *handler) BatchRefresh() httpcontext.HandlerFunc {
 			validIDs = append(validIDs, id)
 		}
 
+		if len(validIDs) == 0 {
+			ctx.Fail(busCodeStorageMountPointNotFound.WithMessage("挂载点不存在或无权限刷新"))
+
+			return
+		}
+
 		// 创建任务日志，父任务只记录本次请求的派发结果，扫描进度由子任务记录。
 		tracker, logErr := h.fileTaskLogService.Create(
 			ctx.GetContext(),

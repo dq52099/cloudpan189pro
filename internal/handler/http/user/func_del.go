@@ -1,6 +1,10 @@
 package user
 
 import (
+	"errors"
+
+	"gorm.io/gorm"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/user"
 )
@@ -20,6 +24,7 @@ type delRequest = user.DelRequest
 // @Failure 400 {object} httpcontext.Response "用户删除失败，code=1007"
 // @Failure 401 {object} httpcontext.Response "未授权访问"
 // @Failure 403 {object} httpcontext.Response "权限不足"
+// @Failure 404 {object} httpcontext.Response "用户不存在"
 // @Router /api/user/del [post]
 func (h *handler) Del() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
@@ -31,6 +36,12 @@ func (h *handler) Del() httpcontext.HandlerFunc {
 		}
 
 		if err := h.userService.Del(ctx.GetContext(), req); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(codeUserResourceMissing.WithError(err))
+
+				return
+			}
+
 			ctx.Fail(codeDelUserFailed.WithError(err))
 
 			return
