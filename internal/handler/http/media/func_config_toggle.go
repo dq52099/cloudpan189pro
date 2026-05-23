@@ -1,7 +1,10 @@
 package media
 
 import (
+	"errors"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	"gorm.io/gorm"
 )
 
 // configToggleRequest 切换媒体配置启用状态
@@ -30,6 +33,12 @@ func (h *handler) ConfigToggle() httpcontext.HandlerFunc {
 		}
 
 		if err := h.mediaConfigService.Toggle(ctx.GetContext(), *req.Enable); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(codeConfigNotInit.WithError(err))
+
+				return
+			}
+
 			ctx.Fail(codeConfigToggleFailed.WithError(err))
 
 			return

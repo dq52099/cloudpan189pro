@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	cloudbridgeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 var (
@@ -181,7 +183,15 @@ func (h *handler) executeOsTypePersonal(ctx context.Context, req *addRequest, us
 
 	token, err := h.cloudTokenService.QueryAccessible(ctx, req.CloudToken, userID, isAdmin)
 	if err != nil {
-		return busCodeStorageCloudTokenNotExist.WithError(err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return busCodeStorageCloudTokenNotExist.WithError(err)
+		}
+
+		return busCodeStorageQueryCloudTokenError.WithError(err)
+	}
+
+	if token == nil {
+		return busCodeStorageCloudTokenNotExist
 	}
 
 	if _, err = h.cloudBridgeService.CheckPerson(ctx, cloudbridgeSvi.NewAuthToken(token.AccessToken, token.ExpiresIn), req.FileId); err != nil {
@@ -206,7 +216,15 @@ func (h *handler) executeOsTypeFamily(ctx context.Context, req *addRequest, user
 
 	token, err := h.cloudTokenService.QueryAccessible(ctx, req.CloudToken, userID, isAdmin)
 	if err != nil {
-		return nil, busCodeStorageCloudTokenNotExist.WithError(err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, busCodeStorageCloudTokenNotExist.WithError(err)
+		}
+
+		return nil, busCodeStorageQueryCloudTokenError.WithError(err)
+	}
+
+	if token == nil {
+		return nil, busCodeStorageCloudTokenNotExist
 	}
 
 	if err = h.cloudBridgeService.CheckFamily(ctx, cloudbridgeSvi.NewAuthToken(token.AccessToken, token.ExpiresIn), req.FamilyId, req.FileId); err != nil {

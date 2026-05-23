@@ -158,6 +158,38 @@ func TestDeleteQueuesTaskWithoutImmediateDataDeletion(t *testing.T) {
 	}
 }
 
+func TestDeleteReturnsNotFoundWhenMountPointMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockDeleteTaskEngine{}
+	virtualFileService := &mockDeleteVirtualFileService{}
+	mountPointService := &mockDeleteMountPointService{mountPoints: map[int64]*models.MountPoint{}}
+	router := newDeleteTestRouter(taskEngine, virtualFileService, mountPointService)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/delete", strings.NewReader(`{"id":77}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response httpcontext.Response
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Code != busCodeStorageMountPointNotFound.GetCode() {
+		t.Fatalf("expected business code %d, got %d", busCodeStorageMountPointNotFound.GetCode(), response.Code)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no queued task for missing mount point, got %d", len(taskEngine.payloads))
+	}
+}
+
 func TestDeleteDoesNotMutateDataWhenQueueFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

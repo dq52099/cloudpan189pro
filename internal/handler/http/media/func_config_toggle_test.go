@@ -2,6 +2,7 @@ package media
 
 import (
 	stdctx "context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,14 +14,20 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	mediaconfigSvc "github.com/xxcheng123/cloudpan189-share/internal/services/mediaconfig"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 type mockConfigToggleMediaConfigService struct {
 	mediaconfigSvc.Service
 	enable *bool
+	err    error
 }
 
 func (m *mockConfigToggleMediaConfigService) Toggle(ctx appContext.Context, enable bool) error {
+	if m.err != nil {
+		return m.err
+	}
+
 	m.enable = &enable
 
 	return nil
@@ -77,5 +84,24 @@ func TestConfigToggleAcceptsExplicitDisable(t *testing.T) {
 
 	if *service.enable {
 		t.Fatal("expected explicit false to be passed to service")
+	}
+}
+
+func TestConfigToggleReturnsNotFoundWhenConfigMissing(t *testing.T) {
+	service := &mockConfigToggleMediaConfigService{err: gorm.ErrRecordNotFound}
+
+	recorder := performConfigToggleRequest(t, service, `{"enable":true}`)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response httpcontext.Response
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Code != codeConfigNotInit.GetCode() {
+		t.Fatalf("expected business code %d, got %d", codeConfigNotInit.GetCode(), response.Code)
 	}
 }

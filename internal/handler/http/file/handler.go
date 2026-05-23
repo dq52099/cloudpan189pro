@@ -1,6 +1,8 @@
 package file
 
 import (
+	"net/http"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 
@@ -43,7 +45,7 @@ var (
 	busCodeFileSignError                = bi.Next("文件签名失败")
 	busCodeFilePathSplitError           = bi.Next("路径切割失败")
 	busCodeFileInvalidPath              = bi.Next("路径不合法，需要 / 开头的路径")
-	busCodeFileNotFound                 = bi.Next("文件不存在")
+	busCodeFileNotFound                 = bi.Next("文件不存在").WithHTTPCode(http.StatusNotFound)
 	busCodeQueryTopIdError              = bi.Next("查询文件顶级id失败")
 	busCodeBatchDeleteError             = bi.Next("发送批量删除任务失败")
 )

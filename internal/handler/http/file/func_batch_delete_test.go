@@ -281,6 +281,39 @@ func TestBatchDeleteRejectsInvalidIDBeforeDeleteAndQueueing(t *testing.T) {
 	}
 }
 
+func TestBatchDeleteReturnsNotFoundWhenFileMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	virtualFileService := &mockBatchDeleteVirtualFileService{files: map[int64]*models.VirtualFile{}}
+	mountPointService := &mockBatchDeleteMountPointService{}
+
+	router := newBatchDeleteTestRouter(taskEngine, virtualFileService, mountPointService, 100, false)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_delete", strings.NewReader(`{"ids":[11]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response httpcontext.Response
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Code != busCodeFileNotFound.GetCode() {
+		t.Fatalf("expected business code %d, got %d", busCodeFileNotFound.GetCode(), response.Code)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no queued tasks for missing file, got %d", len(taskEngine.payloads))
+	}
+}
+
 func TestBatchDeleteDoesNotMutateDataWhenQueueFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

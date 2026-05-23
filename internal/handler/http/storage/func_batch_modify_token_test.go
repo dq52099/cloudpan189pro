@@ -15,10 +15,12 @@ import (
 	appContext "github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	cloudtokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
 	group2fileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/group2file"
 	userMountPointTokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/userMountPointToken"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 type mockBatchModifyGroup2FileService struct {
@@ -34,6 +36,7 @@ func (m *mockBatchModifyGroup2FileService) GetBindFiles(ctx appContext.Context, 
 type mockBatchModifyUserMountPointTokenService struct {
 	userMountPointTokenSvi.Service
 	tokens  map[int64]int64
+	bound   []int64
 	unbound []int64
 }
 
@@ -41,10 +44,37 @@ func (m *mockBatchModifyUserMountPointTokenService) GetTokenID(ctx appContext.Co
 	return m.tokens[mountPointID], nil
 }
 
+func (m *mockBatchModifyUserMountPointTokenService) BindToken(ctx appContext.Context, userID, mountPointID, tokenID int64) error {
+	m.bound = append(m.bound, mountPointID)
+
+	return nil
+}
+
 func (m *mockBatchModifyUserMountPointTokenService) UnbindToken(ctx appContext.Context, userID, mountPointID int64) error {
 	m.unbound = append(m.unbound, mountPointID)
 
 	return nil
+}
+
+type mockBatchModifyCloudTokenService struct {
+	cloudtokenSvi.Service
+	tokens  map[int64]*models.CloudToken
+	err     error
+	queries []int64
+}
+
+func (m *mockBatchModifyCloudTokenService) QueryAccessible(ctx appContext.Context, id, userID int64, isAdmin bool) (*models.CloudToken, error) {
+	m.queries = append(m.queries, id)
+
+	if m.err != nil {
+		return nil, m.err
+	}
+
+	if token, ok := m.tokens[id]; ok {
+		return token, nil
+	}
+
+	return &models.CloudToken{ID: id, UserID: userID}, nil
 }
 
 func TestBatchModifyTokenDeduplicatesIDsBeforePermissionCheckAndQueueing(t *testing.T) {
@@ -291,6 +321,110 @@ func TestBatchModifyTokenRejectsNegativeTokenIDBeforeQuerying(t *testing.T) {
 	}
 }
 
+func TestBatchModifyTokenReturnsNotFoundWhenMountPointMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: {ID: 101, FileId: 11, FullPath: "/movies", CreatorUserID: 100},
+			33: {ID: 303, FileId: 33, FullPath: "/series", CreatorUserID: 100},
+		},
+	}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/batch_modify_token", wrapper.Wrap(NewHandler(
+		taskEngine,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	).BatchModifyToken()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_modify_token", strings.NewReader(`{"ids":[11,22,33],"tokenId":0}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if got, want := mountPointService.queries, []int64{11, 22}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected querying to stop at missing mount point %v, got %v", want, got)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no queued task, got %d", len(taskEngine.payloads))
+	}
+}
+
+func TestBatchModifyTokenReturnsNotFoundWhenCloudTokenNotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: {ID: 101, FileId: 11, FullPath: "/movies", CreatorUserID: 100},
+		},
+	}
+	cloudTokenService := &mockBatchModifyCloudTokenService{err: gorm.ErrRecordNotFound}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/batch_modify_token", wrapper.Wrap(NewHandler(
+		taskEngine,
+		nil,
+		nil,
+		cloudTokenService,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	).BatchModifyToken()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_modify_token", strings.NewReader(`{"ids":[11],"tokenId":99}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if got, want := cloudTokenService.queries, []int64{99}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected cloud token query %v, got %v", want, got)
+	}
+
+	if len(mountPointService.queries) != 0 {
+		t.Fatalf("expected request to stop before querying mount points, got %v", mountPointService.queries)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no queued task, got %d", len(taskEngine.payloads))
+	}
+}
+
 func TestBatchModifyTokenAllowsUserBoundMountPoint(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -436,6 +570,110 @@ func TestModifyTokenRejectsInvalidIDsBeforeQuerying(t *testing.T) {
 				t.Fatalf("expected request to stop before querying mount points, got %v", mountPointService.queries)
 			}
 		})
+	}
+}
+
+func TestModifyTokenReturnsNotFoundWhenMountPointMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mountPointService := &mockBatchDeleteMountPointService{}
+	cloudTokenService := &mockBatchModifyCloudTokenService{}
+	userTokenService := &mockBatchModifyUserMountPointTokenService{}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/modify_token", wrapper.Wrap(NewHandler(
+		nil,
+		nil,
+		nil,
+		cloudTokenService,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		nil,
+		userTokenService,
+	).ModifyToken()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/modify_token", strings.NewReader(`{"id":11,"tokenId":99}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if got, want := mountPointService.queries, []int64{11}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected mount point query %v, got %v", want, got)
+	}
+
+	if len(cloudTokenService.queries) != 0 {
+		t.Fatalf("expected request to stop before querying cloud token, got %v", cloudTokenService.queries)
+	}
+
+	if len(userTokenService.bound) != 0 || len(userTokenService.unbound) != 0 {
+		t.Fatalf("expected no token binding changes, got bound=%v unbound=%v", userTokenService.bound, userTokenService.unbound)
+	}
+}
+
+func TestModifyTokenReturnsNotFoundWhenCloudTokenNotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: {ID: 101, FileId: 11, FullPath: "/movies", CreatorUserID: 100},
+		},
+	}
+	cloudTokenService := &mockBatchModifyCloudTokenService{err: gorm.ErrRecordNotFound}
+	userTokenService := &mockBatchModifyUserMountPointTokenService{}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/modify_token", wrapper.Wrap(NewHandler(
+		nil,
+		nil,
+		nil,
+		cloudTokenService,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		nil,
+		userTokenService,
+	).ModifyToken()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/modify_token", strings.NewReader(`{"id":11,"tokenId":99}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if got, want := mountPointService.queries, []int64{11}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected mount point query %v, got %v", want, got)
+	}
+
+	if got, want := cloudTokenService.queries, []int64{99}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected cloud token query %v, got %v", want, got)
+	}
+
+	if len(userTokenService.bound) != 0 || len(userTokenService.unbound) != 0 {
+		t.Fatalf("expected no token binding changes, got bound=%v unbound=%v", userTokenService.bound, userTokenService.unbound)
 	}
 }
 

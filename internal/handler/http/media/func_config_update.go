@@ -1,10 +1,13 @@
 package media
 
 import (
+	"errors"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/datatypes"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/media"
+	"gorm.io/gorm"
 )
 
 // configUpdateRequest 媒体配置更新请求（部分字段可选）
@@ -85,6 +88,12 @@ func (h *handler) ConfigUpdate() httpcontext.HandlerFunc {
 		}
 
 		if err := h.mediaConfigService.Update(ctx.GetContext(), fields...); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(codeConfigNotInit.WithError(err))
+
+				return
+			}
+
 			ctx.Fail(codeConfigUpdateFailed.WithError(err))
 
 			return

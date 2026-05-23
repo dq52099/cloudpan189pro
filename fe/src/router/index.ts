@@ -229,16 +229,27 @@ router.beforeEach(async (to, _, next) => {
   const systemStore = useSystemStore()
 
   await systemStore.ensureLoaded()
+  const systemInfo = systemStore.get()
 
   // 检查系统是否已初始化
-  if (!systemStore.get().initialized && to.name !== 'Init') {
+  if (!systemInfo.initialized && to.name !== 'Init') {
     next('/@init')
     return
   }
 
-  // 如果系统已初始化但访问初始化页面，跳转到登录页
-  if (systemStore.get().initialized && to.name === 'Init') {
-    next('/@login')
+  // 如果系统已初始化但访问初始化页面，跳转到仪表盘
+  if (systemInfo.initialized && to.name === 'Init') {
+    next('/@dashboard')
+    return
+  }
+
+  if (systemInfo.initialized && !systemInfo.enableAuth) {
+    if (to.name === 'Login') {
+      next('/@dashboard')
+      return
+    }
+
+    next()
     return
   }
 

@@ -17,6 +17,7 @@ import (
 	mountpointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 	virtualfileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/virtualfile"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 type mockOpenGroup2FileService struct {
@@ -107,6 +108,45 @@ func TestOpenFailsWhenGroupBindingLookupFails(t *testing.T) {
 
 	if recorder.Code == http.StatusOK {
 		t.Fatalf("expected failure, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestOpenReturnsNotFoundWhenPathMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.GET("/open/*fullPath", wrapper.Wrap(NewHandler(
+		&mockOpenVirtualFileService{queryByPath: gorm.ErrRecordNotFound},
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	).Open()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/open/missing", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response httpcontext.Response
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Code != busCodeFileNotFound.GetCode() {
+		t.Fatalf("expected business code %d, got %d", busCodeFileNotFound.GetCode(), response.Code)
 	}
 }
 

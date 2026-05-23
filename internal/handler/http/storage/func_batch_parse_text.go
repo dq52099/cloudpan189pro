@@ -1,9 +1,12 @@
 package storage
 
 import (
+	"errors"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
+	"gorm.io/gorm"
 )
 
 // BatchParseFromText 批量解析文本
@@ -35,7 +38,17 @@ func (h *handler) BatchParseFromText() httpcontext.HandlerFunc {
 
 		// 校验 CloudToken 是否存在
 		tokenInfo, err := h.cloudTokenService.QueryAccessible(ctx.GetContext(), req.CloudToken, req.UserID, req.IsAdmin)
-		if err != nil || tokenInfo == nil {
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(busCodeStorageCloudTokenNotExist.WithError(err))
+			} else {
+				ctx.Fail(busCodeStorageQueryCloudTokenError.WithError(err))
+			}
+
+			return
+		}
+
+		if tokenInfo == nil {
 			ctx.Fail(busCodeStorageCloudTokenNotExist)
 
 			return

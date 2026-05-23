@@ -1,6 +1,8 @@
 package media
 
 import (
+	"net/http"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/taskengine"
@@ -33,6 +35,7 @@ var (
 	codeConfigInitFailed   = bi.Next("初始化媒体配置失败")
 	codeConfigUpdateFailed = bi.Next("更新媒体配置失败")
 	codeConfigToggleFailed = bi.Next("切换媒体配置启用状态失败")
+	codeConfigNotInit      = bi.Next("媒体配置未初始化").WithHTTPCode(http.StatusNotFound)
 
 	// 操作相关错误码
 	codeMediaNotEnabled = bi.Next("媒体功能未启用")
