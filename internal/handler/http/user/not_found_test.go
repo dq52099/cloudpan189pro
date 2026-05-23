@@ -28,6 +28,7 @@ type userNotFoundServiceStub struct {
 	queryErr      error
 	modifyPassErr error
 	bindGroupErr  error
+	updateErr     error
 	bindGroupCall int
 }
 
@@ -54,7 +55,7 @@ func (s *userNotFoundServiceStub) QueryByUsername(appContext.Context, string) (*
 }
 
 func (s *userNotFoundServiceStub) Update(appContext.Context, int64, ...utils.Field) error {
-	return errors.New("not implemented")
+	return s.updateErr
 }
 
 type userGroupNotFoundServiceStub struct {
@@ -83,6 +84,8 @@ func newUserNotFoundRouter(
 
 	router.POST("/modify_pass", wrapper.Wrap(handler.ModifyPass()))
 	router.POST("/bind_group", wrapper.Wrap(handler.BindGroup()))
+	router.POST("/update", wrapper.Wrap(handler.Update()))
+	router.POST("/toggle_status", wrapper.Wrap(handler.ToggleStatus()))
 	router.POST("/modify_own_pass", func(ctx *gin.Context) {
 		ctx.Set(consts.CtxKeyUserId, int64(99))
 	}, wrapper.Wrap(handler.ModifyOwnPass()))
@@ -124,6 +127,50 @@ func TestModifyPassReturnsNotFoundWhenUserMissing(t *testing.T) {
 		http.MethodPost,
 		"/modify_pass",
 		strings.NewReader(`{"id":99,"password":"new-pass"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertUserHTTPError(t, recorder, codeUserResourceMissing)
+}
+
+func TestUpdateReturnsNotFoundWhenUserMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := newUserNotFoundRouter(
+		&userNotFoundServiceStub{updateErr: gorm.ErrRecordNotFound},
+		&userGroupNotFoundServiceStub{},
+	)
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/update",
+		strings.NewReader(`{"id":99,"status":2}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertUserHTTPError(t, recorder, codeUserResourceMissing)
+}
+
+func TestToggleStatusReturnsNotFoundWhenUserMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := newUserNotFoundRouter(
+		&userNotFoundServiceStub{updateErr: gorm.ErrRecordNotFound},
+		&userGroupNotFoundServiceStub{},
+	)
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/toggle_status",
+		strings.NewReader(`{"id":99,"status":2}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
 

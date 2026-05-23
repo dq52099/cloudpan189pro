@@ -1,8 +1,11 @@
 package user
 
 import (
+	"errors"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
+	"gorm.io/gorm"
 )
 
 type updateRequest struct {
@@ -48,6 +51,12 @@ func (h *handler) Update() httpcontext.HandlerFunc {
 
 		err := h.userService.Update(ctx.GetContext(), req.ID, fields...)
 		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(codeUserResourceMissing.WithError(err))
+
+				return
+			}
+
 			ctx.Fail(codeUpdateUserFailed.WithError(err))
 
 			return

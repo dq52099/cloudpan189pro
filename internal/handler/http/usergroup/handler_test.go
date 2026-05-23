@@ -21,12 +21,17 @@ import (
 
 type mockUserGroupService struct {
 	usergroupSvi.Service
-	deleteErr error
-	queryErr  error
+	deleteErr     error
+	modifyNameErr error
+	queryErr      error
 }
 
 func (m *mockUserGroupService) Delete(ctx appContext.Context, req *usergroupSvi.DeleteRequest) error {
 	return m.deleteErr
+}
+
+func (m *mockUserGroupService) ModifyName(ctx appContext.Context, req *usergroupSvi.ModifyNameRequest) error {
+	return m.modifyNameErr
 }
 
 func (m *mockUserGroupService) Query(ctx appContext.Context, gid int64) (*models.UserGroup, error) {
@@ -69,6 +74,7 @@ func newUserGroupTestRouter(
 	handler := NewHandler(userGroupService, group2FileService, nil)
 
 	router.POST("/delete", wrapper.Wrap(handler.Delete()))
+	router.POST("/modify_name", wrapper.Wrap(handler.ModifyName()))
 	router.POST("/batch_bind_files", wrapper.Wrap(handler.BatchBindFiles()))
 	router.GET("/bind_files", wrapper.Wrap(handler.GetBindFiles()))
 
@@ -109,6 +115,28 @@ func TestDeleteReturnsNotFoundWhenUserGroupMissing(t *testing.T) {
 		http.MethodPost,
 		"/delete",
 		strings.NewReader(`{"id":999}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertUserGroupNotFoundResponse(t, recorder)
+}
+
+func TestModifyNameReturnsNotFoundWhenUserGroupMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := newUserGroupTestRouter(
+		&mockUserGroupService{modifyNameErr: gorm.ErrRecordNotFound},
+		&mockUserGroupBindFileService{},
+	)
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/modify_name",
+		strings.NewReader(`{"id":999,"name":"missing"}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
 

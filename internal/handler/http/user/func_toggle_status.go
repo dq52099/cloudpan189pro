@@ -1,8 +1,11 @@
 package user
 
 import (
+	"errors"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
+	"gorm.io/gorm"
 )
 
 type toggleStatusRequest struct {
@@ -36,6 +39,12 @@ func (h *handler) ToggleStatus() httpcontext.HandlerFunc {
 		// 更新用户状态
 		err := h.userService.Update(ctx.GetContext(), req.ID, utils.Field{Key: "status", Value: req.Status})
 		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(codeUserResourceMissing.WithError(err))
+
+				return
+			}
+
 			ctx.Fail(codeUpdateUserFailed.WithError(err))
 
 			return

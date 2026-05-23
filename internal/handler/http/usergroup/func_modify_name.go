@@ -1,8 +1,11 @@
 package usergroup
 
 import (
+	"errors"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/usergroup"
+	"gorm.io/gorm"
 )
 
 type modifyNameRequest = usergroup.ModifyNameRequest
@@ -31,6 +34,12 @@ func (h *handler) ModifyName() httpcontext.HandlerFunc {
 		}
 
 		if err := h.userGroupService.ModifyName(ctx.GetContext(), req); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(codeUserGroupNotFound.WithError(err))
+
+				return
+			}
+
 			ctx.Fail(codeModifyNameFailed.WithError(err))
 
 			return
