@@ -113,12 +113,15 @@ func (h *handler) RebuildStrmFile() httpcontext.HandlerFunc {
 		}
 
 		successCount := 0
+		matchedCount := 0
 		totalRequested := len(idSet)
 
 		for _, mp := range mountpoints {
 			if _, ok := idSet[mp.ID]; !ok {
 				continue
 			}
+
+			matchedCount++
 
 			taskReq := &topic.MediaRebuildStrmFileByMountPointRequest{
 				MountPointFileId: mp.FileId,
@@ -150,6 +153,12 @@ func (h *handler) RebuildStrmFile() httpcontext.HandlerFunc {
 			}
 
 			successCount++
+		}
+
+		if totalRequested > 0 && matchedCount == 0 {
+			ctx.Fail(codeRebuildMountPointNotFound)
+
+			return
 		}
 
 		ctx.Success(rebuildStrmResponse{

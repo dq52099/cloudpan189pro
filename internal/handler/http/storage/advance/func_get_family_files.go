@@ -1,7 +1,6 @@
 package advance
 
 import (
-	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
 )
@@ -49,15 +48,8 @@ func (h *handler) GetFamilyFiles() httpcontext.HandlerFunc {
 			return
 		}
 
-		token, err := h.cloudTokenService.QueryAccessible(
-			ctx.GetContext(),
-			req.CloudToken,
-			ctx.GetInt64(consts.CtxKeyUserId),
-			ctx.GetBool(consts.CtxKeyIsAdmin),
-		)
-		if err != nil {
-			ctx.Fail(codeStorageAdvanceCloudTokenNotExist.WithError(err))
-
+		token, ok := h.queryAccessibleCloudToken(ctx, req.CloudToken)
+		if !ok {
 			return
 		}
 

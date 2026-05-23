@@ -1,6 +1,8 @@
 package advance
 
 import (
+	"net/http"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	cloudbridgeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
@@ -19,11 +21,12 @@ type Handler interface {
 var bi = httpcontext.NewBusinessGenerator(consts.BusCodeStorageAdvanceStartCode)
 
 var (
-	codeStorageAdvanceCloudTokenNotExist          = bi.Next("云盘令牌不存在")
+	codeStorageAdvanceCloudTokenNotExist          = bi.Next("云盘令牌不存在").WithHTTPCode(http.StatusNotFound)
 	codeStorageAdvanceQueryPathFailed             = bi.Next("查询路径失败")
 	codeStorageAdvanceQuerySubscribeUserError     = bi.Next("查询订阅信息失败")
 	codeStorageAdvanceQuerySubscribeUserListError = bi.Next("查询订阅用户列表失败")
 	codeStorageAdvanceGetShareInfoError           = bi.Next("获取分享详情失败")
+	codeStorageAdvanceQueryCloudTokenError        = bi.Next("查询云盘令牌失败")
 )
 
 type handler struct {

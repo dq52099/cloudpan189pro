@@ -38,9 +38,10 @@ var (
 	codeConfigNotInit      = bi.Next("媒体配置未初始化").WithHTTPCode(http.StatusNotFound)
 
 	// 操作相关错误码
-	codeMediaNotEnabled = bi.Next("媒体功能未启用")
-	codeClearFailed     = bi.Next("清理媒体文件失败")
-	codeRebuildFailed   = bi.Next("重建strm文件失败")
+	codeMediaNotEnabled           = bi.Next("媒体功能未启用")
+	codeClearFailed               = bi.Next("清理媒体文件失败")
+	codeRebuildFailed             = bi.Next("重建strm文件失败")
+	codeRebuildMountPointNotFound = bi.Next("指定挂载点不存在或无权限").WithHTTPCode(http.StatusNotFound)
 )
 
 // handler 依赖的服务

@@ -247,3 +247,50 @@ func TestRebuildStrmFileCountsMissingMountPointsAsFailed(t *testing.T) {
 		t.Fatalf("expected admin no-paginate mount point request, got %+v", mountPointService.req)
 	}
 }
+
+func TestRebuildStrmFileReturnsNotFoundWhenAllScopedMountPointsMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockRebuildTaskEngine{}
+	mountPointService := &mockRebuildMountPointService{list: []*models.MountPoint{
+		{ID: 7, FileId: 11, FullPath: "/movie"},
+	}}
+	router := gin.New()
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/rebuild", wrapper.Wrap(NewHandler(
+		&mockRebuildMediaConfigService{},
+		nil,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		taskEngine,
+	).RebuildStrmFile()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/rebuild", strings.NewReader(`{"mountPointIds":[22,33,22]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response httpcontext.Response
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.Code != codeRebuildMountPointNotFound.GetCode() {
+		t.Fatalf("expected business code %d, got %d", codeRebuildMountPointNotFound.GetCode(), response.Code)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no rebuild task, got %d", len(taskEngine.payloads))
+	}
+
+	if mountPointService.req == nil || !mountPointService.req.NoPaginate || !mountPointService.req.IsAdmin {
+		t.Fatalf("expected admin no-paginate mount point request, got %+v", mountPointService.req)
+	}
+}
