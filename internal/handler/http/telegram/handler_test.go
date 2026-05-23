@@ -39,8 +39,79 @@ func newTelegramTestRouter(db *gorm.DB) *gin.Engine {
 
 	router.POST("/users/update", wrapper.Wrap(handler.UpdateUser()))
 	router.POST("/settings/update", wrapper.Wrap(handler.UpdateSetting()))
+	router.POST("/settings/test", wrapper.Wrap(handler.TestConnection()))
+	router.POST("/messages/send", wrapper.Wrap(handler.SendMessage()))
+	router.POST("/shares/process", wrapper.Wrap(handler.ProcessShareLink()))
 
 	return router
+}
+
+func TestTestConnectionReturnsNotFoundWhenSettingMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupTelegramHandlerTestDB(t)
+	router := newTelegramTestRouter(db)
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/settings/test",
+		nil,
+	)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertTelegramSettingNotInitialized(t, recorder)
+}
+
+func TestSendMessageReturnsNotFoundWhenSettingMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupTelegramHandlerTestDB(t)
+	router := newTelegramTestRouter(db)
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/messages/send",
+		strings.NewReader(`{"message":"hello"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertTelegramSettingNotInitialized(t, recorder)
+}
+
+func TestProcessShareLinkReturnsNotFoundWhenFallbackSettingMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupTelegramHandlerTestDB(t)
+	router := newTelegramTestRouter(db)
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/shares/process",
+		strings.NewReader(`{"shareUrl":"https://cloud.189.cn/t/abcDEF"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertTelegramSettingNotInitialized(t, recorder)
+}
+
+func assertTelegramSettingNotInitialized(t *testing.T, recorder *httptest.ResponseRecorder) {
+	t.Helper()
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if !strings.Contains(recorder.Body.String(), "Telegram 配置未初始化") {
+		t.Fatalf("expected telegram setting missing message, got body=%s", recorder.Body.String())
+	}
 }
 
 func TestUpdateSettingPersistsFalseBooleans(t *testing.T) {

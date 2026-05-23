@@ -47,6 +47,7 @@ type mockUserGroupBindFileService struct {
 	batchBindCalls   int
 	batchBindGroupID int64
 	batchBindFileIDs []int64
+	batchBindErr     error
 	getBindCalls     int
 }
 
@@ -56,7 +57,7 @@ func (m *mockUserGroupBindFileService) BatchBindFiles(ctx appContext.Context, gr
 
 	m.batchBindFileIDs = append([]int64(nil), fileIDs...)
 
-	return nil
+	return m.batchBindErr
 }
 
 func (m *mockUserGroupBindFileService) GetBindFiles(ctx appContext.Context, groupID int64) ([]int64, error) {
@@ -99,6 +100,27 @@ func assertUserGroupNotFoundResponse(t *testing.T, recorder *httptest.ResponseRe
 
 	if response.Msg != codeUserGroupNotFound.GetMessage() {
 		t.Fatalf("expected message %q, got %q", codeUserGroupNotFound.GetMessage(), response.Msg)
+	}
+}
+
+func assertBindFileNotFoundResponse(t *testing.T, recorder *httptest.ResponseRecorder) {
+	t.Helper()
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response httpcontext.Response
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.Code != codeBindFileNotFound.GetCode() {
+		t.Fatalf("expected business code %d, got %d", codeBindFileNotFound.GetCode(), response.Code)
+	}
+
+	if response.Msg != codeBindFileNotFound.GetMessage() {
+		t.Fatalf("expected message %q, got %q", codeBindFileNotFound.GetMessage(), response.Msg)
 	}
 }
 
@@ -225,6 +247,33 @@ func TestBatchBindFilesReturnsGenericFailureForQueryErrors(t *testing.T) {
 
 	if group2FileService.batchBindCalls != 0 {
 		t.Fatalf("expected group binding service not called, got %d calls", group2FileService.batchBindCalls)
+	}
+}
+
+func TestBatchBindFilesReturnsNotFoundWhenBoundFileMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	group2FileService := &mockUserGroupBindFileService{batchBindErr: gorm.ErrRecordNotFound}
+	router := newUserGroupTestRouter(
+		&mockUserGroupService{},
+		group2FileService,
+	)
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/batch_bind_files",
+		strings.NewReader(`{"groupId":1,"fileIds":[999]}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertBindFileNotFoundResponse(t, recorder)
+
+	if group2FileService.batchBindCalls != 1 {
+		t.Fatalf("expected group binding service called once, got %d calls", group2FileService.batchBindCalls)
 	}
 }
 

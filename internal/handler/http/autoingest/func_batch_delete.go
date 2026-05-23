@@ -42,15 +42,27 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 			return
 		}
 
+		plans, err := h.planService.ListByIDs(ctx.GetContext(), requestIDs)
+		if err != nil {
+			ctx.Fail(codePlanListFailed.WithError(err))
+
+			return
+		}
+
+		accessiblePlans, initialFailCount := filterAccessiblePlans(ctx, requestIDs, plans)
+		if abortBatchIfNoAccessiblePlans(ctx, len(accessiblePlans)) {
+			return
+		}
+
 		var (
 			wg         sync.WaitGroup
 			successCnt int
-			failCnt    int
+			failCnt    = initialFailCount
 			mu         sync.Mutex
 			sem        = make(chan struct{}, maxBatchConcurrency)
 		)
 
-		for _, id := range requestIDs {
+		for _, plan := range accessiblePlans {
 			wg.Add(1)
 
 			sem <- struct{}{}
@@ -76,7 +88,7 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 				mu.Lock()
 				successCnt++
 				mu.Unlock()
-			}(id)
+			}(plan.ID)
 		}
 
 		wg.Wait()

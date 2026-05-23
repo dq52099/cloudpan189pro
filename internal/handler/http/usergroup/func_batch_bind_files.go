@@ -49,6 +49,12 @@ func (h *handler) BatchBindFiles() httpcontext.HandlerFunc {
 		}
 
 		if err := h.group2FileService.BatchBindFiles(ctx.GetContext(), req.GroupID, req.FileIDs); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(codeBindFileNotFound.WithError(err))
+
+				return
+			}
+
 			ctx.Fail(codeBatchBindFilesFailed.WithError(err))
 
 			return

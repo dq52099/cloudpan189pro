@@ -293,6 +293,130 @@ func TestBatchOperationsRejectEmptyIDs(t *testing.T) {
 	}
 }
 
+func TestBatchOperationsReturnNotFoundWhenNoAccessiblePlans(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	scenarios := []struct {
+		name  string
+		plans map[int64]*models.AutoIngestPlan
+	}{
+		{
+			name:  "missing",
+			plans: map[int64]*models.AutoIngestPlan{},
+		},
+		{
+			name: "forbidden",
+			plans: map[int64]*models.AutoIngestPlan{
+				11: {ID: 11, UserID: 200, SourceType: autoingest.SourceTypeSubscribe},
+				22: {ID: 22, UserID: 200, SourceType: autoingest.SourceTypeSubscribe},
+			},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		path     string
+		register func(*gin.Engine, *httpcontext.HandlerFuncWrapper, Handler)
+		assert   func(*testing.T, *mockBatchAutoIngestPlanService, *mockBatchAutoIngestTaskEngine)
+	}{
+		{
+			name: "enable",
+			path: "/batch_enable",
+			register: func(router *gin.Engine, wrapper *httpcontext.HandlerFuncWrapper, handler Handler) {
+				router.POST("/batch_enable", wrapper.Wrap(handler.BatchEnable()))
+			},
+			assert: func(t *testing.T, planService *mockBatchAutoIngestPlanService, taskEngine *mockBatchAutoIngestTaskEngine) {
+				t.Helper()
+
+				if len(planService.enabledIDs) != 0 {
+					t.Fatalf("expected no enable side effects, got %v", planService.enabledIDs)
+				}
+			},
+		},
+		{
+			name: "disable",
+			path: "/batch_disable",
+			register: func(router *gin.Engine, wrapper *httpcontext.HandlerFuncWrapper, handler Handler) {
+				router.POST("/batch_disable", wrapper.Wrap(handler.BatchDisable()))
+			},
+			assert: func(t *testing.T, planService *mockBatchAutoIngestPlanService, taskEngine *mockBatchAutoIngestTaskEngine) {
+				t.Helper()
+
+				if len(planService.disabledIDs) != 0 {
+					t.Fatalf("expected no disable side effects, got %v", planService.disabledIDs)
+				}
+			},
+		},
+		{
+			name: "delete",
+			path: "/batch_delete",
+			register: func(router *gin.Engine, wrapper *httpcontext.HandlerFuncWrapper, handler Handler) {
+				router.POST("/batch_delete", wrapper.Wrap(handler.BatchDelete()))
+			},
+			assert: func(t *testing.T, planService *mockBatchAutoIngestPlanService, taskEngine *mockBatchAutoIngestTaskEngine) {
+				t.Helper()
+
+				if len(planService.deletedReqs) != 0 {
+					t.Fatalf("expected no delete side effects, got %v", planService.deletedReqs)
+				}
+			},
+		},
+		{
+			name: "refresh",
+			path: "/batch_refresh",
+			register: func(router *gin.Engine, wrapper *httpcontext.HandlerFuncWrapper, handler Handler) {
+				router.POST("/batch_refresh", wrapper.Wrap(handler.BatchRefresh()))
+			},
+			assert: func(t *testing.T, planService *mockBatchAutoIngestPlanService, taskEngine *mockBatchAutoIngestTaskEngine) {
+				t.Helper()
+
+				if len(taskEngine.payloads) != 0 {
+					t.Fatalf("expected no refresh side effects, got payloads=%d", len(taskEngine.payloads))
+				}
+			},
+		},
+		{
+			name: "retry",
+			path: "/batch_retry",
+			register: func(router *gin.Engine, wrapper *httpcontext.HandlerFuncWrapper, handler Handler) {
+				router.POST("/batch_retry", wrapper.Wrap(handler.BatchRetry()))
+			},
+			assert: func(t *testing.T, planService *mockBatchAutoIngestPlanService, taskEngine *mockBatchAutoIngestTaskEngine) {
+				t.Helper()
+
+				if len(planService.offsetIDs) != 0 || len(planService.resetIDs) != 0 ||
+					len(planService.updatedIDs) != 0 || len(taskEngine.payloads) != 0 {
+					t.Fatalf("expected no retry side effects, got offset=%v reset=%v update=%v payloads=%d",
+						planService.offsetIDs, planService.resetIDs, planService.updatedIDs, len(taskEngine.payloads))
+				}
+			},
+		},
+	}
+
+	for _, scenario := range scenarios {
+		for _, tt := range tests {
+			t.Run(scenario.name+"/"+tt.name, func(t *testing.T) {
+				planService := &mockBatchAutoIngestPlanService{plans: scenario.plans}
+				taskEngine := &mockBatchAutoIngestTaskEngine{}
+				router := newBatchTestRouter(planService, taskEngine, false, tt.register)
+
+				recorder := postBatchRequest(router, tt.path, `{"ids":[11,11,22]}`)
+				assertPlanNotFoundResponse(t, recorder)
+
+				if len(planService.listByIDsReqs) != 1 {
+					t.Fatalf("expected one list call, got %d", len(planService.listByIDsReqs))
+				}
+
+				if got, want := planService.listByIDsReqs[0], []int64{11, 22}; !int64SlicesEqual(got, want) {
+					t.Fatalf("expected deduplicated list IDs %v, got %v", want, got)
+				}
+
+				tt.assert(t, planService, taskEngine)
+			})
+		}
+	}
+}
+
 func TestBatchEnableDeduplicatesIDs(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -478,7 +602,12 @@ func TestBatchDisableDeduplicatesIDsAndCountsFailures(t *testing.T) {
 func TestBatchDeleteDeduplicatesIDsAndKeepsUserContext(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	planService := &mockBatchAutoIngestPlanService{}
+	planService := &mockBatchAutoIngestPlanService{
+		plans: map[int64]*models.AutoIngestPlan{
+			11: {ID: 11, UserID: 100},
+			22: {ID: 22, UserID: 100},
+		},
+	}
 	router := gin.New()
 	router.Use(func(ctx *gin.Context) {
 		ctx.Set(consts.CtxKeyUserId, int64(100))
@@ -496,6 +625,10 @@ func TestBatchDeleteDeduplicatesIDsAndKeepsUserContext(t *testing.T) {
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if got, want := planService.listByIDsReqs[0], []int64{11, 22}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected deduplicated list IDs %v, got %v", want, got)
 	}
 
 	gotIDs := make([]int64, 0, len(planService.deletedReqs))
@@ -555,7 +688,7 @@ func TestBatchDeleteCountsMissingForbiddenAndServiceErrors(t *testing.T) {
 
 	sort.Slice(gotIDs, func(i, j int) bool { return gotIDs[i] < gotIDs[j] })
 
-	if want := []int64{11, 22, 33, 44}; !int64SlicesEqual(gotIDs, want) {
+	if want := []int64{11, 33}; !int64SlicesEqual(gotIDs, want) {
 		t.Fatalf("expected delete attempts %v, got %v", want, gotIDs)
 	}
 

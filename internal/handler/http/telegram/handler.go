@@ -250,7 +250,11 @@ func (h *Handler) TestConnection() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		var setting models.TelegramSetting
 		if err := h.db.First(&setting).Error; err != nil {
-			c.Fail(invalidParams(fmt.Errorf("failed to get settings: %w", err)))
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				c.Fail(notFound("Telegram 配置未初始化"))
+			} else {
+				c.Fail(invalidParams(fmt.Errorf("failed to get settings: %w", err)))
+			}
 
 			return
 		}
@@ -421,7 +425,11 @@ func (h *Handler) SendMessage() httpcontext.HandlerFunc {
 
 		var setting models.TelegramSetting
 		if err := h.db.First(&setting).Error; err != nil {
-			c.Fail(invalidParams(fmt.Errorf("failed to get settings: %w", err)))
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				c.Fail(notFound("Telegram 配置未初始化"))
+			} else {
+				c.Fail(invalidParams(fmt.Errorf("failed to get settings: %w", err)))
+			}
 
 			return
 		}
@@ -502,7 +510,11 @@ func (h *Handler) ProcessShareLink() httpcontext.HandlerFunc {
 		// 回退：根据数据库中的配置临时创建服务（无挂载依赖，将走 HTTP 自调）
 		var setting models.TelegramSetting
 		if err := h.db.First(&setting).Error; err != nil {
-			c.Fail(invalidParams(fmt.Errorf("failed to get settings: %w", err)))
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				c.Fail(notFound("Telegram 配置未初始化"))
+			} else {
+				c.Fail(invalidParams(fmt.Errorf("failed to get settings: %w", err)))
+			}
 
 			return
 		}

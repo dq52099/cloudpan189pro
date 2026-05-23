@@ -3,6 +3,8 @@ package autoingest
 import (
 	"errors"
 	"fmt"
+
+	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 )
 
 const maxBatchIDs = 500
@@ -40,4 +42,14 @@ func normalizeBatchIDs(ids []int64) ([]int64, error) {
 	}
 
 	return result, nil
+}
+
+func abortBatchIfNoAccessiblePlans(ctx *httpcontext.Context, accessiblePlanCount int) bool {
+	if accessiblePlanCount > 0 {
+		return false
+	}
+
+	ctx.Fail(codePlanNotFound)
+
+	return true
 }

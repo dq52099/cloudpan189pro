@@ -44,6 +44,9 @@ func (h *handler) BatchEnable() httpcontext.HandlerFunc {
 		}
 
 		accessiblePlans, initialFailCount := filterAccessiblePlans(ctx, requestIDs, plans)
+		if abortBatchIfNoAccessiblePlans(ctx, len(accessiblePlans)) {
+			return
+		}
 
 		var (
 			wg         sync.WaitGroup
