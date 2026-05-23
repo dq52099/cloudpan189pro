@@ -2,6 +2,8 @@ package autoingest
 
 import (
 	stdctx "context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -49,7 +51,28 @@ func (m *mockAutoIngestCloudTokenService) QueryAccessible(
 	return &models.CloudToken{ID: id, UserID: userID}, nil
 }
 
-func TestCreateSubscribePlanRejectsInaccessibleCloudToken(t *testing.T) {
+func assertCloudTokenNotFoundResponse(t *testing.T, recorder *httptest.ResponseRecorder) {
+	t.Helper()
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response httpcontext.Response
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.Code != codeCloudTokenNotFound.GetCode() {
+		t.Fatalf("expected business code %d, got %d", codeCloudTokenNotFound.GetCode(), response.Code)
+	}
+
+	if response.Msg != codeCloudTokenNotFound.GetMessage() {
+		t.Fatalf("expected message %q, got %q", codeCloudTokenNotFound.GetMessage(), response.Msg)
+	}
+}
+
+func TestCreateSubscribePlanReturnsNotFoundWhenCloudTokenMissing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	planService := &mockCreateSubscribePlanService{id: 42}
@@ -80,9 +103,7 @@ func TestCreateSubscribePlanRejectsInaccessibleCloudToken(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)
 
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
-	}
+	assertCloudTokenNotFoundResponse(t, recorder)
 
 	if planService.plan != nil {
 		t.Fatal("expected inaccessible token not to create plan")
@@ -93,7 +114,7 @@ func TestCreateSubscribePlanRejectsInaccessibleCloudToken(t *testing.T) {
 	}
 }
 
-func TestUpdatePlanRejectsInaccessibleCloudToken(t *testing.T) {
+func TestUpdatePlanReturnsNotFoundWhenCloudTokenMissing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	planService := &mockPlanAccessService{
@@ -110,9 +131,7 @@ func TestUpdatePlanRejectsInaccessibleCloudToken(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)
 
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
-	}
+	assertCloudTokenNotFoundResponse(t, recorder)
 
 	if len(planService.updatedIDs) != 0 {
 		t.Fatalf("expected update not to be called, got %v", planService.updatedIDs)
@@ -120,6 +139,41 @@ func TestUpdatePlanRejectsInaccessibleCloudToken(t *testing.T) {
 
 	if got, want := cloudTokenService.queries, []mockAutoIngestCloudTokenQuery{{id: 77, userID: 100, isAdmin: false}}; !cloudTokenQueriesEqual(got, want) {
 		t.Fatalf("expected cloud token access query %+v, got %+v", want, got)
+	}
+}
+
+func TestUpdatePlanAllowsUnbindingCloudTokenWithoutQuery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	planService := &mockPlanAccessService{
+		plans: map[int64]*models.AutoIngestPlan{
+			11: {ID: 11, UserID: 100, SourceType: autoingest.SourceTypeSubscribe, TokenId: 77},
+		},
+	}
+	cloudTokenService := &mockAutoIngestCloudTokenService{err: errors.New("must not query token")}
+	router := newPlanAccessRouter(NewHandler(nil, planService, nil, nil, cloudTokenService).UpdatePlan())
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/action", strings.NewReader(`{"id":11,"tokenId":0}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if len(cloudTokenService.queries) != 0 {
+		t.Fatalf("expected token unbind not to query cloud token, got %+v", cloudTokenService.queries)
+	}
+
+	if got, want := planService.updatedIDs, []int64{11}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected update ids %v, got %v", want, got)
+	}
+
+	fields := fieldsToMap(planService.updatedFields[0])
+	if fields["token_id"] != int64(0) {
+		t.Fatalf("expected token_id field to be 0, got %+v", fields)
 	}
 }
 

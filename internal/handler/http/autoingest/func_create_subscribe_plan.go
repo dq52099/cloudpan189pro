@@ -74,7 +74,7 @@ func (h *handler) CreateSubscribePlan() httpcontext.HandlerFunc {
 		}
 
 		if err := h.validateCloudTokenAccess(ctx, req.CloudToken); err != nil {
-			ctx.Fail(codeCreatePlanFailed.WithError(err))
+			failCloudTokenAccessError(ctx, err, codeCreatePlanFailed)
 
 			return
 		}

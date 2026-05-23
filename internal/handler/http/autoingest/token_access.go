@@ -2,10 +2,14 @@ package autoingest
 
 import (
 	"errors"
+	"net/http"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	"gorm.io/gorm"
 )
+
+var codeCloudTokenNotFound = bi.Next("云盘令牌不存在").WithHTTPCode(http.StatusNotFound)
 
 func (h *handler) validateCloudTokenAccess(ctx *httpcontext.Context, tokenID int64) error {
 	if tokenID < 0 {
@@ -26,6 +30,20 @@ func (h *handler) validateCloudTokenAccess(ctx *httpcontext.Context, tokenID int
 		ctx.GetInt64(consts.CtxKeyUserId),
 		ctx.GetBool(consts.CtxKeyIsAdmin),
 	)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return codeCloudTokenNotFound.WithError(err)
+	}
 
 	return err
+}
+
+func failCloudTokenAccessError(ctx *httpcontext.Context, err error, fallback httpcontext.BusinessError) {
+	var busErr httpcontext.BusinessError
+	if errors.As(err, &busErr) {
+		ctx.Fail(busErr)
+
+		return
+	}
+
+	ctx.Fail(fallback.WithError(err))
 }

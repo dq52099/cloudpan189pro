@@ -11,12 +11,32 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
+	appContext "github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	cloudtokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 var errQueueUnavailable = errors.New("queue unavailable")
+
+type mockAddCloudTokenService struct {
+	cloudtokenSvi.Service
+	err     error
+	queries []int64
+}
+
+func (m *mockAddCloudTokenService) QueryAccessible(ctx appContext.Context, id, userID int64, isAdmin bool) (*models.CloudToken, error) {
+	m.queries = append(m.queries, id)
+
+	if m.err != nil {
+		return nil, m.err
+	}
+
+	return &models.CloudToken{ID: id, AccessToken: "access-token", ExpiresIn: 3600}, nil
+}
 
 func TestAddReturnsCreatedStorageWhenInitialScanDispatchFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -123,9 +143,62 @@ func TestAddQueuesInitialScanTask(t *testing.T) {
 	}
 }
 
+func TestAddReturnsNotFoundWhenPersonalCloudTokenMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	storageFacade := &mockBatchAddStorageFacade{}
+	cloudTokenService := &mockAddCloudTokenService{err: gorm.ErrRecordNotFound}
+	router := newAddTestRouterWithCloudToken(taskEngine, storageFacade, cloudTokenService)
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/add",
+		strings.NewReader(`{"localPath":"/personal","osType":"person_folder","cloudToken":99,"fileId":"file-1"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response httpcontext.Response
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Code != busCodeStorageCloudTokenNotExist.GetCode() {
+		t.Fatalf("expected business code %d, got %d", busCodeStorageCloudTokenNotExist.GetCode(), response.Code)
+	}
+
+	if got, want := cloudTokenService.queries, []int64{99}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected cloud token query %v, got %v", want, got)
+	}
+
+	if storageFacade.req != nil {
+		t.Fatalf("expected storage facade not to be called, got %+v", storageFacade.req)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no scan task, got %d", len(taskEngine.payloads))
+	}
+}
+
 func newAddTestRouter(
 	taskEngine *mockBatchDeleteTaskEngine,
 	storageFacade *mockBatchAddStorageFacade,
+) *gin.Engine {
+	return newAddTestRouterWithCloudToken(taskEngine, storageFacade, nil)
+}
+
+func newAddTestRouterWithCloudToken(
+	taskEngine *mockBatchDeleteTaskEngine,
+	storageFacade *mockBatchAddStorageFacade,
+	cloudTokenService cloudtokenSvi.Service,
 ) *gin.Engine {
 	router := gin.New()
 	router.Use(func(ctx *gin.Context) {
@@ -138,7 +211,7 @@ func newAddTestRouter(
 		taskEngine,
 		nil,
 		&mockBatchAddCloudBridge{},
-		nil,
+		cloudTokenService,
 		nil,
 		nil,
 		storageFacade,

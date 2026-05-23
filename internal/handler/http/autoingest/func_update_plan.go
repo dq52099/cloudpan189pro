@@ -96,7 +96,7 @@ func (h *handler) UpdatePlan() httpcontext.HandlerFunc {
 
 		if req.TokenId != nil {
 			if err := h.validateCloudTokenAccess(ctx, *req.TokenId); err != nil {
-				ctx.Fail(codePlanUpdateFailed.WithError(err))
+				failCloudTokenAccessError(ctx, err, codePlanUpdateFailed)
 
 				return
 			}

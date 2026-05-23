@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/json"
+	"errors"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
@@ -96,6 +97,13 @@ func (h *handler) Add() httpcontext.HandlerFunc {
 		}
 
 		if err != nil {
+			var busErr httpcontext.BusinessError
+			if errors.As(err, &busErr) {
+				ctx.Fail(busErr)
+
+				return
+			}
+
 			ctx.Fail(busCodeStorageQueryPathFailed.WithError(err))
 
 			return

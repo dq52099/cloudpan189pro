@@ -120,7 +120,11 @@
             </n-tooltip>
 
             <!-- 用户信息 -->
-            <n-dropdown :options="userMenuOptions" @select="handleUserMenuSelect">
+            <n-dropdown
+              v-if="systemInfo.enableAuth"
+              :options="userMenuOptions"
+              @select="handleUserMenuSelect"
+            >
               <div class="user-info">
                 <n-text class="username">{{ userInfo.username }}</n-text>
                 <n-text v-if="!isMobile && userStore.isAdmin" depth="3" class="user-role"
@@ -503,6 +507,10 @@ const handleMobileMenuSelect = (key: string) => {
 
 // 处理用户菜单选择
 const handleUserMenuSelect = (key: string) => {
+  if (!systemInfo.enableAuth) {
+    return
+  }
+
   switch (key) {
     case 'profile':
       router.push('/@dashboard/profile')
@@ -523,6 +531,10 @@ const handleChangePasswordSuccess = () => {
 
 // 处理退出登录
 const handleLogout = () => {
+  if (!systemInfo.enableAuth) {
+    return
+  }
+
   authStore.logout()
   message.success('已退出登录')
   router.push('/@login')
@@ -534,7 +546,9 @@ onMounted(() => {
   checkScreenSize()
   window.addEventListener('resize', checkScreenSize)
 
-  userStore.refresh()
+  if (systemInfo.enableAuth) {
+    userStore.refresh()
+  }
 })
 
 // 清理事件监听器

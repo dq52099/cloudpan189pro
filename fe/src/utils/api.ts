@@ -19,6 +19,7 @@ type RetriableRequestConfig = InternalAxiosRequestConfig & {
 }
 
 const isRefreshTokenRequest = (url?: string) => url?.includes('/user/refresh_token') ?? false
+const isSystemInfoRequest = (url?: string) => url?.includes('/setting/info') ?? false
 const getApiErrorMessage = (data: ApiResponse | undefined, fallback: string) =>
   data?.msg || fallback
 
@@ -98,8 +99,13 @@ api.interceptors.response.use(
         case 401:
           {
             const systemStore = useSystemStore()
-            const systemInfo = systemStore.get()
             const message = getApiErrorMessage(data, '未登录或会话已过期')
+
+            if (!isSystemInfoRequest(config.url)) {
+              await systemStore.ensureLoaded()
+            }
+
+            const systemInfo = systemStore.get()
 
             if (systemInfo.initialized && !systemInfo.enableAuth) {
               console.error('请求未授权:', message)

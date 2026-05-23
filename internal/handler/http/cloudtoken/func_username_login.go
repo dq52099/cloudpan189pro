@@ -1,10 +1,13 @@
 package cloudtoken
 
 import (
+	"errors"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
+	"gorm.io/gorm"
 )
 
 type (
@@ -62,6 +65,12 @@ func (h *handler) UsernameLogin() httpcontext.HandlerFunc {
 			// 去查询账号密码
 			token, err := h.cloudTokenService.QueryAccessible(ctx.GetContext(), req.ID, currentUserID, isAdmin)
 			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					ctx.Fail(codeTokenNotFound.WithError(err))
+
+					return
+				}
+
 				ctx.Fail(codeQueryFailed.WithError(err))
 
 				return
@@ -94,6 +103,12 @@ func (h *handler) UsernameLogin() httpcontext.HandlerFunc {
 			IsAdmin:  isAdmin,
 		})
 		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(codeTokenNotFound.WithError(err))
+
+				return
+			}
+
 			ctx.Fail(codeUsernameLoginFailed.WithError(err))
 
 			return
