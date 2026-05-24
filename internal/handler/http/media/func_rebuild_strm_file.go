@@ -104,6 +104,12 @@ func (h *handler) RebuildStrmFile() httpcontext.HandlerFunc {
 			return
 		}
 
+		if len(requestedIDs) == 0 {
+			ctx.Success(rebuildStrmResponse{Total: 0, Success: 0, Failed: 0})
+
+			return
+		}
+
 		// 指定了挂载点：逐个派发单挂载点重建任务
 		mountpoints, err := h.mountpointService.List(ctx.GetContext(), &mountpointSvi.ListRequest{
 			NoPaginate: true,

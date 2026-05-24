@@ -270,8 +270,8 @@ func TestRebuildStrmFileEmptyMountPointIDsDoesNotTriggerFullRebuild(t *testing.T
 		t.Fatalf("expected no rebuild task for explicit empty mountPointIds, got %d", len(taskEngine.payloads))
 	}
 
-	if mountPointService.req == nil {
-		t.Fatal("expected scoped path to query mount points")
+	if mountPointService.req != nil {
+		t.Fatalf("expected explicit empty mountPointIds to skip mount point query, got %+v", mountPointService.req)
 	}
 }
 
