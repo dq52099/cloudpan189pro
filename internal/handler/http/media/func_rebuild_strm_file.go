@@ -38,6 +38,7 @@ type rebuildStrmResponse struct {
 // @Failure 400 {object} httpcontext.Response "提交重建任务失败"
 // @Failure 401 {object} httpcontext.Response "未授权访问"
 // @Failure 403 {object} httpcontext.Response "权限不足"
+// @Failure 404 {object} httpcontext.Response "媒体配置未初始化或指定挂载点不存在"
 // @Router /api/media/rebuild_strm_file [post]
 func (h *handler) RebuildStrmFile() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {

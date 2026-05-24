@@ -99,24 +99,16 @@ type SummaryResponse struct {
 	} `json:"tasks"`
 }
 
-// countWithLog 统计记录数，失败时记录日志但不中断（资源概览允许部分失败）。
-func (h *handler) countWithLog(model interface{}, where string, args []interface{}, label string) int64 {
-	var count int64
-
-	q := h.db.Model(model)
-	if where != "" {
-		q = q.Where(where, args...)
-	}
-
-	if err := q.Count(&count).Error; err != nil {
-		h.logger.Warn("资源概览统计失败", zap.String("label", label), zap.Error(err))
-
-		return 0
-	}
-
-	return count
-}
-
+// Summary 获取资源概览
+// @Summary 获取资源概览
+// @Description 获取用户、挂载点、云盘令牌、虚拟文件、媒体、自动入库和任务状态的汇总统计
+// @Tags 资源概览
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Success 200 {object} httpcontext.Response{data=SummaryResponse} "获取成功"
+// @Failure 401 {object} httpcontext.Response "未授权访问"
+// @Router /api/resource/summary [get]
 func (h *handler) Summary() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
 		resp := &SummaryResponse{}
@@ -192,4 +184,22 @@ func (h *handler) Summary() httpcontext.HandlerFunc {
 
 		ctx.Success(resp)
 	}
+}
+
+// countWithLog 统计记录数，失败时记录日志但不中断（资源概览允许部分失败）。
+func (h *handler) countWithLog(model interface{}, where string, args []interface{}, label string) int64 {
+	var count int64
+
+	q := h.db.Model(model)
+	if where != "" {
+		q = q.Where(where, args...)
+	}
+
+	if err := q.Count(&count).Error; err != nil {
+		h.logger.Warn("资源概览统计失败", zap.String("label", label), zap.Error(err))
+
+		return 0
+	}
+
+	return count
 }

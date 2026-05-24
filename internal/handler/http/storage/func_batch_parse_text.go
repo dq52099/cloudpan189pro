@@ -19,9 +19,9 @@ import (
 // @Param request body topic.BatchParseTextRequest true "解析请求参数"
 // @Success 200 {object} httpcontext.Response "解析成功，data为解析结果列表"
 // @Failure 400 {object} httpcontext.Response "参数验证失败，code=99998"
-// @Failure 400 {object} httpcontext.Response "CloudToken不存在"
 // @Failure 400 {object} httpcontext.Response "解析服务内部错误"
 // @Failure 401 {object} httpcontext.Response "未授权访问"
+// @Failure 404 {object} httpcontext.Response "云盘令牌不存在，code=4013"
 // @Router /api/storage/batch_parse_text [post]
 func (h *handler) BatchParseFromText() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {

@@ -36,6 +36,7 @@ type batchDeleteResponse struct {
 // @Failure 400 {object} httpcontext.Response "发送清理任务失败，code=4024"
 // @Failure 401 {object} httpcontext.Response "未授权访问"
 // @Failure 403 {object} httpcontext.Response "权限不足"
+// @Failure 404 {object} httpcontext.Response "挂载点不存在或无权限删除，code=4022"
 // @Router /api/storage/batch_delete [post]
 func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {

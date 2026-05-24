@@ -33,6 +33,7 @@ type configUpdateRequest struct {
 // @Success 200 {object} httpcontext.Response "更新成功"
 // @Failure 400 {object} httpcontext.Response "参数验证失败，code=99998"
 // @Failure 400 {object} httpcontext.Response "更新媒体配置失败"
+// @Failure 404 {object} httpcontext.Response "媒体配置未初始化"
 // @Router /api/media/config/update [post]
 func (h *handler) ConfigUpdate() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {

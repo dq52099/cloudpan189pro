@@ -2264,6 +2264,12 @@
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
+                    },
+                    "404": {
+                        "description": "媒体配置未初始化",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
                     }
                 }
             }
@@ -2307,6 +2313,12 @@
                     },
                     "400": {
                         "description": "更新媒体配置失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "媒体配置未初始化",
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
@@ -2377,6 +2389,133 @@
                     },
                     "403": {
                         "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "媒体配置未初始化或指定挂载点不存在",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/public/share_info": {
+            "get": {
+                "description": "根据分享码获取分享的详细信息，支持直接传入完整分享链接",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "存储高级功能"
+                ],
+                "summary": "获取分享信息",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "example": "\"https://cloud.189.cn/t/abc12345\"",
+                        "description": "分享码或完整链接",
+                        "name": "shareCode",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "example": "\"1234\"",
+                        "description": "分享访问码",
+                        "name": "shareAccessCode",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取分享信息成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpcontext.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/cloudbridge.ShareInfo"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "获取分享详情失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/resource/summary": {
+            "get": {
+                "description": "获取用户、挂载点、云盘令牌、虚拟文件、媒体、自动入库和任务状态的汇总统计",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "资源概览"
+                ],
+                "summary": "获取资源概览",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpcontext.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/resource.SummaryResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
@@ -3293,6 +3432,12 @@
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
                     }
                 }
             }
@@ -3423,6 +3568,12 @@
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
+                    },
+                    "404": {
+                        "description": "挂载点不存在或无权限删除，code=4022",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
                     }
                 }
             }
@@ -3541,6 +3692,12 @@
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
+                    },
+                    "404": {
+                        "description": "云盘令牌不存在，code=4013",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
                     }
                 }
             }
@@ -3597,6 +3754,12 @@
                     },
                     "403": {
                         "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "挂载点不存在或无权限刷新，code=4022",
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
@@ -4077,6 +4240,77 @@
                     },
                     "400": {
                         "description": "更新自动刷新开始时间失败，code=4029",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/task_state/file_log/clear": {
+            "post": {
+                "description": "清空全部文件任务日志；传入 duration 时仅清理指定时长之前的日志",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "任务状态管理"
+                ],
+                "summary": "清空文件任务日志",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "清理参数",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/taskstate.ClearTaskLogsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "清理成功，data 为删除数量",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpcontext.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "integer",
+                                            "format": "int64"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "清空任务日志失败，code=xxxx",
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
@@ -7185,6 +7419,109 @@
                 }
             }
         },
+        "resource.SummaryResponse": {
+            "type": "object",
+            "properties": {
+                "autoIngest": {
+                    "type": "object",
+                    "properties": {
+                        "logs24h": {
+                            "type": "integer"
+                        },
+                        "plans": {
+                            "type": "integer"
+                        }
+                    }
+                },
+                "cloudTokens": {
+                    "type": "object",
+                    "properties": {
+                        "active": {
+                            "type": "integer"
+                        },
+                        "total": {
+                            "type": "integer"
+                        }
+                    }
+                },
+                "media": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "mediaFiles": {
+                            "type": "integer"
+                        },
+                        "strmFiles": {
+                            "type": "integer"
+                        }
+                    }
+                },
+                "mountPoints": {
+                    "type": "object",
+                    "properties": {
+                        "autoRefresh": {
+                            "type": "integer"
+                        },
+                        "enabled": {
+                            "type": "integer"
+                        },
+                        "total": {
+                            "type": "integer"
+                        }
+                    }
+                },
+                "subscribeShares": {
+                    "type": "integer"
+                },
+                "tasks": {
+                    "type": "object",
+                    "properties": {
+                        "completed": {
+                            "type": "integer"
+                        },
+                        "failed": {
+                            "type": "integer"
+                        },
+                        "pending": {
+                            "type": "integer"
+                        },
+                        "running": {
+                            "type": "integer"
+                        }
+                    }
+                },
+                "userGroups": {
+                    "type": "integer"
+                },
+                "users": {
+                    "type": "object",
+                    "properties": {
+                        "active": {
+                            "type": "integer"
+                        },
+                        "disabled": {
+                            "type": "integer"
+                        },
+                        "total": {
+                            "type": "integer"
+                        }
+                    }
+                },
+                "virtualFiles": {
+                    "type": "object",
+                    "properties": {
+                        "files": {
+                            "type": "integer"
+                        },
+                        "folders": {
+                            "type": "integer"
+                        }
+                    }
+                }
+            }
+        },
         "setting.infoResponse": {
             "type": "object",
             "properties": {
@@ -7898,6 +8235,14 @@
                 },
                 "totalTasks": {
                     "type": "integer"
+                }
+            }
+        },
+        "taskstate.ClearTaskLogsRequest": {
+            "type": "object",
+            "properties": {
+                "duration": {
+                    "type": "string"
                 }
             }
         },

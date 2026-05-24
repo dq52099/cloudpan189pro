@@ -22,6 +22,7 @@ type configToggleRequest struct {
 // @Success 200 {object} httpcontext.Response "切换成功"
 // @Failure 400 {object} httpcontext.Response "参数验证失败，code=99998"
 // @Failure 400 {object} httpcontext.Response "切换媒体配置启用状态失败"
+// @Failure 404 {object} httpcontext.Response "媒体配置未初始化"
 // @Router /api/media/config/toggle [post]
 func (h *handler) ConfigToggle() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {

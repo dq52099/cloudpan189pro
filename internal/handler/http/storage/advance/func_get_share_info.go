@@ -27,7 +27,9 @@ var reAccessCode = regexp.MustCompile(`(?:\S+码|code)[:：]\s*([a-zA-Z0-9]+)`)
 // @Success 200 {object} httpcontext.Response{data=cloudbridge.ShareInfo} "获取分享信息成功"
 // @Failure 400 {object} httpcontext.Response "参数验证失败"
 // @Failure 400 {object} httpcontext.Response "获取分享详情失败"
+// @Failure 401 {object} httpcontext.Response "未授权访问"
 // @Router /api/storage/advance/share_info [get]
+// @Router /api/public/share_info [get]
 func (h *handler) GetShareInfo() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
 		req := new(getShareInfoRequest)

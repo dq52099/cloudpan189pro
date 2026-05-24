@@ -1236,6 +1236,72 @@ definitions:
       version:
         type: integer
     type: object
+  resource.SummaryResponse:
+    properties:
+      autoIngest:
+        properties:
+          logs24h:
+            type: integer
+          plans:
+            type: integer
+        type: object
+      cloudTokens:
+        properties:
+          active:
+            type: integer
+          total:
+            type: integer
+        type: object
+      media:
+        properties:
+          enabled:
+            type: boolean
+          mediaFiles:
+            type: integer
+          strmFiles:
+            type: integer
+        type: object
+      mountPoints:
+        properties:
+          autoRefresh:
+            type: integer
+          enabled:
+            type: integer
+          total:
+            type: integer
+        type: object
+      subscribeShares:
+        type: integer
+      tasks:
+        properties:
+          completed:
+            type: integer
+          failed:
+            type: integer
+          pending:
+            type: integer
+          running:
+            type: integer
+        type: object
+      userGroups:
+        type: integer
+      users:
+        properties:
+          active:
+            type: integer
+          disabled:
+            type: integer
+          total:
+            type: integer
+        type: object
+      virtualFiles:
+        properties:
+          files:
+            type: integer
+          folders:
+            type: integer
+        type: object
+    type: object
   setting.infoResponse:
     properties:
       baseURL:
@@ -1753,6 +1819,11 @@ definitions:
         type: integer
       totalTasks:
         type: integer
+    type: object
+  taskstate.ClearTaskLogsRequest:
+    properties:
+      duration:
+        type: string
     type: object
   taskstate.fileLogListResponse:
     properties:
@@ -3661,6 +3732,10 @@ paths:
           description: 切换媒体配置启用状态失败
           schema:
             $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 媒体配置未初始化
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
       summary: 启用/禁用媒体配置
       tags:
       - 媒体配置
@@ -3689,6 +3764,10 @@ paths:
             $ref: '#/definitions/httpcontext.Response'
         "400":
           description: 更新媒体配置失败
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 媒体配置未初始化
           schema:
             $ref: '#/definitions/httpcontext.Response'
       summary: 更新媒体配置
@@ -3736,9 +3815,88 @@ paths:
           description: 权限不足
           schema:
             $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 媒体配置未初始化或指定挂载点不存在
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
       summary: 重建strm文件
       tags:
       - 媒体操作
+  /api/public/share_info:
+    get:
+      consumes:
+      - application/json
+      description: 根据分享码获取分享的详细信息，支持直接传入完整分享链接
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 分享码或完整链接
+        example: '"https://cloud.189.cn/t/abc12345"'
+        in: query
+        name: shareCode
+        required: true
+        type: string
+      - description: 分享访问码
+        example: '"1234"'
+        in: query
+        name: shareAccessCode
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取分享信息成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpcontext.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/cloudbridge.ShareInfo'
+              type: object
+        "400":
+          description: 获取分享详情失败
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 获取分享信息
+      tags:
+      - 存储高级功能
+  /api/resource/summary:
+    get:
+      consumes:
+      - application/json
+      description: 获取用户、挂载点、云盘令牌、虚拟文件、媒体、自动入库和任务状态的汇总统计
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpcontext.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/resource.SummaryResponse'
+              type: object
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 获取资源概览
+      tags:
+      - 资源概览
   /api/setting/addition:
     get:
       consumes:
@@ -4320,6 +4478,10 @@ paths:
           description: 获取分享详情失败
           schema:
             $ref: '#/definitions/httpcontext.Response'
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
       summary: 获取分享信息
       tags:
       - 存储高级功能
@@ -4403,6 +4565,10 @@ paths:
           description: 权限不足
           schema:
             $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 挂载点不存在或无权限删除，code=4022
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
       summary: 批量删除存储挂载
       tags:
       - 存储管理
@@ -4481,6 +4647,10 @@ paths:
           description: 未授权访问
           schema:
             $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 云盘令牌不存在，code=4013
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
       summary: 批量解析文本（预览）
       tags:
       - 存储管理
@@ -4518,6 +4688,10 @@ paths:
             $ref: '#/definitions/httpcontext.Response'
         "403":
           description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 挂载点不存在或无权限刷新，code=4022
           schema:
             $ref: '#/definitions/httpcontext.Response'
       summary: 批量刷新存储挂载
@@ -4845,6 +5019,50 @@ paths:
       summary: 切换自动刷新配置
       tags:
       - 存储管理
+  /api/task_state/file_log/clear:
+    post:
+      consumes:
+      - application/json
+      description: 清空全部文件任务日志；传入 duration 时仅清理指定时长之前的日志
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 清理参数
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/taskstate.ClearTaskLogsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 清理成功，data 为删除数量
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpcontext.Response'
+            - properties:
+                data:
+                  format: int64
+                  type: integer
+              type: object
+        "400":
+          description: 清空任务日志失败，code=xxxx
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "403":
+          description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 清空文件任务日志
+      tags:
+      - 任务状态管理
   /api/task_state/file_log/list:
     get:
       consumes:
