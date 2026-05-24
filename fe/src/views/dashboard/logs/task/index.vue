@@ -44,7 +44,13 @@
           刷新
         </n-button>
         <n-dropdown trigger="click" :options="clearLogOptions" @select="handleClearLogs">
-          <n-button type="error" ghost :loading="state.clearing" style="margin-left: 8px">
+          <n-button
+            type="error"
+            ghost
+            :loading="state.clearing"
+            :disabled="state.clearing || state.clearDialogOpen"
+            style="margin-left: 8px"
+          >
             <template #icon>
               <n-icon>
                 <TrashOutline />
@@ -199,6 +205,7 @@ const state = reactive({
   tableData: [] as Models.FileTaskLog[],
   loading: false,
   clearing: false,
+  clearDialogOpen: false,
   searchKeyword: '',
   statusFilter: null as string | null,
   typeFilter: null as string | null,
@@ -423,6 +430,11 @@ const handleRefresh = () => {
 
 // 清空日志
 const handleClearLogs = (key: string | number) => {
+  if (state.clearing || state.clearDialogOpen || !isComponentMounted) {
+    return
+  }
+
+  state.clearDialogOpen = true
   const duration = key === 'all' ? undefined : String(key)
   const selectedLabel =
     clearLogOptions.find((option) => option.key === key)?.label?.toString() || '清理日志'
@@ -434,14 +446,21 @@ const handleClearLogs = (key: string | number) => {
       : '确定要清空所有任务日志吗？此操作不可撤销。',
     positiveText: '确认清理',
     negativeText: '取消',
+    onAfterLeave: () => {
+      if (!state.clearing) {
+        state.clearDialogOpen = false
+      }
+    },
     onPositiveClick: () => {
       if (state.clearing || !isComponentMounted) {
+        state.clearDialogOpen = false
+
         return
       }
 
       const requestId = ++clearRequestId
       state.clearing = true
-      clearTaskLogs(duration ? { duration } : undefined)
+      return clearTaskLogs(duration ? { duration } : undefined)
         .then((res) => {
           if (!isLatestClearRequest(requestId)) {
             return
@@ -470,6 +489,7 @@ const handleClearLogs = (key: string | number) => {
         .finally(() => {
           if (isLatestClearRequest(requestId)) {
             state.clearing = false
+            state.clearDialogOpen = false
           }
         })
     },
@@ -729,6 +749,7 @@ onUnmounted(() => {
   listRequestId++
   clearRequestId++
   listRequestInFlight = false
+  state.clearDialogOpen = false
   stopAutoRefresh()
 })
 </script>

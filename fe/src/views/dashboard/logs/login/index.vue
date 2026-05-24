@@ -46,7 +46,12 @@
           刷新
         </n-button>
         <n-dropdown trigger="click" :options="clearLogOptions" @select="handleClearLogs">
-          <n-button type="error" ghost :loading="state.clearing">
+          <n-button
+            type="error"
+            ghost
+            :loading="state.clearing"
+            :disabled="state.clearing || state.clearDialogOpen"
+          >
             <template #icon>
               <n-icon>
                 <TrashOutline />
@@ -125,6 +130,7 @@ let clearLoginLogRequestId = 0
 const state = reactive({
   loading: false,
   clearing: false,
+  clearDialogOpen: false,
   tableData: [] as Models.LoginLog[],
   username: '',
   addr: '',
@@ -356,10 +362,11 @@ const handleReset = () => {
 const handleRefresh = () => fetchList()
 
 const handleClearLogs = (key: string | number) => {
-  if (state.clearing) {
+  if (state.clearing || state.clearDialogOpen || !isComponentMounted) {
     return
   }
 
+  state.clearDialogOpen = true
   const duration = key === 'all' ? undefined : String(key)
   const selectedLabel =
     clearLogOptions.find((option) => option.key === key)?.label?.toString() || '清理日志'
@@ -371,15 +378,22 @@ const handleClearLogs = (key: string | number) => {
       : '确定要清空所有登录日志吗？此操作不可撤销。',
     positiveText: '确认清理',
     negativeText: '取消',
+    onAfterLeave: () => {
+      if (!state.clearing) {
+        state.clearDialogOpen = false
+      }
+    },
     onPositiveClick: () => {
-      if (state.clearing) {
+      if (state.clearing || !isComponentMounted) {
+        state.clearDialogOpen = false
+
         return
       }
 
       const requestId = ++clearLoginLogRequestId
 
       state.clearing = true
-      clearLoginLogs(duration ? { duration } : undefined)
+      return clearLoginLogs(duration ? { duration } : undefined)
         .then((res) => {
           if (!isComponentMounted || requestId !== clearLoginLogRequestId) {
             return
@@ -403,11 +417,12 @@ const handleClearLogs = (key: string | number) => {
             return
           }
 
-          message.error(err instanceof Error ? err.message : '清空失败')
+          message.error(getErrorMessage(err, '清空失败'))
         })
         .finally(() => {
           if (isComponentMounted && requestId === clearLoginLogRequestId) {
             state.clearing = false
+            state.clearDialogOpen = false
           }
         })
     },
@@ -424,6 +439,7 @@ onUnmounted(() => {
   isComponentMounted = false
   loginLogListRequestId += 1
   clearLoginLogRequestId += 1
+  state.clearDialogOpen = false
 })
 </script>
 
