@@ -44,12 +44,13 @@ func (h *handler) ToggleAutoRefresh() httpcontext.HandlerFunc {
 			return
 		}
 
-		if _, ok := h.queryOwnedMountPoint(ctx, req.ID); !ok {
+		mountPoint, ok := h.queryOwnedMountPoint(ctx, req.ID)
+		if !ok {
 			return
 		}
 
 		if !*req.EnableAutoRefresh {
-			if err := h.mountPointService.EnableAutoRefresh(ctx.GetContext(), req.ID, false); err != nil {
+			if err := h.mountPointService.EnableAutoRefresh(ctx.GetContext(), mountPoint.FileId, false); err != nil {
 				ctx.Fail(busCodeStorageToggleAutoRefreshError.WithError(err))
 
 				return
@@ -86,13 +87,13 @@ func (h *handler) ToggleAutoRefresh() httpcontext.HandlerFunc {
 		config.EnableDeepRefresh = ptr.Of(req.EnableDeepRefresh)
 
 		// 使用合并后的方法更新刷新配置
-		if err := h.mountPointService.UpdateRefreshConfig(ctx.GetContext(), req.ID, config); err != nil {
+		if err := h.mountPointService.UpdateRefreshConfig(ctx.GetContext(), mountPoint.FileId, config); err != nil {
 			ctx.Fail(busCodeStorageUpdateRefreshIntervalErr.WithError(err))
 
 			return
 		}
 
-		if err := h.mountPointService.EnableAutoRefresh(ctx.GetContext(), req.ID, true); err != nil {
+		if err := h.mountPointService.EnableAutoRefresh(ctx.GetContext(), mountPoint.FileId, true); err != nil {
 			ctx.Fail(busCodeStorageToggleAutoRefreshError.WithError(err))
 
 			return

@@ -83,8 +83,8 @@ func TestBatchModifyTokenDeduplicatesIDsBeforePermissionCheckAndQueueing(t *test
 	taskEngine := &mockBatchDeleteTaskEngine{}
 	mountPointService := &mockBatchDeleteMountPointService{
 		mountPoints: map[int64]*models.MountPoint{
-			11: {ID: 101, FileId: 11, FullPath: "/movies", CreatorUserID: 100},
-			22: {ID: 202, FileId: 22, FullPath: "/series", CreatorUserID: 100},
+			101: {ID: 101, FileId: 11, FullPath: "/movies", CreatorUserID: 100},
+			202: {ID: 202, FileId: 22, FullPath: "/series", CreatorUserID: 100},
 		},
 	}
 
@@ -108,7 +108,7 @@ func TestBatchModifyTokenDeduplicatesIDsBeforePermissionCheckAndQueueing(t *test
 		nil,
 	).BatchModifyToken()))
 
-	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_modify_token", strings.NewReader(`{"ids":[11,11,22],"tokenId":0}`))
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_modify_token", strings.NewReader(`{"ids":[101,101,202],"tokenId":0}`))
 	req.Header.Set("Content-Type", "application/json")
 
 	recorder := httptest.NewRecorder()
@@ -118,7 +118,7 @@ func TestBatchModifyTokenDeduplicatesIDsBeforePermissionCheckAndQueueing(t *test
 		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
 	}
 
-	if got, want := mountPointService.queries, []int64{11, 22}; !int64SlicesEqual(got, want) {
+	if got, want := mountPointService.queries, []int64{101, 202}; !int64SlicesEqual(got, want) {
 		t.Fatalf("expected deduplicated permission queries %v, got %v", want, got)
 	}
 
@@ -163,7 +163,7 @@ func TestBatchModifyTokenAllowsDuplicateIDsBeyondRawLimit(t *testing.T) {
 	taskEngine := &mockBatchDeleteTaskEngine{}
 	mountPointService := &mockBatchDeleteMountPointService{
 		mountPoints: map[int64]*models.MountPoint{
-			11: {ID: 101, FileId: 11, FullPath: "/movies", CreatorUserID: 100},
+			101: {ID: 101, FileId: 11, FullPath: "/movies", CreatorUserID: 100},
 		},
 	}
 
@@ -189,7 +189,7 @@ func TestBatchModifyTokenAllowsDuplicateIDsBeyondRawLimit(t *testing.T) {
 
 	ids := make([]string, maxBatchModifyTokenIDs+1)
 	for i := range ids {
-		ids[i] = "11"
+		ids[i] = "101"
 	}
 
 	req := httptest.NewRequestWithContext(
@@ -207,7 +207,7 @@ func TestBatchModifyTokenAllowsDuplicateIDsBeyondRawLimit(t *testing.T) {
 		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
 	}
 
-	if got, want := mountPointService.queries, []int64{11}; !int64SlicesEqual(got, want) {
+	if got, want := mountPointService.queries, []int64{101}; !int64SlicesEqual(got, want) {
 		t.Fatalf("expected one deduplicated query %v, got %v", want, got)
 	}
 

@@ -72,7 +72,7 @@ func TestBatchRefreshDeduplicatesIDsBeforeQueueingTasks(t *testing.T) {
 	taskEngine := &mockBatchDeleteTaskEngine{}
 	mountPointService := &mockBatchDeleteMountPointService{
 		mountPoints: map[int64]*models.MountPoint{
-			11: {FileId: 11, FullPath: "/movies", CreatorUserID: 100},
+			11: {ID: 11, FileId: 1100, FullPath: "/movies", CreatorUserID: 100},
 			22: {FileId: 22, FullPath: "/series", CreatorUserID: 100},
 		},
 	}
@@ -120,7 +120,7 @@ func TestBatchRefreshDeduplicatesIDsBeforeQueueingTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if firstTask.FileId != 11 || !firstTask.Deep {
+	if firstTask.FileId != 1100 || !firstTask.Deep {
 		t.Fatalf("unexpected first queued task: %+v", firstTask)
 	}
 

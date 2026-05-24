@@ -7,6 +7,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -66,6 +67,25 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 			}
 		}
 
+		mountPoints := make(map[int64]*models.MountPoint, len(requestIDs))
+		fileIDs := make([]int64, 0, len(requestIDs))
+
+		for _, id := range requestIDs {
+			mp, err := h.mountPointService.QueryByID(ctx.GetContext(), id)
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					ctx.Fail(busCodeStorageMountPointNotFound.WithError(err))
+				} else {
+					ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
+				}
+
+				return
+			}
+
+			mountPoints[id] = mp
+			fileIDs = append(fileIDs, mp.FileId)
+		}
+
 		// 校验每个挂载点是否在当前用户的可见范围内（非管理员）
 		if !isAdmin {
 			var groupFileIds []int64
@@ -87,17 +107,7 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 			}
 
 			for _, id := range requestIDs {
-				mp, err := h.mountPointService.Query(ctx.GetContext(), id)
-				if err != nil {
-					if errors.Is(err, gorm.ErrRecordNotFound) {
-						ctx.Fail(busCodeStorageMountPointNotFound.WithError(err))
-					} else {
-						ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
-					}
-
-					return
-				}
-
+				mp := mountPoints[id]
 				if mp.CreatorUserID == userID {
 					continue
 				}
@@ -126,7 +136,7 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 		}
 
 		taskReq := &topic.FileBatchModifyTokenRequest{
-			IDs:         requestIDs,
+			IDs:         fileIDs,
 			TokenID:     req.TokenID,
 			UserID:      userID,
 			IsAdmin:     isAdmin,

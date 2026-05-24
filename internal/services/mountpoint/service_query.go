@@ -30,6 +30,26 @@ func (s *service) Query(ctx context.Context, fileId int64) (*models.MountPoint, 
 	return &mountPoint, nil
 }
 
+func (s *service) QueryByID(ctx context.Context, id int64) (*models.MountPoint, error) {
+	if id <= 0 {
+		return nil, errInvalidMountPointFileID
+	}
+
+	var mountPoint models.MountPoint
+
+	if err := s.getDB(ctx).Where("id = ?", id).First(&mountPoint).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+
+		ctx.Error("查询挂载点失败", zap.Error(err), zap.Int64("id", id))
+
+		return nil, err
+	}
+
+	return &mountPoint, nil
+}
+
 func (s *service) QueryByPath(ctx context.Context, fullPath string) (*models.MountPoint, error) {
 	var mountPoint models.MountPoint
 

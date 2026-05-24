@@ -106,6 +106,27 @@ func createCloudToken(t *testing.T, db *gorm.DB, id int64, userIDs ...int64) *mo
 	return token
 }
 
+func TestQueryByIDUsesMountPointPrimaryKey(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	svc := NewService(tDB, nil, nil, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	mountPoint := createMountPoint(t, tDB.db, 9901, 10, "query-by-id")
+
+	got, err := svc.QueryByID(ctx, mountPoint.ID)
+	if err != nil {
+		t.Fatalf("query by id: %v", err)
+	}
+
+	if got.ID != mountPoint.ID || got.FileId != 9901 {
+		t.Fatalf("expected mount point id=%d file_id=9901, got id=%d file_id=%d", mountPoint.ID, got.ID, got.FileId)
+	}
+
+	if _, err := svc.QueryByID(ctx, 9901); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected file id lookup through QueryByID to miss, got %v", err)
+	}
+}
+
 func createUserMountPointTokenBinding(t *testing.T, db *gorm.DB, userID, mountPointID, tokenID int64) *models.UserMountPointToken {
 	t.Helper()
 

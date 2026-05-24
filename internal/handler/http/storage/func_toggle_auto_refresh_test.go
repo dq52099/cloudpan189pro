@@ -63,7 +63,7 @@ func TestToggleAutoRefreshAllowsMountPointOwner(t *testing.T) {
 
 	mountPointService := &mockBatchDeleteMountPointService{
 		mountPoints: map[int64]*models.MountPoint{
-			11: {FileId: 11, FullPath: "/mine", CreatorUserID: 100},
+			11: {ID: 11, FileId: 1100, FullPath: "/mine", CreatorUserID: 100},
 		},
 	}
 
@@ -97,12 +97,12 @@ func TestToggleAutoRefreshAllowsMountPointOwner(t *testing.T) {
 		t.Fatalf("expected owner toggle to succeed, got %d body=%s", recorder.Code, recorder.Body.String())
 	}
 
-	if len(mountPointService.updateRefreshConfigCalls) != 1 || mountPointService.updateRefreshConfigCalls[0] != 11 {
-		t.Fatalf("expected refresh config update for mount point 11, got %v", mountPointService.updateRefreshConfigCalls)
+	if len(mountPointService.updateRefreshConfigCalls) != 1 || mountPointService.updateRefreshConfigCalls[0] != 1100 {
+		t.Fatalf("expected refresh config update for file 1100, got %v", mountPointService.updateRefreshConfigCalls)
 	}
 
-	if len(mountPointService.enableAutoRefreshCalls) != 1 || mountPointService.enableAutoRefreshCalls[0] != 11 {
-		t.Fatalf("expected auto refresh enable for mount point 11, got %v", mountPointService.enableAutoRefreshCalls)
+	if len(mountPointService.enableAutoRefreshCalls) != 1 || mountPointService.enableAutoRefreshCalls[0] != 1100 {
+		t.Fatalf("expected auto refresh enable for file 1100, got %v", mountPointService.enableAutoRefreshCalls)
 	}
 }
 

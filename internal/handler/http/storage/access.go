@@ -9,8 +9,8 @@ import (
 	"gorm.io/gorm"
 )
 
-func (h *handler) queryOwnedMountPoint(ctx *httpcontext.Context, fileID int64) (*models.MountPoint, bool) {
-	mountPoint, err := h.mountPointService.Query(ctx.GetContext(), fileID)
+func (h *handler) queryOwnedMountPoint(ctx *httpcontext.Context, id int64) (*models.MountPoint, bool) {
+	mountPoint, err := h.mountPointService.QueryByID(ctx.GetContext(), id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			ctx.Fail(busCodeStorageMountPointNotFound.WithError(err))

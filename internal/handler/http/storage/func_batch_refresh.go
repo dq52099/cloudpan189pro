@@ -72,7 +72,7 @@ func (h *handler) BatchRefresh() httpcontext.HandlerFunc {
 		validIDs := make([]int64, 0, len(requestIDs))
 
 		for _, id := range requestIDs {
-			mp, err := h.mountPointService.Query(ctx.GetContext(), id)
+			mp, err := h.mountPointService.QueryByID(ctx.GetContext(), id)
 			if err != nil {
 				ctx.GetContext().Warn("查询挂载点失败，跳过", zap.Int64("id", id), zap.Error(err))
 

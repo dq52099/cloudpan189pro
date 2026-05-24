@@ -62,7 +62,7 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 		validMountPoints := make([]*models.MountPoint, 0, len(requestIDs))
 
 		for _, id := range requestIDs {
-			mountPoint, err := h.mountPointService.Query(ctx.GetContext(), id)
+			mountPoint, err := h.mountPointService.QueryByID(ctx.GetContext(), id)
 			if err != nil {
 				ctx.GetContext().Debug("查询挂载点失败，跳过", zap.Int64("id", id), zap.Error(err))
 

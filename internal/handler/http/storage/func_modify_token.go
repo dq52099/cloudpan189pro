@@ -8,13 +8,13 @@ import (
 )
 
 type modifyTokenRequest struct {
-	ID      int64 `json:"id" binding:"required,min=1" example:"1001"` // 挂载点文件ID
+	ID      int64 `json:"id" binding:"required,min=1" example:"1001"` // 挂载点表主键
 	TokenID int64 `json:"tokenId" binding:"min=0" example:"123"`      // 新的令牌ID，0 表示解绑
 }
 
 // ModifyToken 修改存储挂载点令牌
 // @Summary 修改存储挂载点令牌
-// @Description 通过请求体 id 指定挂载点文件ID，用户绑定自己的令牌到挂载点（不影响其他用户）
+// @Description 通过请求体 id 指定挂载点表主键，用户绑定自己的令牌到挂载点（不影响其他用户）
 // @Tags 存储管理
 // @Accept json
 // @Produce json
@@ -43,7 +43,7 @@ func (h *handler) ModifyToken() httpcontext.HandlerFunc {
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
 
 		// 验证挂载点是否存在
-		mp, err := h.mountPointService.Query(ctx.GetContext(), req.ID)
+		mp, err := h.mountPointService.QueryByID(ctx.GetContext(), req.ID)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				ctx.Fail(busCodeStorageMountPointNotFound.WithError(err))

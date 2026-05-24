@@ -20,6 +20,7 @@ import (
 type Service interface {
 	Create(ctx context.Context, req *CreateRequest) (int64, error)
 	Query(ctx context.Context, fileId int64) (*models.MountPoint, error)
+	QueryByID(ctx context.Context, id int64) (*models.MountPoint, error)
 	QueryByPath(ctx context.Context, fullPath string) (*models.MountPoint, error)
 	GetAccessibleMountPointIDs(ctx context.Context, userID int64, isAdmin bool, groupFileIds []int64) ([]int64, error)
 	List(ctx context.Context, req *ListRequest) ([]*models.MountPoint, error)

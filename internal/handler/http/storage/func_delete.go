@@ -12,12 +12,12 @@ import (
 )
 
 type deleteRequest struct {
-	ID int64 `json:"id" binding:"required" example:"1"` // 挂载点文件ID
+	ID int64 `json:"id" binding:"required" example:"1"` // 挂载点表主键
 }
 
 // Delete 删除存储挂载
 // @Summary 删除存储挂载
-// @Description 通过请求体 id 指定挂载点文件ID，删除对应的存储挂载点，同时清理相关文件
+// @Description 通过请求体 id 指定挂载点表主键，删除对应的存储挂载点，同时清理相关文件
 // @Tags 存储管理
 // @Accept json
 // @Produce json
@@ -41,7 +41,7 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 			return
 		}
 
-		mountPointInfo, err := h.mountPointService.Query(ctx.GetContext(), req.ID)
+		mountPointInfo, err := h.mountPointService.QueryByID(ctx.GetContext(), req.ID)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				ctx.Fail(busCodeStorageMountPointNotFound.WithError(err))

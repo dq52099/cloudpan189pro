@@ -9,13 +9,13 @@ import (
 )
 
 type refreshRequest struct {
-	ID   int64 `json:"id" binding:"required" example:"1001"` // 挂载点文件ID
+	ID   int64 `json:"id" binding:"required" example:"1001"` // 挂载点表主键
 	Deep bool  `json:"deep" example:"true"`                  // 深度刷新
 }
 
 // Refresh 刷新存储挂载
 // @Summary 刷新存储挂载
-// @Description 通过请求体 id 指定挂载点文件ID，触发文件扫描任务重新同步文件信息
+// @Description 通过请求体 id 指定挂载点表主键，触发文件扫描任务重新同步文件信息
 // @Tags 存储管理
 // @Accept json
 // @Produce json

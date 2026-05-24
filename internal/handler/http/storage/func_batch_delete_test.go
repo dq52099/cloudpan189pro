@@ -61,6 +61,22 @@ func (m *mockBatchDeleteMountPointService) Query(ctx appContext.Context, fileID 
 	return mountPoint, nil
 }
 
+func (m *mockBatchDeleteMountPointService) QueryByID(ctx appContext.Context, id int64) (*models.MountPoint, error) {
+	m.queries = append(m.queries, id)
+
+	if mountPoint, ok := m.mountPoints[id]; ok {
+		return mountPoint, nil
+	}
+
+	for _, mountPoint := range m.mountPoints {
+		if mountPoint.ID == id {
+			return mountPoint, nil
+		}
+	}
+
+	return nil, gorm.ErrRecordNotFound
+}
+
 func (m *mockBatchDeleteMountPointService) QueryByPath(ctx appContext.Context, fullPath string) (*models.MountPoint, error) {
 	mountPoint, ok := m.mountPointsByPath[fullPath]
 	if !ok {

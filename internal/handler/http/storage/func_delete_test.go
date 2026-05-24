@@ -55,6 +55,20 @@ func (m *mockDeleteMountPointService) Query(ctx appContext.Context, fileID int64
 	return mountPoint, nil
 }
 
+func (m *mockDeleteMountPointService) QueryByID(ctx appContext.Context, id int64) (*models.MountPoint, error) {
+	if mountPoint, ok := m.mountPoints[id]; ok {
+		return mountPoint, nil
+	}
+
+	for _, mountPoint := range m.mountPoints {
+		if mountPoint.ID == id {
+			return mountPoint, nil
+		}
+	}
+
+	return nil, gorm.ErrRecordNotFound
+}
+
 func (m *mockDeleteMountPointService) Delete(ctx appContext.Context, req *mountPointSvi.DeleteRequest) error {
 	m.deleteCalled = true
 
@@ -117,7 +131,7 @@ func TestDeleteQueuesTaskWithoutImmediateDataDeletion(t *testing.T) {
 	virtualFileService := &mockDeleteVirtualFileService{}
 	mountPointService := &mockDeleteMountPointService{
 		mountPoints: map[int64]*models.MountPoint{
-			77: {FileId: 77, FullPath: "/movies", CreatorUserID: 100},
+			77: {ID: 77, FileId: 7700, FullPath: "/movies", CreatorUserID: 100},
 		},
 	}
 	router := newDeleteTestRouter(taskEngine, virtualFileService, mountPointService)
@@ -149,7 +163,7 @@ func TestDeleteQueuesTaskWithoutImmediateDataDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got, want := taskReq.IDs, []int64{77}; !int64SlicesEqual(got, want) {
+	if got, want := taskReq.IDs, []int64{7700}; !int64SlicesEqual(got, want) {
 		t.Fatalf("expected queued task IDs %v, got %v", want, got)
 	}
 
