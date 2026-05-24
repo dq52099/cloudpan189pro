@@ -4517,6 +4517,471 @@
                 }
             }
         },
+        "/api/telegram/process_share": {
+            "post": {
+                "description": "解析分享链接，可按配置将资源自动挂载到指定路径",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Telegram 管理"
+                ],
+                "summary": "处理 Telegram 分享链接",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "分享链接处理参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/telegram.ProcessShareLinkReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "处理成功",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "参数验证失败或处理失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Telegram 配置未初始化",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/telegram/send": {
+            "post": {
+                "description": "使用当前 Telegram 配置发送一条消息",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Telegram 管理"
+                ],
+                "summary": "发送 Telegram 消息",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "消息内容",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/telegram.sendMessageReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "发送成功",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "参数验证失败、Telegram 未启用或发送失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Telegram 配置未初始化",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/telegram/setting": {
+            "get": {
+                "description": "获取 Telegram 机器人配置，未初始化时返回默认配置",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Telegram 管理"
+                ],
+                "summary": "获取 Telegram 配置",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpcontext.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.TelegramSetting"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "获取 Telegram 配置失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "创建或更新 Telegram 机器人配置，支持只提交需要修改的字段",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Telegram 管理"
+                ],
+                "summary": "更新 Telegram 配置",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Telegram 配置",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/telegram.UpdateSettingReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "更新成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpcontext.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.TelegramSetting"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数验证失败或更新失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Telegram 配置不存在",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/telegram/test": {
+            "post": {
+                "description": "使用当前 Telegram 配置测试机器人连接状态",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Telegram 管理"
+                ],
+                "summary": "测试 Telegram 连接",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "测试成功",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Telegram 未启用、令牌未配置或连接测试失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Telegram 配置未初始化",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/telegram/user": {
+            "post": {
+                "description": "更新 Telegram 用户的默认挂载路径和管理员标记",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Telegram 管理"
+                ],
+                "summary": "更新 Telegram 用户",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Telegram 用户配置",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/telegram.UpdateUserReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "更新成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpcontext.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.TelegramUser"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数验证失败或更新失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Telegram 用户不存在",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/telegram/users": {
+            "get": {
+                "description": "获取已记录的 Telegram 用户列表",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Telegram 管理"
+                ],
+                "summary": "获取 Telegram 用户列表",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpcontext.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/models.TelegramUser"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "获取 Telegram 用户列表失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/user/add": {
             "post": {
                 "description": "创建新用户账户，需要管理员权限。",
@@ -7390,6 +7855,80 @@
                 }
             }
         },
+        "models.TelegramSetting": {
+            "type": "object",
+            "properties": {
+                "apiURL": {
+                    "type": "string"
+                },
+                "botToken": {
+                    "type": "string"
+                },
+                "chatID": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "defaultMountPath": {
+                    "type": "string"
+                },
+                "enable": {
+                    "type": "boolean"
+                },
+                "enableNotify": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "proxyType": {
+                    "description": "http, https, socks5",
+                    "type": "string"
+                },
+                "proxyURL": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.TelegramUser": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "firstName": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "isAdmin": {
+                    "type": "boolean"
+                },
+                "lastName": {
+                    "type": "string"
+                },
+                "lastSeenAt": {
+                    "type": "string"
+                },
+                "mountPath": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "userID": {
+                    "type": "integer"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
         "models.User": {
             "type": "object",
             "properties": {
@@ -8301,6 +8840,80 @@
                             "$ref": "#/definitions/taskengine.TaskStats"
                         }
                     ]
+                }
+            }
+        },
+        "telegram.ProcessShareLinkReq": {
+            "type": "object",
+            "required": [
+                "shareUrl"
+            ],
+            "properties": {
+                "autoMount": {
+                    "type": "boolean"
+                },
+                "chatID": {
+                    "type": "string"
+                },
+                "mountPath": {
+                    "type": "string"
+                },
+                "shareUrl": {
+                    "type": "string"
+                }
+            }
+        },
+        "telegram.UpdateSettingReq": {
+            "type": "object",
+            "properties": {
+                "apiURL": {
+                    "type": "string"
+                },
+                "botToken": {
+                    "type": "string"
+                },
+                "chatID": {
+                    "type": "string"
+                },
+                "defaultMountPath": {
+                    "type": "string"
+                },
+                "enable": {
+                    "type": "boolean"
+                },
+                "enableNotify": {
+                    "type": "boolean"
+                },
+                "proxyType": {
+                    "type": "string"
+                },
+                "proxyURL": {
+                    "type": "string"
+                }
+            }
+        },
+        "telegram.UpdateUserReq": {
+            "type": "object",
+            "properties": {
+                "isAdmin": {
+                    "type": "boolean"
+                },
+                "mountPath": {
+                    "type": "string"
+                },
+                "userID": {
+                    "type": "integer"
+                }
+            }
+        },
+        "telegram.sendMessageReq": {
+            "type": "object",
+            "required": [
+                "message"
+            ],
+            "properties": {
+                "message": {
+                    "type": "string"
                 }
             }
         },

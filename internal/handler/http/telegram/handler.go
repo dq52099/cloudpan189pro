@@ -73,6 +73,18 @@ func (e *customBusinessError) WithBusinessCode(code int) httpcontext.BusinessErr
 	return e
 }
 
+// GetSetting 获取 Telegram 配置
+// @Summary 获取 Telegram 配置
+// @Description 获取 Telegram 机器人配置，未初始化时返回默认配置
+// @Tags Telegram 管理
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Success 200 {object} httpcontext.Response{data=models.TelegramSetting} "获取成功"
+// @Failure 400 {object} httpcontext.Response "获取 Telegram 配置失败"
+// @Failure 401 {object} httpcontext.Response "未授权访问"
+// @Failure 403 {object} httpcontext.Response "权限不足"
+// @Router /api/telegram/setting [get]
 func (h *Handler) GetSetting() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		var setting models.TelegramSetting
@@ -111,6 +123,20 @@ type UpdateSettingReq struct {
 	Enable           *bool   `json:"enable"`
 }
 
+// UpdateSetting 更新 Telegram 配置
+// @Summary 更新 Telegram 配置
+// @Description 创建或更新 Telegram 机器人配置，支持只提交需要修改的字段
+// @Tags Telegram 管理
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param request body UpdateSettingReq true "Telegram 配置"
+// @Success 200 {object} httpcontext.Response{data=models.TelegramSetting} "更新成功"
+// @Failure 400 {object} httpcontext.Response "参数验证失败或更新失败"
+// @Failure 401 {object} httpcontext.Response "未授权访问"
+// @Failure 403 {object} httpcontext.Response "权限不足"
+// @Failure 404 {object} httpcontext.Response "Telegram 配置不存在"
+// @Router /api/telegram/setting [post]
 func (h *Handler) UpdateSetting() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		var req UpdateSettingReq
@@ -246,6 +272,19 @@ func telegramSettingUpdateMap(req *UpdateSettingReq) map[string]interface{} {
 	return updates
 }
 
+// TestConnection 测试 Telegram 连接
+// @Summary 测试 Telegram 连接
+// @Description 使用当前 Telegram 配置测试机器人连接状态
+// @Tags Telegram 管理
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Success 200 {object} httpcontext.Response "测试成功"
+// @Failure 400 {object} httpcontext.Response "Telegram 未启用、令牌未配置或连接测试失败"
+// @Failure 401 {object} httpcontext.Response "未授权访问"
+// @Failure 403 {object} httpcontext.Response "权限不足"
+// @Failure 404 {object} httpcontext.Response "Telegram 配置未初始化"
+// @Router /api/telegram/test [post]
 func (h *Handler) TestConnection() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		var setting models.TelegramSetting
@@ -290,6 +329,18 @@ func (h *Handler) TestConnection() httpcontext.HandlerFunc {
 	}
 }
 
+// GetUserList 获取 Telegram 用户列表
+// @Summary 获取 Telegram 用户列表
+// @Description 获取已记录的 Telegram 用户列表
+// @Tags Telegram 管理
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Success 200 {object} httpcontext.Response{data=[]models.TelegramUser} "获取成功"
+// @Failure 400 {object} httpcontext.Response "获取 Telegram 用户列表失败"
+// @Failure 401 {object} httpcontext.Response "未授权访问"
+// @Failure 403 {object} httpcontext.Response "权限不足"
+// @Router /api/telegram/users [get]
 func (h *Handler) GetUserList() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		var users []models.TelegramUser
@@ -311,6 +362,20 @@ type UpdateUserReq struct {
 	IsAdmin   bool   `json:"isAdmin"`
 }
 
+// UpdateUser 更新 Telegram 用户
+// @Summary 更新 Telegram 用户
+// @Description 更新 Telegram 用户的默认挂载路径和管理员标记
+// @Tags Telegram 管理
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param request body UpdateUserReq true "Telegram 用户配置"
+// @Success 200 {object} httpcontext.Response{data=models.TelegramUser} "更新成功"
+// @Failure 400 {object} httpcontext.Response "参数验证失败或更新失败"
+// @Failure 401 {object} httpcontext.Response "未授权访问"
+// @Failure 403 {object} httpcontext.Response "权限不足"
+// @Failure 404 {object} httpcontext.Response "Telegram 用户不存在"
+// @Router /api/telegram/user [post]
 func (h *Handler) UpdateUser() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		var req UpdateUserReq
@@ -412,11 +477,27 @@ func (h *Handler) ensureTelegramUserExists(id int64) error {
 	return nil
 }
 
+type sendMessageReq struct {
+	Message string `json:"message" binding:"required"`
+}
+
+// SendMessage 发送 Telegram 测试消息
+// @Summary 发送 Telegram 消息
+// @Description 使用当前 Telegram 配置发送一条消息
+// @Tags Telegram 管理
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param request body sendMessageReq true "消息内容"
+// @Success 200 {object} httpcontext.Response "发送成功"
+// @Failure 400 {object} httpcontext.Response "参数验证失败、Telegram 未启用或发送失败"
+// @Failure 401 {object} httpcontext.Response "未授权访问"
+// @Failure 403 {object} httpcontext.Response "权限不足"
+// @Failure 404 {object} httpcontext.Response "Telegram 配置未初始化"
+// @Router /api/telegram/send [post]
 func (h *Handler) SendMessage() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
-		var req struct {
-			Message string `json:"message" binding:"required"`
-		}
+		var req sendMessageReq
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.Fail(invalidParams(err))
 
@@ -472,6 +553,20 @@ type ProcessShareLinkReq struct {
 	AutoMount bool   `json:"autoMount"`
 }
 
+// ProcessShareLink 处理 Telegram 分享链接
+// @Summary 处理 Telegram 分享链接
+// @Description 解析分享链接，可按配置将资源自动挂载到指定路径
+// @Tags Telegram 管理
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param request body ProcessShareLinkReq true "分享链接处理参数"
+// @Success 200 {object} httpcontext.Response "处理成功"
+// @Failure 400 {object} httpcontext.Response "参数验证失败或处理失败"
+// @Failure 401 {object} httpcontext.Response "未授权访问"
+// @Failure 403 {object} httpcontext.Response "权限不足"
+// @Failure 404 {object} httpcontext.Response "Telegram 配置未初始化"
+// @Router /api/telegram/process_share [post]
 func (h *Handler) ProcessShareLink() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		var req ProcessShareLinkReq
