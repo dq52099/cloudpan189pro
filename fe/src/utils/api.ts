@@ -55,13 +55,9 @@ export const api = axios.create({
 api.interceptors.request.use(
   async (config: InternalAxiosRequestConfig) => {
     const authStore = useAuthStore()
-    const systemStore = useSystemStore()
-    const systemInfo = systemStore.get()
-    const authDisabled = systemInfo.initialized && !systemInfo.enableAuth
     let token = authStore.getToken()
 
     if (
-      !authDisabled &&
       authStore.requireRefreshToken &&
       !isRefreshTokenRequest(config.url) &&
       !isSystemInfoRequest(config.url)
@@ -69,7 +65,7 @@ api.interceptors.request.use(
       token = (await authStore.doRefreshToken()) || token
     }
 
-    if (!authDisabled && token) {
+    if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
 

@@ -46,35 +46,33 @@
             <template #unchecked> 禁用 </template>
           </n-switch>
           <n-text depth="3" style="margin-left: 12px; font-size: 14px">
-            启用后需要登录才能访问WEBDAV
+            后台管理始终需要管理员登录
           </n-text>
         </n-form-item>
 
-        <template v-if="formData.enableAuth">
-          <n-form-item label="超级管理员用户名" path="superUsername">
-            <n-input
-              v-model:value="formData.superUsername"
-              placeholder="请输入超级管理员用户名（3-20位）"
-            >
-              <template #prefix>
-                <n-icon :component="PersonOutline" />
-              </template>
-            </n-input>
-          </n-form-item>
+        <n-form-item label="超级管理员用户名" path="superUsername">
+          <n-input
+            v-model:value="formData.superUsername"
+            placeholder="请输入超级管理员用户名（3-20位）"
+          >
+            <template #prefix>
+              <n-icon :component="PersonOutline" />
+            </template>
+          </n-input>
+        </n-form-item>
 
-          <n-form-item label="超级管理员密码" path="superPassword">
-            <n-input
-              v-model:value="formData.superPassword"
-              type="password"
-              placeholder="请输入超级管理员密码（6-20位）"
-              show-password-on="mousedown"
-            >
-              <template #prefix>
-                <n-icon :component="LockClosedOutline" />
-              </template>
-            </n-input>
-          </n-form-item>
-        </template>
+        <n-form-item label="超级管理员密码" path="superPassword">
+          <n-input
+            v-model:value="formData.superPassword"
+            type="password"
+            placeholder="请输入超级管理员密码（6-20位）"
+            show-password-on="mousedown"
+          >
+            <template #prefix>
+              <n-icon :component="LockClosedOutline" />
+            </template>
+          </n-input>
+        </n-form-item>
 
         <n-form-item>
           <n-button
@@ -151,7 +149,6 @@ const rules = {
       message: '请输入超级管理员用户名',
       trigger: ['input', 'blur'],
       validator: (_rule: unknown, value: string) => {
-        if (!formData.enableAuth) return true
         if (!value) return new Error('请输入超级管理员用户名')
         if (value.length < 3 || value.length > 20) {
           return new Error('用户名长度应为3-20位')
@@ -166,7 +163,6 @@ const rules = {
       message: '请输入超级管理员密码',
       trigger: ['input', 'blur'],
       validator: (_rule: unknown, value: string) => {
-        if (!formData.enableAuth) return true
         if (!value) return new Error('请输入超级管理员密码')
         if (value.length < 6 || value.length > 20) {
           return new Error('密码长度应为6-20位')
@@ -201,11 +197,8 @@ const handleInit = async () => {
     if (response.code === 200) {
       message.success('系统初始化成功')
       // 刷新系统信息
-      const refreshResponse = await systemStore.refresh()
-      const systemInfo = systemStore.get()
-      const refreshEnableAuth = refreshResponse?.data?.enableAuth
-      const enableAuth = (refreshEnableAuth ?? systemInfo.enableAuth) && formData.enableAuth
-      await router.push(enableAuth ? '/@login' : '/@dashboard')
+      await systemStore.refresh()
+      await router.push('/@login')
     } else {
       message.error(response.msg || '初始化失败')
     }

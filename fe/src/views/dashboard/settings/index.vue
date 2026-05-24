@@ -544,9 +544,7 @@ const handleToggleEnableAuth = async (val: boolean) => {
     const nextEnableAuth = systemStore.get().enableAuth
     enableAuth.value = nextEnableAuth
 
-    if (!nextEnableAuth) {
-      authStore.logout()
-    } else if (!authStore.isLogin) {
+    if (!authStore.isLogin) {
       router.replace('/@login')
     }
   } catch (err) {

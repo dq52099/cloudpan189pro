@@ -251,16 +251,6 @@ router.beforeEach(async (to, _, next) => {
     return
   }
 
-  if (systemInfo.initialized && !systemInfo.enableAuth) {
-    if (to.name === 'Login' || to.name === 'Profile') {
-      next('/@dashboard')
-      return
-    }
-
-    next()
-    return
-  }
-
   // 检查是否需要认证
   if (to.meta.requiresAuth) {
     // 需要认证的路由
