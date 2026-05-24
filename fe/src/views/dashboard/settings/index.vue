@@ -328,8 +328,9 @@
 
 <script setup lang="ts">
 import { ref, reactive, watchEffect, onMounted, onUnmounted, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { NInput, NButton, NText, useMessage, NSlider, NSwitch } from 'naive-ui'
-import { useSystemStore } from '@/stores'
+import { useAuthStore, useSystemStore } from '@/stores'
 import {
   modifySystemTitle,
   modifySystemBaseURL,
@@ -342,8 +343,10 @@ import {
 import { formatFileSize } from '@/utils/format'
 
 const message = useMessage()
+const router = useRouter()
 
 const systemStore = useSystemStore()
+const authStore = useAuthStore()
 const systemInfo = systemStore.get()
 let isSettingsMounted = false
 
@@ -519,34 +522,43 @@ watchEffect(() => {
 // ===== 用户认证开关 =====
 const enableAuth = ref<boolean>(systemInfo.enableAuth || false)
 const savingEnableAuth = ref(false)
-const handleToggleEnableAuth = (val: boolean) => {
+const handleToggleEnableAuth = async (val: boolean) => {
   if (savingEnableAuth.value || !isSettingsMounted) return
 
   savingEnableAuth.value = true
-  toggleSystemEnableAuth(val)
-    .then((res) => {
-      if (!isSettingsMounted) return
+  try {
+    const res = await toggleSystemEnableAuth(val)
+    if (!isSettingsMounted) return
 
-      if (res.code === 200) {
-        message.success('设置已保存')
-        // 刷新系统信息
-        refreshSystemInfoAfterSave()
-      } else {
-        message.error(res.msg || '保存失败')
-        enableAuth.value = !val // 失败时回滚显示
-      }
-    })
-    .catch((err) => {
-      if (!isSettingsMounted) return
-
-      message.error(err instanceof Error ? err.message : '网络错误')
+    if (res.code !== 200) {
+      message.error(res.msg || '保存失败')
       enableAuth.value = !val
-    })
-    .finally(() => {
-      if (!isSettingsMounted) return
 
+      return
+    }
+
+    message.success('设置已保存')
+    await refreshSystemInfoAfterSave()
+    if (!isSettingsMounted) return
+
+    const nextEnableAuth = systemStore.get().enableAuth
+    enableAuth.value = nextEnableAuth
+
+    if (!nextEnableAuth) {
+      authStore.logout()
+    } else if (!authStore.isLogin) {
+      router.replace('/@login')
+    }
+  } catch (err) {
+    if (!isSettingsMounted) return
+
+    message.error(err instanceof Error ? err.message : '网络错误')
+    enableAuth.value = !val
+  } finally {
+    if (isSettingsMounted) {
       savingEnableAuth.value = false
-    })
+    }
+  }
 }
 
 // ===== 附加设置表单 =====
