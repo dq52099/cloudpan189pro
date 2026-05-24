@@ -354,13 +354,13 @@ const loadCategories = async () => {
       if (!categories) {
         message.error('加载分类失败：响应数据格式异常')
 
-        return
+        return false
       }
 
       tmdbCategories.value = categories.tmdb
       doubanCategories.value = categories.douban
 
-      return
+      return true
     }
 
     message.error(res.msg || '加载分类失败')
@@ -368,6 +368,8 @@ const loadCategories = async () => {
     console.error('加载分类失败', err)
     message.error('加载分类失败')
   }
+
+  return false
 }
 
 const loadHotData = async () => {
@@ -454,15 +456,22 @@ const loadConfig = async () => {
       if (!config) {
         message.error('加载配置失败：响应数据格式异常')
 
-        return
+        return false
       }
 
       configForm.value = config
       tmdbApiKey.value = !!config.tmdbAPIKey
+
+      return true
     }
+
+    message.error(res.msg || '加载配置失败')
   } catch (err) {
     console.error('加载配置失败', err)
+    message.error('加载配置失败')
   }
+
+  return false
 }
 
 watch(selectedSource, () => {
@@ -748,11 +757,13 @@ const handleMount = async () => {
 onMounted(async () => {
   isPageMounted = true
 
-  await loadConfig()
+  const configLoaded = await loadConfig()
   if (!isPageMounted) return
+  if (!configLoaded) return
 
-  await loadCategories()
+  const categoriesLoaded = await loadCategories()
   if (!isPageMounted) return
+  if (!categoriesLoaded) return
 
   // 设置默认分类
   if (configForm.value.tmdbAPIKey) {
