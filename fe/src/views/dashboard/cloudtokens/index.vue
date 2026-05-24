@@ -139,6 +139,7 @@ const tableData = ref<Models.CloudToken[]>([])
 const loading = ref(false)
 const searchKeyword = ref('')
 let tokenListRequestId = 0
+let isComponentUnmounted = false
 
 // 添加令牌相关
 const showQrcodeModal = ref(false)
@@ -165,8 +166,31 @@ const editRules = {
   ],
 }
 
+// 删除令牌行级 pending
+const deletePendingTokenIds = ref<Set<number>>(new Set())
+const deleteTokenTasks = new Map<number, Promise<void>>()
+
 // 消息提示
 const message = useMessage()
+
+const setDeleteTokenPending = (tokenId: number, pending: boolean) => {
+  const next = new Set(deletePendingTokenIds.value)
+
+  if (pending) {
+    next.add(tokenId)
+  } else {
+    next.delete(tokenId)
+  }
+
+  deletePendingTokenIds.value = next
+}
+
+const isDeleteTokenPending = (tokenId: number) => deletePendingTokenIds.value.has(tokenId)
+
+const clearDeleteTokenPending = () => {
+  deleteTokenTasks.clear()
+  deletePendingTokenIds.value = new Set()
+}
 
 // 分页配置
 const paginationReactive = reactive<PaginationProps>({
@@ -260,6 +284,8 @@ const columns: DataTableColumns<Models.CloudToken> = [
     width: 220,
     align: 'center',
     render(row) {
+      const deletePending = isDeleteTokenPending(row.id)
+
       return h(
         NSpace,
         { size: 'small' },
@@ -272,6 +298,7 @@ const columns: DataTableColumns<Models.CloudToken> = [
                 size: 'tiny',
                 type: 'info',
                 secondary: true,
+                disabled: deletePending,
                 onClick: () => handleEdit(row),
               },
               {
@@ -286,6 +313,7 @@ const columns: DataTableColumns<Models.CloudToken> = [
                 size: 'tiny',
                 type: 'warning',
                 secondary: true,
+                disabled: deletePending,
                 onClick: () => handleUpdate(row),
               },
               {
@@ -300,6 +328,10 @@ const columns: DataTableColumns<Models.CloudToken> = [
                 onPositiveClick: () => handleDelete(row.id),
                 negativeText: '取消',
                 positiveText: '确认删除',
+                positiveButtonProps: {
+                  loading: deletePending,
+                  disabled: deletePending,
+                },
               },
               {
                 trigger: () =>
@@ -309,6 +341,8 @@ const columns: DataTableColumns<Models.CloudToken> = [
                       size: 'tiny',
                       type: 'error',
                       secondary: true,
+                      loading: deletePending,
+                      disabled: deletePending,
                     },
                     {
                       icon: () => h(NIcon, { size: 12 }, { default: () => h(TrashOutline) }),
@@ -327,6 +361,10 @@ const columns: DataTableColumns<Models.CloudToken> = [
 
 // 获取令牌列表
 const fetchTokenList = () => {
+  if (isComponentUnmounted) {
+    return Promise.resolve()
+  }
+
   const requestId = ++tokenListRequestId
 
   loading.value = true
@@ -337,7 +375,7 @@ const fetchTokenList = () => {
     name: searchKeyword.value || undefined,
   }
 
-  getCloudTokenList(params)
+  return getCloudTokenList(params)
     .then((response) => {
       if (requestId !== tokenListRequestId) {
         return
@@ -409,6 +447,10 @@ const handleAddSuccess = () => {
 
 // 更新令牌
 const handleUpdate = (token: Models.CloudToken) => {
+  if (isDeleteTokenPending(token.id)) {
+    return
+  }
+
   currentUpdateToken.value = token
 
   // 根据登录方式选择不同的更新流程
@@ -429,6 +471,10 @@ const handleUpdateSuccess = () => {
 
 // 编辑令牌
 const handleEdit = (token: Models.CloudToken) => {
+  if (isDeleteTokenPending(token.id)) {
+    return
+  }
+
   editSessionVersion += 1
   editLoading.value = false
   currentEditToken.value = token
@@ -436,7 +482,8 @@ const handleEdit = (token: Models.CloudToken) => {
   showEditModal.value = true
 }
 
-const isCurrentEditSession = (sessionVersion: number) => sessionVersion === editSessionVersion
+const isCurrentEditSession = (sessionVersion: number) =>
+  !isComponentUnmounted && sessionVersion === editSessionVersion
 
 const handleCloseEditModal = () => {
   if (editLoading.value) {
@@ -526,33 +573,64 @@ const handleConfirmEdit = () => {
 }
 
 // 删除令牌
-const handleDelete = (tokenId: number) => {
-  deleteCloudToken({ id: tokenId })
+const handleDelete = (tokenId: number): Promise<void> => {
+  const pendingTask = deleteTokenTasks.get(tokenId)
+
+  if (pendingTask) {
+    return pendingTask
+  }
+
+  setDeleteTokenPending(tokenId, true)
+
+  const deleteTask = Promise.resolve()
+    .then(() => deleteCloudToken({ id: tokenId }))
     .then((response) => {
+      if (isComponentUnmounted) {
+        return
+      }
+
       if (response.code === 200) {
         message.success('删除令牌成功')
         // 刷新令牌列表
-        fetchTokenList()
+        return fetchTokenList()
       } else {
         message.error(response.msg || '删除令牌失败')
       }
     })
     .catch((error) => {
+      if (isComponentUnmounted) {
+        return
+      }
+
       console.error('删除令牌失败:', error)
       message.error(error.message || '删除令牌失败')
     })
+    .finally(() => {
+      deleteTokenTasks.delete(tokenId)
+
+      if (!isComponentUnmounted) {
+        setDeleteTokenPending(tokenId, false)
+      }
+    })
+
+  deleteTokenTasks.set(tokenId, deleteTask)
+
+  return deleteTask
 }
 
 // 初始化
 onMounted(() => {
+  isComponentUnmounted = false
   fetchTokenList()
 })
 
 onUnmounted(() => {
+  isComponentUnmounted = true
   tokenListRequestId += 1
   editSessionVersion += 1
   loading.value = false
   editLoading.value = false
+  clearDeleteTokenPending()
 })
 </script>
 

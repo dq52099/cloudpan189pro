@@ -151,7 +151,14 @@
           重置
         </n-button>
         <n-dropdown trigger="click" :options="clearLogOptions" @select="handleClearLogsSelect">
-          <n-button type="error" style="margin-left: 8px">清理日志</n-button>
+          <n-button
+            type="error"
+            style="margin-left: 8px"
+            :loading="clearingLogs"
+            :disabled="clearingLogs || clearLogDialogOpen"
+          >
+            清理日志
+          </n-button>
         </n-dropdown>
       </div>
       <div class="header-right">
@@ -377,6 +384,8 @@ const selectedPlanIds = ref<number[]>([])
 const selectedPlanRows = ref<Models.AutoIngestPlan[]>([])
 const batchActionLoading = ref(false)
 const batchDeleteDialogOpen = ref(false)
+const clearingLogs = ref(false)
+const clearLogDialogOpen = ref(false)
 const hasEnabledPlans = computed(() => {
   return selectedPlanRows.value.some((p) => p.enabled)
 })
@@ -431,7 +440,7 @@ const handlePlanSelectionChange = (keys: DataTableRowKey[]) => {
 
 // 批量操作处理函数
 const handleBatchRetry = () => {
-  if (batchActionLoading.value) {
+  if (batchActionLoading.value || !isPageAlive) {
     return
   }
 
@@ -441,28 +450,38 @@ const handleBatchRetry = () => {
   }
 
   batchActionLoading.value = true
-  batchRetryPlan({ ids })
+  return batchRetryPlan({ ids })
     .then((res: ApiResponse<AutoIngestBatchOperationResponse>) => {
+      if (!isPageAlive) {
+        return
+      }
+
       if (res.code === 200) {
         if (showBatchOperationResult('批量重试', res.data, ids.length)) {
           clearPlanSelection()
-          fetchPlanList()
+          return fetchPlanList()
         }
       } else {
         message.error(res.msg || '批量重试失败')
       }
     })
     .catch((err: unknown) => {
+      if (!isPageAlive) {
+        return
+      }
+
       console.error('批量重试失败', err)
       message.error('批量重试失败')
     })
     .finally(() => {
-      batchActionLoading.value = false
+      if (isPageAlive) {
+        batchActionLoading.value = false
+      }
     })
 }
 
 const handleBatchRefresh = () => {
-  if (batchActionLoading.value) {
+  if (batchActionLoading.value || !isPageAlive) {
     return
   }
 
@@ -472,8 +491,12 @@ const handleBatchRefresh = () => {
   }
 
   batchActionLoading.value = true
-  batchRefreshPlan({ ids })
+  return batchRefreshPlan({ ids })
     .then((res: ApiResponse<AutoIngestBatchOperationResponse>) => {
+      if (!isPageAlive) {
+        return
+      }
+
       if (res.code === 200) {
         if (showBatchOperationResult('批量扫描', res.data, ids.length)) {
           clearPlanSelection()
@@ -483,16 +506,22 @@ const handleBatchRefresh = () => {
       }
     })
     .catch((err: unknown) => {
+      if (!isPageAlive) {
+        return
+      }
+
       console.error('批量扫描失败', err)
       message.error('批量扫描失败')
     })
     .finally(() => {
-      batchActionLoading.value = false
+      if (isPageAlive) {
+        batchActionLoading.value = false
+      }
     })
 }
 
 const handleBatchEnable = () => {
-  if (batchActionLoading.value) {
+  if (batchActionLoading.value || !isPageAlive) {
     return
   }
 
@@ -502,28 +531,38 @@ const handleBatchEnable = () => {
   }
 
   batchActionLoading.value = true
-  batchEnablePlan({ ids })
+  return batchEnablePlan({ ids })
     .then((res: ApiResponse<AutoIngestBatchOperationResponse>) => {
+      if (!isPageAlive) {
+        return
+      }
+
       if (res.code === 200) {
         if (showBatchOperationResult('批量启用', res.data, ids.length)) {
           clearPlanSelection()
-          fetchPlanList()
+          return fetchPlanList()
         }
       } else {
         message.error(res.msg || '批量启用失败')
       }
     })
     .catch((err: unknown) => {
+      if (!isPageAlive) {
+        return
+      }
+
       console.error('批量启用失败', err)
       message.error('批量启用失败')
     })
     .finally(() => {
-      batchActionLoading.value = false
+      if (isPageAlive) {
+        batchActionLoading.value = false
+      }
     })
 }
 
 const handleBatchDisable = () => {
-  if (batchActionLoading.value) {
+  if (batchActionLoading.value || !isPageAlive) {
     return
   }
 
@@ -533,28 +572,38 @@ const handleBatchDisable = () => {
   }
 
   batchActionLoading.value = true
-  batchDisablePlan({ ids })
+  return batchDisablePlan({ ids })
     .then((res: ApiResponse<AutoIngestBatchOperationResponse>) => {
+      if (!isPageAlive) {
+        return
+      }
+
       if (res.code === 200) {
         if (showBatchOperationResult('批量停用', res.data, ids.length)) {
           clearPlanSelection()
-          fetchPlanList()
+          return fetchPlanList()
         }
       } else {
         message.error(res.msg || '批量停用失败')
       }
     })
     .catch((err: unknown) => {
+      if (!isPageAlive) {
+        return
+      }
+
       console.error('批量停用失败', err)
       message.error('批量停用失败')
     })
     .finally(() => {
-      batchActionLoading.value = false
+      if (isPageAlive) {
+        batchActionLoading.value = false
+      }
     })
 }
 
 const handleBatchDelete = () => {
-  if (batchActionLoading.value || batchDeleteDialogOpen.value) {
+  if (batchActionLoading.value || batchDeleteDialogOpen.value || !isPageAlive) {
     return
   }
 
@@ -575,29 +624,39 @@ const handleBatchDelete = () => {
       }
     },
     onPositiveClick: () => {
-      if (batchActionLoading.value) {
+      if (batchActionLoading.value || !isPageAlive) {
         return
       }
 
       batchActionLoading.value = true
       return batchDeletePlan({ ids })
         .then((res: ApiResponse<AutoIngestBatchOperationResponse>) => {
+          if (!isPageAlive) {
+            return
+          }
+
           if (res.code === 200) {
             if (showBatchOperationResult('批量删除', res.data, ids.length)) {
               clearPlanSelection()
-              fetchPlanList()
+              return fetchPlanList()
             }
           } else {
             message.error(res.msg || '批量删除失败')
           }
         })
         .catch((err: unknown) => {
+          if (!isPageAlive) {
+            return
+          }
+
           console.error('批量删除失败', err)
           message.error('批量删除失败')
         })
         .finally(() => {
-          batchActionLoading.value = false
-          batchDeleteDialogOpen.value = false
+          if (isPageAlive) {
+            batchActionLoading.value = false
+            batchDeleteDialogOpen.value = false
+          }
         })
     },
   })
@@ -842,6 +901,10 @@ const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
                 onPositiveClick: () => onDelete(row),
                 negativeText: '取消',
                 positiveText: '确认删除',
+                positiveButtonProps: {
+                  loading: deletePending,
+                  disabled: rowPending,
+                },
               },
               {
                 trigger: () =>
@@ -870,10 +933,14 @@ const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
 ]
 
 const fetchPlanList = () => {
+  if (!isPageAlive) {
+    return Promise.resolve()
+  }
+
   const requestId = ++planListRequestId
 
   planLoading.value = true
-  getAutoIngestPlanList({
+  return getAutoIngestPlanList({
     currentPage: planPagination.page || 1,
     pageSize: planPagination.pageSize || 10,
     name: planQuery.name || undefined,
@@ -947,7 +1014,7 @@ const onEnable = (row: Models.AutoIngestPlan) => {
 
       if (res.code === 200) {
         message.success('已启用')
-        fetchPlanList()
+        return fetchPlanList()
       } else {
         message.error(res.msg || '启用失败')
       }
@@ -981,7 +1048,7 @@ const onDisable = (row: Models.AutoIngestPlan) => {
 
       if (res.code === 200) {
         message.success('已停用')
-        fetchPlanList()
+        return fetchPlanList()
       } else {
         message.error(res.msg || '停用失败')
       }
@@ -1049,7 +1116,7 @@ const onRetry = (row: Models.AutoIngestPlan) => {
 
       if (res.code === 200) {
         message.success('已下发重试任务，将重新获取所有历史记录')
-        fetchPlanList()
+        return fetchPlanList()
       } else {
         message.error(res.msg || '重试失败')
       }
@@ -1075,7 +1142,8 @@ const onDelete = (row: Models.AutoIngestPlan) => {
   }
 
   setPlanActionPending('delete', row.id, true)
-  deleteAutoIngestPlan({ id: row.id })
+
+  return deleteAutoIngestPlan({ id: row.id })
     .then((res: ApiResponse) => {
       if (!isPageAlive) {
         return
@@ -1087,7 +1155,7 @@ const onDelete = (row: Models.AutoIngestPlan) => {
         return
       }
       message.success('删除成功')
-      fetchPlanList()
+      return fetchPlanList()
     })
     .catch((err: unknown) => {
       if (!isPageAlive) {
@@ -1199,17 +1267,39 @@ const getClearLogText = (duration?: string) => {
 
 // 清理日志
 const handleClearLogsSelect = (key: string | number) => {
+  if (clearingLogs.value || clearLogDialogOpen.value || !isPageAlive) {
+    return
+  }
+
   const duration = key === 'all' ? undefined : String(key)
   const text = getClearLogText(duration)
 
+  clearLogDialogOpen.value = true
   dialog.warning({
     title: text.title,
     content: text.content,
     positiveText: text.positiveText,
     negativeText: '取消',
+    onAfterLeave: () => {
+      if (!clearingLogs.value) {
+        clearLogDialogOpen.value = false
+      }
+    },
     onPositiveClick: () => {
-      clearAutoIngestLogs(duration ? { duration } : undefined)
+      if (clearingLogs.value || !isPageAlive) {
+        clearLogDialogOpen.value = false
+
+        return
+      }
+
+      clearingLogs.value = true
+
+      return clearAutoIngestLogs(duration ? { duration } : undefined)
         .then((res) => {
+          if (!isPageAlive) {
+            return
+          }
+
           if (res.code === 200) {
             if (isValidClearCount(res.data)) {
               message.success(`${text.successPrefix} ${res.data} 条日志`)
@@ -1224,8 +1314,18 @@ const handleClearLogsSelect = (key: string | number) => {
           }
         })
         .catch((err: unknown) => {
+          if (!isPageAlive) {
+            return
+          }
+
           console.error('清理失败', err)
           message.error('清理失败')
+        })
+        .finally(() => {
+          if (isPageAlive) {
+            clearingLogs.value = false
+            clearLogDialogOpen.value = false
+          }
         })
     },
   })
@@ -1395,6 +1495,10 @@ onMounted(() => {
 onUnmounted(() => {
   isPageAlive = false
   batchDeleteDialogOpen.value = false
+  batchActionLoading.value = false
+  clearingLogs.value = false
+  clearLogDialogOpen.value = false
+  planActionPending.value = new Set()
   cloudTokenRequestId++
   planListRequestId++
   logListRequestId++

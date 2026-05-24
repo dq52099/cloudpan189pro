@@ -55,7 +55,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, h } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, h } from 'vue'
 import {
   NDataTable,
   NInput,
@@ -86,6 +86,9 @@ const tableData = ref<Models.UserInfo[]>([])
 const loading = ref(false)
 const searchKeyword = ref('')
 let userListRequestId = 0
+let usersPageAlive = false
+type UserRowAction = 'toggle' | 'delete'
+const userActionPendingKeys = ref<Set<string>>(new Set())
 
 // 添加用户相关
 const showAddModal = ref(false)
@@ -100,6 +103,25 @@ const currentBindUser = ref<Models.UserInfo | null>(null)
 
 // 消息提示
 const message = useMessage()
+
+const getUserActionKey = (action: UserRowAction, userId: number) => `${action}:${userId}`
+
+const setUserActionPending = (action: UserRowAction, userId: number, pending: boolean) => {
+  const keys = new Set(userActionPendingKeys.value)
+  const key = getUserActionKey(action, userId)
+  if (pending) {
+    keys.add(key)
+  } else {
+    keys.delete(key)
+  }
+  userActionPendingKeys.value = keys
+}
+
+const isUserActionPending = (action: UserRowAction, userId: number) =>
+  userActionPendingKeys.value.has(getUserActionKey(action, userId))
+
+const isAnyUserActionPending = (userId: number) =>
+  isUserActionPending('toggle', userId) || isUserActionPending('delete', userId)
 
 // 分页配置
 const paginationReactive = reactive<PaginationProps>({
@@ -122,6 +144,10 @@ const paginationReactive = reactive<PaginationProps>({
 
 // 获取用户列表
 const fetchUserList = () => {
+  if (!usersPageAlive) {
+    return Promise.resolve()
+  }
+
   const currentRequestId = ++userListRequestId
   loading.value = true
 
@@ -131,7 +157,7 @@ const fetchUserList = () => {
     username: searchKeyword.value || undefined,
   }
 
-  getUserList(params)
+  return getUserList(params)
     .then((response) => {
       if (currentRequestId !== userListRequestId) return
 
@@ -193,19 +219,32 @@ const handleAddSuccess = () => {
 
 // 删除用户
 const handleDeleteUser = (userId: number) => {
-  deleteUser({ id: userId })
+  if (isAnyUserActionPending(userId)) return
+
+  setUserActionPending('delete', userId, true)
+
+  return deleteUser({ id: userId })
     .then((response) => {
+      if (!usersPageAlive) return
+
       if (response.code === 200) {
         message.success('删除用户成功')
         // 刷新用户列表
-        fetchUserList()
+        return fetchUserList()
       } else {
         message.error(response.msg || '删除用户失败')
       }
     })
     .catch((error) => {
+      if (!usersPageAlive) return
+
       console.error('删除用户失败:', error)
       message.error('删除用户失败')
+    })
+    .finally(() => {
+      if (usersPageAlive) {
+        setUserActionPending('delete', userId, false)
+      }
     })
 }
 
@@ -236,22 +275,34 @@ const handleBindGroupSuccess = () => {
 
 // 切换用户状态
 const handleToggleStatus = (user: Models.UserInfo) => {
+  if (isAnyUserActionPending(user.id)) return
+
   const newStatus = user.status === 1 ? 2 : 1
   const actionText = newStatus === 1 ? '启用' : '禁用'
+  setUserActionPending('toggle', user.id, true)
 
-  toggleUserStatus({ id: user.id, status: newStatus })
+  return toggleUserStatus({ id: user.id, status: newStatus })
     .then((response) => {
+      if (!usersPageAlive) return
+
       if (response.code === 200) {
         message.success(`${actionText}用户成功`)
         // 刷新用户列表
-        fetchUserList()
+        return fetchUserList()
       } else {
         message.error(response.msg || `${actionText}用户失败`)
       }
     })
     .catch((error) => {
+      if (!usersPageAlive) return
+
       console.error(`${actionText}用户失败:`, error)
       message.error(`${actionText}用户失败`)
+    })
+    .finally(() => {
+      if (usersPageAlive) {
+        setUserActionPending('toggle', user.id, false)
+      }
     })
 }
 
@@ -316,6 +367,10 @@ const columns: DataTableColumns<Models.UserInfo> = [
     width: 280,
     align: 'center',
     render(row) {
+      const rowPending = isAnyUserActionPending(row.id)
+      const togglePending = isUserActionPending('toggle', row.id)
+      const deletePending = isUserActionPending('delete', row.id)
+
       return h(
         NSpace,
         { size: 'small' },
@@ -328,6 +383,10 @@ const columns: DataTableColumns<Models.UserInfo> = [
                 onPositiveClick: () => handleToggleStatus(row),
                 negativeText: '取消',
                 positiveText: '确认',
+                positiveButtonProps: {
+                  loading: togglePending,
+                  disabled: rowPending,
+                },
               },
               {
                 trigger: () =>
@@ -337,6 +396,8 @@ const columns: DataTableColumns<Models.UserInfo> = [
                       size: 'tiny',
                       type: row.status === 1 ? 'warning' : 'success',
                       secondary: true,
+                      loading: togglePending,
+                      disabled: rowPending,
                     },
                     {
                       icon: () =>
@@ -362,6 +423,7 @@ const columns: DataTableColumns<Models.UserInfo> = [
                 size: 'tiny',
                 type: 'info',
                 secondary: true,
+                disabled: rowPending,
                 onClick: () => handleResetPassword(row),
               },
               {
@@ -376,6 +438,7 @@ const columns: DataTableColumns<Models.UserInfo> = [
                 size: 'tiny',
                 type: 'primary',
                 secondary: true,
+                disabled: rowPending,
                 onClick: () => handleBindGroup(row),
               },
               {
@@ -390,6 +453,10 @@ const columns: DataTableColumns<Models.UserInfo> = [
                 onPositiveClick: () => handleDeleteUser(row.id),
                 negativeText: '取消',
                 positiveText: '确认删除',
+                positiveButtonProps: {
+                  loading: deletePending,
+                  disabled: rowPending,
+                },
               },
               {
                 trigger: () =>
@@ -399,6 +466,8 @@ const columns: DataTableColumns<Models.UserInfo> = [
                       size: 'tiny',
                       type: 'error',
                       secondary: true,
+                      loading: deletePending,
+                      disabled: rowPending,
                     },
                     {
                       icon: () => h(NIcon, { size: 12 }, { default: () => h(TrashOutline) }),
@@ -417,7 +486,15 @@ const columns: DataTableColumns<Models.UserInfo> = [
 
 // 初始化
 onMounted(() => {
+  usersPageAlive = true
   fetchUserList()
+})
+
+onUnmounted(() => {
+  usersPageAlive = false
+  userListRequestId++
+  loading.value = false
+  userActionPendingKeys.value = new Set()
 })
 </script>
 
