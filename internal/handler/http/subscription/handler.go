@@ -23,6 +23,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/services/tmdb"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var shareCodeRegex = regexp.MustCompile(`/t/([a-zA-Z0-9]+)`)
@@ -545,7 +546,7 @@ type SubscriptionConfig struct {
 
 type Setting struct {
 	ID    int64                     `gorm:"primaryKey" json:"id"`
-	Name  string                    `gorm:"column:name;type:varchar(255)" json:"name"`
+	Name  string                    `gorm:"column:name;type:varchar(255);uniqueIndex" json:"name"`
 	Value models.SubscriptionConfig `gorm:"column:value;type:json" json:"value"`
 }
 
@@ -723,7 +724,10 @@ func (h *Handler) UpdateConfig() httpcontext.HandlerFunc {
 		setting.Value = config
 
 		if setting.ID == 0 {
-			result = h.db.Create(&setting)
+			result = h.db.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "name"}},
+				DoUpdates: clause.AssignmentColumns([]string{"value"}),
+			}).Create(&setting)
 		} else {
 			result = h.db.Model(&Setting{}).
 				Where("id = ?", setting.ID).

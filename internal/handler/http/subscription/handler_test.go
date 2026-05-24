@@ -209,6 +209,87 @@ func TestUpdateConfigUpdatesExistingSettingWithoutDuplicate(t *testing.T) {
 	}
 }
 
+func TestUpdateConfigUpsertsWhenSettingIsCreatedConcurrently(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupSubscriptionHandlerTestDB(t)
+	handler := NewHandler(db, nil, nil, nil, nil, zap.NewNop(), nil)
+
+	const callbackName = "subscription_test_create_setting_before_upsert"
+
+	seeded := false
+
+	if err := db.Callback().Create().Before("gorm:create").Register(callbackName, func(tx *gorm.DB) {
+		if seeded || tx.Statement.Table != "system_settings" {
+			return
+		}
+
+		seeded = true
+
+		competing := &Setting{
+			Name: "subscription_config",
+			Value: models.SubscriptionConfig{
+				PanSearchURL:   "https://raced.example.com/api/search",
+				CronExpression: "0 1 * * *",
+			},
+		}
+		if err := tx.Session(&gorm.Session{NewDB: true}).Create(competing).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+	}); err != nil {
+		t.Fatalf("register create callback: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = db.Callback().Create().Remove(callbackName)
+	})
+
+	router := gin.New()
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/config", wrapper.Wrap(handler.UpdateConfig()))
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/config",
+		strings.NewReader(`{"panSearchURL":"https://new.example.com/api/search","cronExpression":"0 3 * * *"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if !seeded {
+		t.Fatal("expected test callback to simulate concurrent setting creation")
+	}
+
+	var count int64
+	if err := db.Model(&Setting{}).Where("name = ?", "subscription_config").Count(&count).Error; err != nil {
+		t.Fatalf("count settings: %v", err)
+	}
+
+	if count != 1 {
+		t.Fatalf("expected one setting after concurrent upsert, got %d", count)
+	}
+
+	var updated Setting
+	if err := db.Where("name = ?", "subscription_config").First(&updated).Error; err != nil {
+		t.Fatalf("query updated setting: %v", err)
+	}
+
+	if updated.Value.PanSearchURL != "https://new.example.com/api/search" {
+		t.Fatalf("expected request value to win conflict, got %q", updated.Value.PanSearchURL)
+	}
+
+	if updated.Value.CronExpression != "0 3 * * *" {
+		t.Fatalf("expected cron expression updated, got %q", updated.Value.CronExpression)
+	}
+}
+
 func TestUpdateConfigReturnsNotFoundWhenExistingSettingDisappears(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
