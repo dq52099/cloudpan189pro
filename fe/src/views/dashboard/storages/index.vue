@@ -73,7 +73,7 @@
             type="error"
             ghost
             :loading="clearingAll"
-            :disabled="clearingAll || batchSubmitting"
+            :disabled="clearingAll || batchSubmitting || storageDangerDialogOpen"
             @click="handleClearAll"
           >
             <template #icon>
@@ -110,7 +110,10 @@
           @click="handleBatchRefresh(false)"
           class="batch-btn"
           :disabled="
-            batchSubmitting || selectedIds.length === 0 || selectedIds.length > maxBatchActionIds
+            batchSubmitting ||
+            storageDangerDialogOpen ||
+            selectedIds.length === 0 ||
+            selectedIds.length > maxBatchActionIds
           "
         >
           <template #icon
@@ -123,7 +126,10 @@
           @click="handleBatchRefresh(true)"
           class="batch-btn"
           :disabled="
-            batchSubmitting || selectedIds.length === 0 || selectedIds.length > maxBatchActionIds
+            batchSubmitting ||
+            storageDangerDialogOpen ||
+            selectedIds.length === 0 ||
+            selectedIds.length > maxBatchActionIds
           "
         >
           <template #icon
@@ -137,6 +143,7 @@
           class="batch-btn"
           :disabled="
             batchSubmitting ||
+            storageDangerDialogOpen ||
             selectedIds.length === 0 ||
             selectedIds.length > maxBatchModifyTokenIds
           "
@@ -152,7 +159,7 @@
           class="batch-btn"
           :disabled="
             batchSubmitting ||
-            batchDeleteDialogOpen ||
+            storageDangerDialogOpen ||
             selectedIds.length === 0 ||
             selectedIds.length > maxBatchActionIds
           "
@@ -1350,11 +1357,21 @@ const isBatchMode = ref(false)
 const selectedIds = ref<number[]>([])
 const batchSubmitting = ref(false)
 const clearingAll = ref(false)
+const clearAllDialogOpen = ref(false)
+const batchRefreshDialogOpen = ref(false)
 const batchDeleteDialogOpen = ref(false)
 const deletingStorageIds = ref<Set<number>>(new Set())
 const deleteDialogOpenIds = ref<Set<number>>(new Set())
 const batchModifyTokenIds = ref<number[]>([])
 let batchModifyTokenModalSession = 0
+
+const storageDangerDialogOpen = computed(
+  () =>
+    clearAllDialogOpen.value ||
+    batchRefreshDialogOpen.value ||
+    batchDeleteDialogOpen.value ||
+    deleteDialogOpenIds.value.size > 0
+)
 
 const setDeletingStorage = (id: number, deleting: boolean) => {
   const ids = new Set(deletingStorageIds.value)
@@ -1379,7 +1396,11 @@ const setDeleteDialogOpen = (id: number, open: boolean) => {
 const isStorageDeleting = (id: number) => deletingStorageIds.value.has(id)
 
 const isStorageDeleteBlocked = (id: number) =>
-  batchSubmitting.value || isStorageDeleting(id) || deleteDialogOpenIds.value.has(id)
+  batchSubmitting.value ||
+  clearingAll.value ||
+  storageDangerDialogOpen.value ||
+  isStorageDeleting(id) ||
+  deleteDialogOpenIds.value.has(id)
 
 // 进入批量模式
 const enterBatchMode = () => {
@@ -1416,7 +1437,8 @@ const handleCardClick = (id: number) => {
 
 // 处理批量删除
 const handleBatchDelete = () => {
-  if (batchSubmitting.value || batchDeleteDialogOpen.value || selectedIds.value.length === 0) return
+  if (batchSubmitting.value || storageDangerDialogOpen.value || selectedIds.value.length === 0)
+    return
   if (!validateBatchSelectionLimit(maxBatchActionIds, '批量删除')) return
 
   const ids = [...selectedIds.value]
@@ -1473,21 +1495,32 @@ const handleBatchDelete = () => {
 
 // 处理清空所有
 const handleClearAll = () => {
-  if (clearingAll.value || batchSubmitting.value) return
+  if (clearingAll.value || batchSubmitting.value || storageDangerDialogOpen.value) return
+
+  clearAllDialogOpen.value = true
 
   dialog.warning({
     title: '清空所有挂载点',
     content: '确定要清空所有存储挂载点吗？此操作会同时删除挂载点、媒体文件和虚拟文件，不可恢复！',
     positiveText: '确认清空',
     negativeText: '取消',
+    onAfterLeave: () => {
+      if (!clearingAll.value) {
+        clearAllDialogOpen.value = false
+      }
+    },
     onPositiveClick: () => {
-      if (clearingAll.value || batchSubmitting.value) return false
+      if (clearingAll.value || batchSubmitting.value) return
 
       clearingAll.value = true
       message.loading('正在清空所有数据...')
 
       return clearAllStorage({ deleteFiles: true })
         .then((res) => {
+          if (!isPageMounted) {
+            return
+          }
+
           if (!isBusinessSuccess(res)) {
             message.error(res.msg || '清空失败')
 
@@ -1503,10 +1536,15 @@ const handleClearAll = () => {
           fetchStorageList()
         })
         .catch((error) => {
+          if (!isPageMounted) {
+            return
+          }
+
           message.error(getErrorMessage(error, '清空失败'))
         })
         .finally(() => {
           clearingAll.value = false
+          clearAllDialogOpen.value = false
         })
     },
   })
@@ -1514,25 +1552,36 @@ const handleClearAll = () => {
 
 // 处理批量刷新
 const handleBatchRefresh = (deep: boolean) => {
-  if (batchSubmitting.value || selectedIds.value.length === 0) return
+  if (batchSubmitting.value || storageDangerDialogOpen.value || selectedIds.value.length === 0)
+    return
   if (!validateBatchSelectionLimit(maxBatchActionIds, '批量刷新')) return
 
   const ids = [...selectedIds.value]
   const refreshType = deep ? '深度刷新' : '普通刷新'
+  batchRefreshDialogOpen.value = true
 
   dialog.warning({
     title: `批量${refreshType}`,
     content: `确定要${refreshType}选中的 ${ids.length} 个挂载点吗？`,
     positiveText: '确认刷新',
     negativeText: '取消',
+    onAfterLeave: () => {
+      if (!batchSubmitting.value) {
+        batchRefreshDialogOpen.value = false
+      }
+    },
     onPositiveClick: () => {
       if (batchSubmitting.value) return
 
       batchSubmitting.value = true
       message.loading(`正在批量${refreshType}...`)
 
-      batchRefreshStorage({ ids, deep })
+      return batchRefreshStorage({ ids, deep })
         .then((res) => {
+          if (!isPageMounted) {
+            return
+          }
+
           if (!isBusinessSuccess(res)) {
             message.error(res.msg || `批量${refreshType}失败`)
 
@@ -1545,10 +1594,15 @@ const handleBatchRefresh = (deep: boolean) => {
           exitBatchMode()
         })
         .catch((error) => {
+          if (!isPageMounted) {
+            return
+          }
+
           message.error(getErrorMessage(error, `批量${refreshType}失败`))
         })
         .finally(() => {
           batchSubmitting.value = false
+          batchRefreshDialogOpen.value = false
         })
     },
   })
@@ -2002,6 +2056,8 @@ onUnmounted(() => {
   autoRefreshModalSession++
   modifyTokenModalSession++
   batchModifyTokenModalSession++
+  clearAllDialogOpen.value = false
+  batchRefreshDialogOpen.value = false
   batchDeleteDialogOpen.value = false
   deletingStorageIds.value = new Set()
   deleteDialogOpenIds.value = new Set()
