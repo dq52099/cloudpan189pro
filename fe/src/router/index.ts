@@ -228,7 +228,15 @@ router.beforeEach(async (to, _, next) => {
   const userStore = useUserStore()
   const systemStore = useSystemStore()
 
-  await systemStore.ensureLoaded()
+  try {
+    await systemStore.ensureLoaded()
+  } catch (error) {
+    console.error('加载系统信息失败:', error)
+    next(false)
+
+    return
+  }
+
   const systemInfo = systemStore.get()
 
   // 检查系统是否已初始化

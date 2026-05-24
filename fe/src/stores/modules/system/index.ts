@@ -134,7 +134,11 @@ export const useSystemStore = defineStore('system', () => {
       return Promise.resolve()
     }
 
-    return refresh().then(() => undefined)
+    return refresh().then(() => {
+      if (!loaded.value) {
+        throw new Error(error.value || '获取系统信息失败')
+      }
+    })
   }
 
   const get = () => systemInfo
