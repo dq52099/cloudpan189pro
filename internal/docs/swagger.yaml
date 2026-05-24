@@ -2088,7 +2088,7 @@ definitions:
   usergroup.batchBindFilesRequest:
     properties:
       fileIds:
-        description: 文件ID列表
+        description: 文件ID列表，空数组表示清空绑定
         example:
         - 1001
         - 1002
@@ -3848,6 +3848,10 @@ paths:
           description: 权限不足
           schema:
             $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 云盘令牌不存在，code=8001
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
       summary: 获取家庭云文件列表
       tags:
       - 存储管理-高级功能
@@ -3889,6 +3893,10 @@ paths:
             $ref: '#/definitions/httpcontext.Response'
         "403":
           description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 云盘令牌不存在，code=8001
           schema:
             $ref: '#/definitions/httpcontext.Response'
       summary: 获取家庭云列表
@@ -4049,6 +4057,10 @@ paths:
             $ref: '#/definitions/httpcontext.Response'
         "403":
           description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 云盘令牌不存在，code=8001
           schema:
             $ref: '#/definitions/httpcontext.Response'
       summary: 获取个人文件列表
@@ -4214,6 +4226,10 @@ paths:
           description: 权限不足
           schema:
             $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 挂载点不存在，code=4022；云盘令牌不存在，code=4013
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
       summary: 批量修改存储挂载点令牌
       tags:
       - 存储管理
@@ -4365,6 +4381,10 @@ paths:
           description: 权限不足
           schema:
             $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 挂载点不存在，code=4022
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
       summary: 删除存储挂载
       tags:
       - 存储管理
@@ -4457,6 +4477,10 @@ paths:
           description: 权限不足
           schema:
             $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 挂载点不存在，code=4022；云盘令牌不存在，code=4013
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
       summary: 修改存储挂载点令牌
       tags:
       - 存储管理
@@ -4494,6 +4518,10 @@ paths:
             $ref: '#/definitions/httpcontext.Response'
         "403":
           description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 挂载点不存在，code=4022
           schema:
             $ref: '#/definitions/httpcontext.Response'
       summary: 刷新存储挂载
@@ -4846,6 +4874,10 @@ paths:
             $ref: '#/definitions/httpcontext.Response'
         "403":
           description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 用户不存在
           schema:
             $ref: '#/definitions/httpcontext.Response'
       summary: 删除用户
@@ -5212,7 +5244,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 批量绑定文件到指定用户组，会先删除该组的所有旧文件绑定关系，然后创建新的绑定关系。支持文件ID去重处理
+      description: 批量绑定文件到指定用户组，会先删除该组的所有旧文件绑定关系，然后创建新的绑定关系。支持文件ID去重处理；fileIds 为空数组时清空绑定
       parameters:
       - description: Bearer token
         in: header

@@ -25,7 +25,7 @@ type deleteRequest struct {
 // @Param request body deleteRequest true "删除请求参数"
 // @Success 200 {object} httpcontext.Response "存储挂载删除成功"
 // @Failure 400 {object} httpcontext.Response "参数验证失败，code=99998"
-// @Failure 400 {object} httpcontext.Response "挂载点不存在，code=4022"
+// @Failure 404 {object} httpcontext.Response "挂载点不存在，code=4022"
 // @Failure 400 {object} httpcontext.Response "查询挂载点失败，code=4021"
 // @Failure 400 {object} httpcontext.Response "删除挂载点失败，code=4023"
 // @Failure 400 {object} httpcontext.Response "发送清理任务失败，code=4024"

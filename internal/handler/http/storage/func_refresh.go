@@ -23,7 +23,7 @@ type refreshRequest struct {
 // @Param request body refreshRequest true "刷新请求参数"
 // @Success 200 {object} httpcontext.Response "存储挂载刷新成功"
 // @Failure 400 {object} httpcontext.Response "参数验证失败，code=99998"
-// @Failure 400 {object} httpcontext.Response "挂载点不存在，code=4022"
+// @Failure 404 {object} httpcontext.Response "挂载点不存在，code=4022"
 // @Failure 400 {object} httpcontext.Response "查询挂载点失败，code=4018"
 // @Failure 400 {object} httpcontext.Response "添加扫描任务失败，code=4015"
 // @Failure 401 {object} httpcontext.Response "未授权访问"

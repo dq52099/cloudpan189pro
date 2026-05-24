@@ -27,7 +27,7 @@ type batchModifyTokenRequest struct {
 // @Param request body batchModifyTokenRequest true "批量修改令牌请求参数"
 // @Success 200 {object} httpcontext.Response "令牌修改任务已提交"
 // @Failure 400 {object} httpcontext.Response "参数验证失败，code=99998"
-// @Failure 400 {object} httpcontext.Response "云盘令牌不存在，code=4013"
+// @Failure 404 {object} httpcontext.Response "挂载点不存在，code=4022；云盘令牌不存在，code=4013"
 // @Failure 400 {object} httpcontext.Response "查询云盘令牌失败，code=4019"
 // @Failure 400 {object} httpcontext.Response "下发任务失败，code=4024"
 // @Failure 401 {object} httpcontext.Response "未授权访问"

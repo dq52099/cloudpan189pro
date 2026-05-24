@@ -19,7 +19,7 @@ type familyListRequest struct {
 // @Param cloudToken query int true "云盘令牌ID"
 // @Success 200 {object} httpcontext.Response{data=cloudbridge.GetFamilyListResponse} "获取家庭云列表成功"
 // @Failure 400 {object} httpcontext.Response "参数验证失败，code=99998"
-// @Failure 400 {object} httpcontext.Response "云盘令牌不存在，code=8001"
+// @Failure 404 {object} httpcontext.Response "云盘令牌不存在，code=8001"
 // @Failure 400 {object} httpcontext.Response "获取家庭云列表失败，code=8002"
 // @Failure 401 {object} httpcontext.Response "未授权访问"
 // @Failure 403 {object} httpcontext.Response "权限不足"

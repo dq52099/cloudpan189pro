@@ -2591,6 +2591,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
+                    },
+                    "404": {
+                        "description": "云盘令牌不存在，code=8001",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
                     }
                 }
             }
@@ -2657,6 +2663,12 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "云盘令牌不存在，code=8001",
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
@@ -2905,6 +2917,12 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "云盘令牌不存在，code=8001",
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
@@ -3162,6 +3180,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
+                    },
+                    "404": {
+                        "description": "挂载点不存在，code=4022；云盘令牌不存在，code=4013",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
                     }
                 }
             }
@@ -3391,6 +3415,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
+                    },
+                    "404": {
+                        "description": "挂载点不存在，code=4022",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
                     }
                 }
             }
@@ -3533,6 +3563,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
+                    },
+                    "404": {
+                        "description": "挂载点不存在，code=4022；云盘令牌不存在，code=4013",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
                     }
                 }
             }
@@ -3589,6 +3625,12 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "挂载点不存在，code=4022",
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
@@ -4139,6 +4181,12 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "用户不存在",
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
@@ -4710,7 +4758,7 @@ const docTemplate = `{
         },
         "/api/user_group/batch_bind_files": {
             "post": {
-                "description": "批量绑定文件到指定用户组，会先删除该组的所有旧文件绑定关系，然后创建新的绑定关系。支持文件ID去重处理",
+                "description": "批量绑定文件到指定用户组，会先删除该组的所有旧文件绑定关系，然后创建新的绑定关系。支持文件ID去重处理；fileIds 为空数组时清空绑定",
                 "consumes": [
                     "application/json"
                 ],
@@ -8010,7 +8058,7 @@ const docTemplate = `{
             ],
             "properties": {
                 "fileIds": {
-                    "description": "文件ID列表",
+                    "description": "文件ID列表，空数组表示清空绑定",
                     "type": "array",
                     "items": {
                         "type": "integer"
