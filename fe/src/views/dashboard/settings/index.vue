@@ -579,6 +579,7 @@ const savingWorkerCount = ref(false)
 const savingStorageAutoRefresh = ref(false)
 const savingWebdavUserStrmOnly = ref(false)
 const savingWebdavAllowedSuffixes = ref(false)
+const inFlightAdditionPayloads = new Map<string, ModifySettingAdditionRequest>()
 const pendingAdditionPayloads = new Map<string, ModifySettingAdditionRequest>()
 
 const cloneAddition = (addition: Models.SettingAddition): Models.SettingAddition => ({
@@ -597,6 +598,52 @@ const cloneAdditionPayload = (
 
 const getAdditionPayloadKey = (payload: ModifySettingAdditionRequest) =>
   Object.keys(payload).sort().join(',')
+
+const areStringArraysEqual = (a: string[] | undefined, b: string[] | undefined) => {
+  if (a === b) return true
+  if (!a || !b || a.length !== b.length) return false
+
+  return a.every((item, index) => item === b[index])
+}
+
+const areAdditionPayloadsEqual = (
+  a: ModifySettingAdditionRequest,
+  b: ModifySettingAdditionRequest
+) => {
+  return (
+    a.localProxy === b.localProxy &&
+    a.multipleStream === b.multipleStream &&
+    a.multipleStreamThreadCount === b.multipleStreamThreadCount &&
+    a.multipleStreamChunkSize === b.multipleStreamChunkSize &&
+    a.taskThreadCount === b.taskThreadCount &&
+    a.workerCount === b.workerCount &&
+    a.enableStorageAutoRefresh === b.enableStorageAutoRefresh &&
+    a.webdavUserStrmOnly === b.webdavUserStrmOnly &&
+    areStringArraysEqual(a.webdavAllowedSuffixes, b.webdavAllowedSuffixes)
+  )
+}
+
+const isAdditionPayloadUnchanged = (payload: ModifySettingAdditionRequest) => {
+  const saved = originalAddition.value
+  if (!saved) return false
+
+  return (
+    (payload.localProxy === undefined || payload.localProxy === saved.localProxy) &&
+    (payload.multipleStream === undefined || payload.multipleStream === saved.multipleStream) &&
+    (payload.multipleStreamThreadCount === undefined ||
+      payload.multipleStreamThreadCount === saved.multipleStreamThreadCount) &&
+    (payload.multipleStreamChunkSize === undefined ||
+      payload.multipleStreamChunkSize === saved.multipleStreamChunkSize) &&
+    (payload.taskThreadCount === undefined || payload.taskThreadCount === saved.taskThreadCount) &&
+    (payload.workerCount === undefined || payload.workerCount === saved.workerCount) &&
+    (payload.enableStorageAutoRefresh === undefined ||
+      payload.enableStorageAutoRefresh === saved.enableStorageAutoRefresh) &&
+    (payload.webdavUserStrmOnly === undefined ||
+      payload.webdavUserStrmOnly === saved.webdavUserStrmOnly) &&
+    (payload.webdavAllowedSuffixes === undefined ||
+      areStringArraysEqual(payload.webdavAllowedSuffixes, saved.webdavAllowedSuffixes))
+  )
+}
 
 const commitAdditionPayload = (payload: ModifySettingAdditionRequest) => {
   const saved = originalAddition.value
@@ -666,13 +713,33 @@ const saveAdditionField = (
   }
 
   const payloadKey = getAdditionPayloadKey(payload)
+  const nextPayload = cloneAdditionPayload(payload)
   if (isSaving()) {
-    pendingAdditionPayloads.set(payloadKey, cloneAdditionPayload(payload))
+    const inFlightPayload = inFlightAdditionPayloads.get(payloadKey)
+    const pendingPayload = pendingAdditionPayloads.get(payloadKey)
+    if (pendingPayload && areAdditionPayloadsEqual(nextPayload, pendingPayload)) {
+      return
+    }
+
+    if (inFlightPayload && areAdditionPayloadsEqual(nextPayload, inFlightPayload)) {
+      pendingAdditionPayloads.delete(payloadKey)
+
+      return
+    }
+
+    pendingAdditionPayloads.set(payloadKey, nextPayload)
 
     return
   }
 
-  const requestPayload = cloneAdditionPayload(payload)
+  if (isAdditionPayloadUnchanged(nextPayload)) {
+    pendingAdditionPayloads.delete(payloadKey)
+
+    return
+  }
+
+  const requestPayload = nextPayload
+  inFlightAdditionPayloads.set(payloadKey, cloneAdditionPayload(requestPayload))
   setLoading(true)
   modifySettingAddition(requestPayload)
     .then((res) => {
@@ -699,6 +766,7 @@ const saveAdditionField = (
     .finally(() => {
       if (!isSettingsMounted) return
 
+      inFlightAdditionPayloads.delete(payloadKey)
       setLoading(false)
       const pendingPayload = pendingAdditionPayloads.get(payloadKey)
       if (pendingPayload) {
@@ -991,6 +1059,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   isSettingsMounted = false
+  inFlightAdditionPayloads.clear()
   pendingAdditionPayloads.clear()
 })
 </script>
