@@ -60,7 +60,7 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 			}
 
 			if userID <= 0 || file.TopId <= 0 {
-				ctx.Unauthorized("无权限删除")
+				ctx.Forbidden("无权限删除")
 
 				return
 			}
@@ -70,7 +70,7 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 				mountPoint, err = h.mountPointService.Query(ctx.GetContext(), file.TopId)
 				if err != nil {
 					if errors.Is(err, gorm.ErrRecordNotFound) {
-						ctx.Unauthorized("无权限删除")
+						ctx.Forbidden("无权限删除")
 					} else {
 						ctx.Fail(busCodeQueryTopIdError.WithError(err))
 					}
@@ -82,7 +82,7 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 			}
 
 			if mountPoint.CreatorUserID != userID {
-				ctx.Unauthorized("无权限删除")
+				ctx.Forbidden("无权限删除")
 
 				return
 			}

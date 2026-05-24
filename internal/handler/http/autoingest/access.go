@@ -19,7 +19,7 @@ func ensurePlanAccess(ctx *httpcontext.Context, plan *models.AutoIngestPlan) boo
 
 	userID := ctx.GetInt64(consts.CtxKeyUserId)
 	if userID <= 0 || plan.UserID != userID {
-		ctx.Unauthorized("无权限操作该自动入库计划")
+		ctx.Forbidden("无权限操作该自动入库计划")
 
 		return false
 	}

@@ -148,7 +148,7 @@ func (h *handler) Open() httpcontext.HandlerFunc {
 		}
 
 		if !isVirtualFileVisible(file, req.FullPath, accessibleIds, accessibleTopPaths) {
-			ctx.Unauthorized("无权限访问")
+			ctx.Forbidden("无权限访问")
 
 			return
 		}

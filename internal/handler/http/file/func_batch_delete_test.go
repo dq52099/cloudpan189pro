@@ -373,8 +373,8 @@ func TestBatchDeleteRejectsNonOwnerWithoutQueueingTask(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)
 
-	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("expected unauthorized, got %d body=%s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected forbidden, got %d body=%s", recorder.Code, recorder.Body.String())
 	}
 
 	if len(taskEngine.payloads) != 0 {

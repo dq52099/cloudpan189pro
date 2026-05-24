@@ -1101,7 +1101,7 @@ func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 
 			return
 		} else if err == nil && !isAdmin && (userID <= 0 || existingMountPoint.CreatorUserID != userID) {
-			c.Unauthorized("路径已被其他用户挂载")
+			c.Forbidden("路径已被其他用户挂载")
 
 			return
 		}
