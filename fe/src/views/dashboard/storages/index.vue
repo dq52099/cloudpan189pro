@@ -69,7 +69,13 @@
               新增挂载
             </n-button>
           </n-dropdown>
-          <n-button type="error" ghost @click="handleClearAll">
+          <n-button
+            type="error"
+            ghost
+            :loading="clearingAll"
+            :disabled="clearingAll || batchSubmitting"
+            @click="handleClearAll"
+          >
             <template #icon>
               <n-icon>
                 <TrashOutline />
@@ -1308,6 +1314,7 @@ const isBatchMode = ref(false)
 // 批量操作统一使用挂载点表主键，不能使用 StorageInfo.id（该字段兼容历史接口，值为 fileId）。
 const selectedIds = ref<number[]>([])
 const batchSubmitting = ref(false)
+const clearingAll = ref(false)
 const batchModifyTokenIds = ref<number[]>([])
 let batchModifyTokenModalSession = 0
 
@@ -1388,15 +1395,20 @@ const handleBatchDelete = () => {
 
 // 处理清空所有
 const handleClearAll = () => {
+  if (clearingAll.value || batchSubmitting.value) return
+
   dialog.warning({
     title: '清空所有挂载点',
     content: '确定要清空所有存储挂载点吗？此操作会同时删除挂载点、媒体文件和虚拟文件，不可恢复！',
     positiveText: '确认清空',
     negativeText: '取消',
     onPositiveClick: () => {
+      if (clearingAll.value || batchSubmitting.value) return false
+
+      clearingAll.value = true
       message.loading('正在清空所有数据...')
 
-      clearAllStorage({ deleteFiles: true })
+      return clearAllStorage({ deleteFiles: true })
         .then((res) => {
           if (!isBusinessSuccess(res)) {
             message.error(res.msg || '清空失败')
@@ -1414,6 +1426,9 @@ const handleClearAll = () => {
         })
         .catch((error) => {
           message.error(getErrorMessage(error, '清空失败'))
+        })
+        .finally(() => {
+          clearingAll.value = false
         })
     },
   })
