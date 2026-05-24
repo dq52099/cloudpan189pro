@@ -52,13 +52,48 @@ func TestRecordLogReportsCreateFailureWithoutFailingRequest(t *testing.T) {
 	}
 }
 
+func TestRecordLogKeepsRefreshTokenEventType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	loginLogService := &recordLogLoginLogServiceStub{}
+	handler := NewHandler(nil, nil, loginLogService)
+
+	router := gin.New()
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST(
+		"/refresh_token",
+		wrapper.Wrap(handler.RecordLog(loginlog.EventRefreshToken)),
+		wrapper.Wrap(func(ctx *httpcontext.Context) {
+			ctx.Success()
+		}),
+	)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/refresh_token", nil)
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	if loginLogService.createdLog == nil {
+		t.Fatal("expected login log to be created")
+	}
+
+	if loginLogService.createdLog.Event != loginlog.EventRefreshToken {
+		t.Fatalf("expected refresh token event, got %s", loginLogService.createdLog.Event)
+	}
+}
+
 type recordLogLoginLogServiceStub struct {
 	err          error
 	createCalled bool
+	createdLog   *models.LoginLog
 }
 
-func (s *recordLogLoginLogServiceStub) Create(_ frameworkContext.Context, _ *models.LoginLog) (int64, error) {
+func (s *recordLogLoginLogServiceStub) Create(_ frameworkContext.Context, log *models.LoginLog) (int64, error) {
 	s.createCalled = true
+	s.createdLog = log
 
 	return 0, s.err
 }

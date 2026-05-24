@@ -161,7 +161,7 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 		userRouter := openapiRouter.Group("/user")
 		{
 			userRouter.POST("/login", wrap(userHandler.RecordLog(loginlog.EventLogin)), wrap(userHandler.Login()))
-			userRouter.POST("/refresh_token", wrap(userHandler.RecordLog(loginlog.EventLogin)), wrap(userHandler.RefreshToken()))
+			userRouter.POST("/refresh_token", wrap(userHandler.RecordLog(loginlog.EventRefreshToken)), wrap(userHandler.RefreshToken()))
 		}
 
 		userRouterWithAdminAuth := openapiRouter.Group("/user", wrap(userMiddleware.Auth(true)))
