@@ -7,6 +7,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	cloudtokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
 	mountPointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
+	userMountPointTokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/userMountPointToken"
 )
 
 type Handler interface {
@@ -37,13 +38,19 @@ var (
 )
 
 type handler struct {
-	cloudTokenService cloudtokenSvi.Service
-	mountPointService mountPointSvi.Service
+	cloudTokenService          cloudtokenSvi.Service
+	mountPointService          mountPointSvi.Service
+	userMountPointTokenService userMountPointTokenSvi.Service
 }
 
-func NewHandler(cloudTokenService cloudtokenSvi.Service, mountPointService mountPointSvi.Service) Handler {
+func NewHandler(
+	cloudTokenService cloudtokenSvi.Service,
+	mountPointService mountPointSvi.Service,
+	userMountPointTokenService userMountPointTokenSvi.Service,
+) Handler {
 	return &handler{
-		cloudTokenService: cloudTokenService,
-		mountPointService: mountPointService,
+		cloudTokenService:          cloudTokenService,
+		mountPointService:          mountPointService,
+		userMountPointTokenService: userMountPointTokenService,
 	}
 }

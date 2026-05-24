@@ -38,7 +38,7 @@ func TestCheckQrcodeReturnsNotFoundWhenCloudTokenMissing(t *testing.T) {
 	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
 	router.POST("/check_qrcode", wrapper.Wrap(NewHandler(&mockCheckQrcodeCloudTokenService{
 		err: errors.Join(errors.New("missing token"), gorm.ErrRecordNotFound),
-	}, nil).CheckQrcode()))
+	}, nil, nil).CheckQrcode()))
 
 	req := httptest.NewRequestWithContext(
 		stdctx.Background(),

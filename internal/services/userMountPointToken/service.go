@@ -21,6 +21,7 @@ type Service interface {
 	GetUserTokens(ctx context.Context, userID int64, mountPointIDs []int64) (map[int64]int64, error)
 	GetUserMountPointIDs(ctx context.Context, userID int64) ([]int64, error)
 	GetAnyUserTokens(ctx context.Context, mountPointIDs []int64) (map[int64]int64, error)
+	CountByToken(ctx context.Context, userID, tokenID int64) (int64, error)
 	DeleteByMountPoint(ctx context.Context, mountPointID int64) error
 	DeleteByToken(ctx context.Context, tokenID int64) error
 }
@@ -236,6 +237,31 @@ func (s *service) GetAnyUserTokens(ctx context.Context, mountPointIDs []int64) (
 	}
 
 	return result, nil
+}
+
+func (s *service) CountByToken(ctx context.Context, userID, tokenID int64) (int64, error) {
+	if userID <= 0 {
+		return 0, errInvalidUserID
+	}
+
+	if tokenID <= 0 {
+		return 0, errInvalidTokenID
+	}
+
+	var count int64
+
+	err := s.getDB(ctx).Where("user_id = ? AND token_id = ?", userID, tokenID).Count(&count).Error
+	if err != nil {
+		if isMissingTableError(err) {
+			return 0, nil
+		}
+
+		ctx.Error("查询用户挂载点令牌绑定数量失败", zap.Error(err))
+
+		return 0, err
+	}
+
+	return count, nil
 }
 
 func normalizeMountPointIDs(mountPointIDs []int64) ([]int64, error) {

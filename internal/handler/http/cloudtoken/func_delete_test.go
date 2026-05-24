@@ -14,6 +14,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	cloudtokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
 	mountpointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
+	userMountPointTokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/userMountPointToken"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -37,13 +38,28 @@ func (m *mockDeleteCloudTokenService) ModifyName(ctx appContext.Context, req *cl
 
 type mockDeleteMountPointService struct {
 	mountpointSvi.Service
-	req *mountpointSvi.ListRequest
+	req   *mountpointSvi.ListRequest
+	count int64
 }
 
 func (m *mockDeleteMountPointService) Count(ctx appContext.Context, req *mountpointSvi.ListRequest) (int64, error) {
 	m.req = req
 
-	return 0, nil
+	return m.count, nil
+}
+
+type mockDeleteUserMountPointTokenService struct {
+	userMountPointTokenSvi.Service
+	userID  int64
+	tokenID int64
+	count   int64
+}
+
+func (m *mockDeleteUserMountPointTokenService) CountByToken(ctx appContext.Context, userID, tokenID int64) (int64, error) {
+	m.userID = userID
+	m.tokenID = tokenID
+
+	return m.count, nil
 }
 
 func newCloudTokenActionRouter(cloudTokenService cloudtokenSvi.Service, mountPointService mountpointSvi.Service) *gin.Engine {
@@ -54,7 +70,7 @@ func newCloudTokenActionRouter(cloudTokenService cloudtokenSvi.Service, mountPoi
 	})
 
 	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
-	handler := NewHandler(cloudTokenService, mountPointService)
+	handler := NewHandler(cloudTokenService, mountPointService, nil)
 	router.POST("/delete", wrapper.Wrap(handler.Delete()))
 	router.POST("/modify_name", wrapper.Wrap(handler.ModifyName()))
 
@@ -87,6 +103,7 @@ func TestDeletePassesCurrentUserToMountPointUsageCheck(t *testing.T) {
 
 	cloudTokenService := &mockDeleteCloudTokenService{}
 	mountPointService := &mockDeleteMountPointService{}
+	userMountPointTokenService := &mockDeleteUserMountPointTokenService{}
 
 	router := gin.New()
 	router.Use(func(ctx *gin.Context) {
@@ -95,7 +112,7 @@ func TestDeletePassesCurrentUserToMountPointUsageCheck(t *testing.T) {
 	})
 
 	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
-	router.POST("/delete", wrapper.Wrap(NewHandler(cloudTokenService, mountPointService).Delete()))
+	router.POST("/delete", wrapper.Wrap(NewHandler(cloudTokenService, mountPointService, userMountPointTokenService).Delete()))
 
 	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/delete", strings.NewReader(`{"id":123}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -117,6 +134,10 @@ func TestDeletePassesCurrentUserToMountPointUsageCheck(t *testing.T) {
 
 	if mountPointService.req.UserID != 88 || mountPointService.req.IsAdmin {
 		t.Fatalf("expected non-admin user 88 on mount point request, got %+v", mountPointService.req)
+	}
+
+	if userMountPointTokenService.userID != 88 || userMountPointTokenService.tokenID != 123 {
+		t.Fatalf("expected user mount point token count for user 88 token 123, got user=%d token=%d", userMountPointTokenService.userID, userMountPointTokenService.tokenID)
 	}
 
 	if cloudTokenService.req == nil {
@@ -142,6 +163,50 @@ func TestDeleteReturnsNotFoundWhenCloudTokenMissing(t *testing.T) {
 	router.ServeHTTP(recorder, req)
 
 	assertCloudTokenNotFoundResponse(t, recorder)
+}
+
+func TestDeleteRejectsTokenBoundToSharedMountPoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cloudTokenService := &mockDeleteCloudTokenService{}
+	mountPointService := &mockDeleteMountPointService{}
+	userMountPointTokenService := &mockDeleteUserMountPointTokenService{count: 1}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(88))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/delete", wrapper.Wrap(NewHandler(
+		cloudTokenService,
+		mountPointService,
+		userMountPointTokenService,
+	).Delete()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/delete", strings.NewReader(`{"id":123}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response httpcontext.Response
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Code != codeMountPointUsed.GetCode() {
+		t.Fatalf("expected business code %d, got %d", codeMountPointUsed.GetCode(), response.Code)
+	}
+
+	if cloudTokenService.req != nil {
+		t.Fatalf("expected delete service not to be called, got %+v", cloudTokenService.req)
+	}
 }
 
 func TestModifyNameReturnsNotFoundWhenCloudTokenMissing(t *testing.T) {

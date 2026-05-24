@@ -110,7 +110,7 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 		userGroupHandler      = usergroup.NewHandler(userGroupService, group2FileService, userService)
 		storageHandler        = storage.NewHandler(taskEngine, virtualFileService, cloudBridgeService, cloudTokenService, mountPointService, fileTaskLogService, storageFacadeService, mediaFileService, group2FileService, userMountPointTokenService)
 		storageAdvanceHandler = advance.NewHandler(cloudBridgeService, cloudTokenService)
-		cloudTokenHandler     = cloudtoken.NewHandler(cloudTokenService, mountPointService)
+		cloudTokenHandler     = cloudtoken.NewHandler(cloudTokenService, mountPointService, userMountPointTokenService)
 		fileHandler           = file.NewHandler(virtualFileService, verifyService, cloudTokenService, cloudBridgeService, mountPointService, group2FileService, userMountPointTokenService, taskEngine)
 
 		taskStateHandler    = taskstate.NewHandler(taskEngine, fileTaskLogService)

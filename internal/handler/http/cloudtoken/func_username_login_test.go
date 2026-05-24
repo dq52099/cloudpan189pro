@@ -54,7 +54,7 @@ func newUsernameLoginRouter(cloudTokenService cloudtokenSvi.Service) *gin.Engine
 	})
 
 	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
-	router.POST("/username_login", wrapper.Wrap(NewHandler(cloudTokenService, nil).UsernameLogin()))
+	router.POST("/username_login", wrapper.Wrap(NewHandler(cloudTokenService, nil, nil).UsernameLogin()))
 
 	return router
 }

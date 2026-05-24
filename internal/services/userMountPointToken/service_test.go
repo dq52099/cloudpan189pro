@@ -536,6 +536,45 @@ func TestGetAnyUserTokensReturnsLatestBindingAndDeduplicatesMountPointIDs(t *tes
 	}
 }
 
+func TestCountByTokenCountsOnlyRequestedUserToken(t *testing.T) {
+	tDB := setupUserMountPointTokenTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	createBinding(t, tDB.db, 1, 10, 100)
+	createBinding(t, tDB.db, 1, 11, 100)
+	createBinding(t, tDB.db, 1, 12, 200)
+	createBinding(t, tDB.db, 2, 13, 100)
+
+	count, err := svc.CountByToken(ctx, 1, 100)
+	if err != nil {
+		t.Fatalf("count by token: %v", err)
+	}
+
+	if count != 2 {
+		t.Fatalf("expected 2 bindings, got %d", count)
+	}
+}
+
+func TestCountByTokenReturnsZeroWhenBindingTableMissing(t *testing.T) {
+	tDB := setupUserMountPointTokenTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	if err := tDB.db.Migrator().DropTable(&models.UserMountPointToken{}); err != nil {
+		t.Fatalf("drop binding table: %v", err)
+	}
+
+	count, err := svc.CountByToken(ctx, 1, 100)
+	if err != nil {
+		t.Fatalf("expected missing binding table to be treated as no binding, got %v", err)
+	}
+
+	if count != 0 {
+		t.Fatalf("expected missing binding table count 0, got %d", count)
+	}
+}
+
 func TestGetAnyUserTokensRejectsInvalidMountPointID(t *testing.T) {
 	tDB := setupUserMountPointTokenTestDB(t)
 	svc := NewService(tDB)

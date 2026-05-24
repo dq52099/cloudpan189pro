@@ -53,6 +53,21 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !req.IsAdmin && h.userMountPointTokenService != nil {
+			count, err := h.userMountPointTokenService.CountByToken(ctx.GetContext(), req.UserID, req.ID)
+			if err != nil {
+				ctx.Fail(codeQueryFailed.WithError(err))
+
+				return
+			}
+
+			if count > 0 {
+				ctx.Fail(codeMountPointUsed)
+
+				return
+			}
+		}
+
 		if err := h.cloudTokenService.Delete(ctx.GetContext(), req); err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				ctx.Fail(codeTokenNotFound.WithError(err))

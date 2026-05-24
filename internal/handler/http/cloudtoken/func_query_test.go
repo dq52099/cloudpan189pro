@@ -36,7 +36,7 @@ func performCloudTokenQueryRequest(t *testing.T, svc cloudtokenSvi.Service, path
 
 	router := gin.New()
 	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
-	router.GET("/cloud_token/:id", wrapper.Wrap(NewHandler(svc, nil).Query()))
+	router.GET("/cloud_token/:id", wrapper.Wrap(NewHandler(svc, nil, nil).Query()))
 
 	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, path, nil)
 	recorder := httptest.NewRecorder()
