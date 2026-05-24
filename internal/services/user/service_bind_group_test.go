@@ -589,6 +589,83 @@ func TestDelCleansOwnedResourcesAndReferences(t *testing.T) {
 	assertCount(t, tDB.db, &models.VirtualFile{}, "id = ?", 1, otherMountPoint.FileId)
 }
 
+func TestDelIgnoresAlreadyDeletedUserMountPointTokenRelations(t *testing.T) {
+	tDB := setupUserTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	createUser(t, tDB.db, "founder", 0)
+	user := createUser(t, tDB.db, "delete-with-raced-binding", 0)
+
+	token := &models.CloudToken{
+		Name:        "owned-token",
+		AccessToken: "access",
+		ExpiresIn:   3600,
+		Status:      1,
+		UserID:      user.ID,
+	}
+	if err := tDB.db.Create(token).Error; err != nil {
+		t.Fatalf("create cloud token: %v", err)
+	}
+
+	mountPoint := &models.MountPoint{
+		FileId:        2101,
+		OsType:        models.OsTypeFolder,
+		TokenId:       token.ID,
+		CreatorUserID: user.ID,
+		Name:          "raced-binding",
+		FullPath:      "/raced-binding",
+	}
+	if err := tDB.db.Create(mountPoint).Error; err != nil {
+		t.Fatalf("create mount point: %v", err)
+	}
+
+	binding := &models.UserMountPointToken{
+		UserID:       user.ID,
+		MountPointID: mountPoint.ID,
+		TokenID:      token.ID,
+	}
+	if err := tDB.db.Create(binding).Error; err != nil {
+		t.Fatalf("create user mount point token binding: %v", err)
+	}
+
+	callbackName := "test_delete_user_mount_point_token_relations_race"
+	deletedByConcurrentCleanup := false
+
+	if err := tDB.db.Callback().Delete().Before("gorm:delete").Register(callbackName, func(tx *gorm.DB) {
+		if deletedByConcurrentCleanup || tx.Statement.Table != new(models.UserMountPointToken).TableName() {
+			return
+		}
+
+		deletedByConcurrentCleanup = true
+
+		if err := tx.Exec("DELETE FROM user_mount_point_tokens WHERE user_id = ?", user.ID).Error; err != nil {
+			if addErr := tx.AddError(err); addErr != nil {
+				return
+			}
+		}
+	}); err != nil {
+		t.Fatalf("register delete callback: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if removeErr := tDB.db.Callback().Delete().Remove(callbackName); removeErr != nil {
+			t.Fatalf("remove delete callback: %v", removeErr)
+		}
+	})
+
+	if err := svc.Del(ctx, &DelRequest{ID: user.ID}); err != nil {
+		t.Fatalf("delete user with concurrently cleaned binding: %v", err)
+	}
+
+	if !deletedByConcurrentCleanup {
+		t.Fatalf("expected callback to simulate concurrent relation cleanup")
+	}
+
+	assertCount(t, tDB.db, &models.User{}, "id = ?", 0, user.ID)
+	assertCount(t, tDB.db, &models.UserMountPointToken{}, "id = ?", 0, binding.ID)
+}
+
 func TestDelAllowsMissingOwnedMountPointRoot(t *testing.T) {
 	tDB := setupUserTestDB(t)
 	svc := NewService(tDB)

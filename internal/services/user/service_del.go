@@ -206,22 +206,9 @@ func resetDeletedTokenMountPointReferences(tx *gorm.DB, tokenIDs []int64) error 
 }
 
 func deleteUserMountPointTokenRelations(tx *gorm.DB, userID int64, tokenIDs, mountPointIDs []int64) error {
-	query := userMountPointTokenRelationsQuery(tx, userID, tokenIDs, mountPointIDs)
-
-	var count int64
-	if err := query.Count(&count).Error; err != nil {
-		return err
-	}
-
-	if count == 0 {
-		return nil
-	}
-
-	return ensureRowsAffected(
-		userMountPointTokenRelationsQuery(tx, userID, tokenIDs, mountPointIDs).Delete(new(models.UserMountPointToken)),
-		count,
-		"delete user mount point token relations",
-	)
+	return userMountPointTokenRelationsQuery(tx, userID, tokenIDs, mountPointIDs).
+		Delete(new(models.UserMountPointToken)).
+		Error
 }
 
 func userMountPointTokenRelationsQuery(tx *gorm.DB, userID int64, tokenIDs, mountPointIDs []int64) *gorm.DB {
