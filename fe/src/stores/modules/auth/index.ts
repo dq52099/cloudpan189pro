@@ -153,9 +153,10 @@ export const useAuthStore = defineStore('auth', () => {
         return null
       })
       .catch((error) => {
+        console.error('刷新登录状态失败:', error)
         clearSession()
 
-        throw error
+        return null
       })
       .finally(() => {
         refreshPromise = null
