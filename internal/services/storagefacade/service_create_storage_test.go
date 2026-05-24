@@ -23,7 +23,7 @@ type storageFacadeTestDB struct {
 }
 
 func (t *storageFacadeTestDB) GetDB(ctx context.Context) *gorm.DB {
-	return t.db.WithContext(ctx)
+	return bootstrap.DBFromContext(ctx, t.db)
 }
 
 func (t *storageFacadeTestDB) GetDBWithoutContext() *gorm.DB {
@@ -108,6 +108,146 @@ func createStorageFacadeCloudToken(t *testing.T, db *gorm.DB, userID int64, name
 	}
 
 	return token
+}
+
+func countStorageFacadeVirtualFilesByNames(t *testing.T, db *gorm.DB, names ...string) int64 {
+	t.Helper()
+
+	var count int64
+	if err := db.Model(&models.VirtualFile{}).Where("name IN ?", names).Count(&count).Error; err != nil {
+		t.Fatalf("count virtual files: %v", err)
+	}
+
+	return count
+}
+
+func countStorageFacadeMountPointsByPath(t *testing.T, db *gorm.DB, fullPath string) int64 {
+	t.Helper()
+
+	var count int64
+	if err := db.Model(&models.MountPoint{}).Where("full_path = ?", fullPath).Count(&count).Error; err != nil {
+		t.Fatalf("count mount points: %v", err)
+	}
+
+	return count
+}
+
+func registerStorageFacadeMountPointCreateError(t *testing.T, db *gorm.DB, err error) {
+	t.Helper()
+
+	const callbackName = "storage_facade_test_mount_point_create_error"
+
+	if err := db.Callback().Create().Before("gorm:create").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table == "mount_points" {
+			_ = tx.AddError(err)
+		}
+	}); err != nil {
+		t.Fatalf("register create callback: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = db.Callback().Create().Remove(callbackName)
+	})
+}
+
+func TestCreateStorageRollsBackAncestorsAndTopFileWhenMountPointCreateFails(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+	svc := NewService(tDB)
+	createErr := errors.New("mount point create failed")
+	registerStorageFacadeMountPointCreateError(t, tDB.db, createErr)
+
+	_, err := svc.CreateStorage(context.NewContext(stdctx.Background()), &CreateStorageRequest{
+		LocalPath:     "/rollback/a/mount",
+		OsType:        models.OsTypeFolder,
+		CloudToken:    0,
+		FileId:        "cloud-id",
+		Addition:      datatypes.JSONMap{},
+		CreatorUserID: 100,
+	})
+	if !errors.Is(err, createErr) {
+		t.Fatalf("expected injected mount point error, got %v", err)
+	}
+
+	if count := countStorageFacadeVirtualFilesByNames(t, tDB.db, "rollback", "a", "mount"); count != 0 {
+		t.Fatalf("expected created ancestors and top file to rollback, got %d virtual files", count)
+	}
+
+	if count := countStorageFacadeMountPointsByPath(t, tDB.db, "/rollback/a/mount"); count != 0 {
+		t.Fatalf("expected no mount point after rollback, got %d", count)
+	}
+}
+
+func TestCreateStorageKeepsExistingAncestorWhenMountPointCreateFails(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+	existing := createStorageFacadeVirtualDir(t, tDB.db, 0, "existing")
+	svc := NewService(tDB)
+	createErr := errors.New("mount point create failed")
+	registerStorageFacadeMountPointCreateError(t, tDB.db, createErr)
+
+	_, err := svc.CreateStorage(context.NewContext(stdctx.Background()), &CreateStorageRequest{
+		LocalPath:     "/existing/mount",
+		OsType:        models.OsTypeFolder,
+		CloudToken:    0,
+		FileId:        "cloud-id",
+		Addition:      datatypes.JSONMap{},
+		CreatorUserID: 100,
+	})
+	if !errors.Is(err, createErr) {
+		t.Fatalf("expected injected mount point error, got %v", err)
+	}
+
+	var persisted models.VirtualFile
+	if err := tDB.db.First(&persisted, existing.ID).Error; err != nil {
+		t.Fatalf("expected existing ancestor to remain: %v", err)
+	}
+
+	if count := countStorageFacadeVirtualFilesByNames(t, tDB.db, "mount"); count != 0 {
+		t.Fatalf("expected new top file to rollback, got %d", count)
+	}
+
+	if count := countStorageFacadeMountPointsByPath(t, tDB.db, "/existing/mount"); count != 0 {
+		t.Fatalf("expected no mount point after rollback, got %d", count)
+	}
+}
+
+func TestCreateStorageUsesExistingTransactionContext(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+	rollbackErr := errors.New("force outer rollback")
+
+	err := tDB.db.Transaction(func(tx *gorm.DB) error {
+		txCtx := bootstrap.WithTransactionDB(ctx, tx)
+
+		id, err := svc.CreateStorage(txCtx, &CreateStorageRequest{
+			LocalPath:     "/outer-tx/mount",
+			OsType:        models.OsTypeFolder,
+			CloudToken:    0,
+			FileId:        "cloud-id",
+			Addition:      datatypes.JSONMap{},
+			CreatorUserID: 100,
+		})
+		if err != nil {
+			return err
+		}
+
+		if id <= 0 {
+			t.Fatalf("expected virtual file id, got %d", id)
+		}
+
+		return rollbackErr
+	})
+	if !errors.Is(err, rollbackErr) {
+		t.Fatalf("expected outer rollback error, got %v", err)
+	}
+
+	if count := countStorageFacadeVirtualFilesByNames(t, tDB.db, "outer-tx", "mount"); count != 0 {
+		t.Fatalf("expected outer transaction rollback to remove virtual files, got %d", count)
+	}
+
+	if count := countStorageFacadeMountPointsByPath(t, tDB.db, "/outer-tx/mount"); count != 0 {
+		t.Fatalf("expected outer transaction rollback to remove mount point, got %d", count)
+	}
 }
 
 func TestCreateStorageAllowExistingRejectsPlainVirtualFile(t *testing.T) {
