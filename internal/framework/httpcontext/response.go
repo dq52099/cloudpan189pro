@@ -65,6 +65,12 @@ func (c *Context) Unauthorized(messages ...string) *Context {
 	return c
 }
 
+func (c *Context) Forbidden(messages ...string) *Context {
+	c.Fail(forbiddenBusinessError(messages...))
+
+	return c
+}
+
 func (c *Context) AbortWithInvalidParams(err error) *Context {
 	c.Fail(invalidParamsBusinessError(err))
 

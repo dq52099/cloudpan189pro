@@ -83,7 +83,7 @@ func (m *AuthMiddleware) Auth(requireAdmins ...bool) httpcontext.HandlerFunc {
 		}
 
 		if requireAdmin && !u.IsAdmin {
-			ctx.Unauthorized(errMessageRequireAdmin)
+			ctx.Forbidden(errMessageRequireAdmin)
 
 			return
 		}

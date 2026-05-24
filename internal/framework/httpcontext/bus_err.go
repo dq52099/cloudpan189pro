@@ -106,6 +106,7 @@ func NewBusinessGenerator(startCode int) BusinessGenerator {
 
 const (
 	defaultUnauthorizedMessage = "Unauthorized"
+	defaultForbiddenMessage    = "Forbidden"
 	invalidParamsCode          = 99998
 )
 
@@ -114,6 +115,14 @@ func unauthorizedBusinessError(messages ...string) BusinessError {
 		businessCode: http.StatusUnauthorized,
 		message:      utils.UseSimplify(defaultUnauthorizedMessage, messages...),
 		httpCode:     http.StatusUnauthorized,
+	}
+}
+
+func forbiddenBusinessError(messages ...string) BusinessError {
+	return &businessError{
+		businessCode: http.StatusForbidden,
+		message:      utils.UseSimplify(defaultForbiddenMessage, messages...),
+		httpCode:     http.StatusForbidden,
 	}
 }
 
