@@ -277,10 +277,22 @@ router.beforeEach(async (to, _, next) => {
     }
 
     // 检查是否需要管理员权限
-    if (to.meta.requiresAdmin && !userStore.isAdmin) {
-      // 需要管理员权限但用户不是管理员，跳转到仪表板首页
-      next('/@dashboard')
-      return
+    if (to.meta.requiresAdmin) {
+      let refreshedUser: Models.UserInfo | null | undefined
+
+      try {
+        refreshedUser = await userStore.refresh()
+      } catch (error) {
+        console.error('刷新用户权限失败:', error)
+        next(authStore.isLogin ? '/@dashboard' : '/@login')
+        return
+      }
+
+      if (!refreshedUser?.isAdmin) {
+        // 需要管理员权限但用户不是管理员，跳转到仪表板首页
+        next('/@dashboard')
+        return
+      }
     }
 
     next()
