@@ -6446,7 +6446,20 @@ const docTemplate = `{
             }
         },
         "media.rebuildStrmRequest": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+                "mountPointIds": {
+                    "description": "MountPointIDs 可选；未传时重建全部，显式空数组不派发任务。",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    },
+                    "example": [
+                        1001,
+                        1002
+                    ]
+                }
+            }
         },
         "media.rebuildStrmResponse": {
             "type": "object",

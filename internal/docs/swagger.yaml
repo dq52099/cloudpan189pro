@@ -934,6 +934,15 @@ definitions:
         type: string
     type: object
   media.rebuildStrmRequest:
+    properties:
+      mountPointIds:
+        description: MountPointIDs 可选；未传时重建全部，显式空数组不派发任务。
+        example:
+        - 1001
+        - 1002
+        items:
+          type: integer
+        type: array
     type: object
   media.rebuildStrmResponse:
     properties:

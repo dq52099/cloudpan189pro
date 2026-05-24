@@ -15,7 +15,7 @@ import (
 
 type rebuildStrmRequest struct {
 	// MountPointIDs 可选；未传时重建全部，显式空数组不派发任务。
-	MountPointIDs *[]int64 `json:"mountPointIds,omitempty" example:"[1001,1002]"`
+	MountPointIDs *[]int64 `json:"mountPointIds,omitempty" example:"1001,1002"`
 }
 
 type rebuildStrmResponse struct {
