@@ -193,34 +193,28 @@ const autoGetBaseURL = () => {
 }
 
 // 处理初始化
-const handleInit = () => {
-  formRef.value
-    ?.validate()
-    .then(() => {
-      loading.value = true
-      return initSystem(formData)
-    })
-    .then((response) => {
-      if (response.code === 200) {
-        message.success('系统初始化成功')
-        // 刷新系统信息
-        systemStore.refresh().then((refreshResponse) => {
-          const systemInfo = systemStore.get()
-          const refreshEnableAuth = refreshResponse?.data?.enableAuth
-          const enableAuth = (refreshEnableAuth ?? systemInfo.enableAuth) && formData.enableAuth
-          router.push(enableAuth ? '/@login' : '/@dashboard')
-        })
-      } else {
-        message.error(response.msg || '初始化失败')
-      }
-    })
-    .catch((error: unknown) => {
-      console.error('初始化失败:', error)
-      message.error('初始化失败，请检查配置信息')
-    })
-    .finally(() => {
-      loading.value = false
-    })
+const handleInit = async () => {
+  try {
+    await formRef.value?.validate()
+    loading.value = true
+    const response = await initSystem(formData)
+    if (response.code === 200) {
+      message.success('系统初始化成功')
+      // 刷新系统信息
+      const refreshResponse = await systemStore.refresh()
+      const systemInfo = systemStore.get()
+      const refreshEnableAuth = refreshResponse?.data?.enableAuth
+      const enableAuth = (refreshEnableAuth ?? systemInfo.enableAuth) && formData.enableAuth
+      await router.push(enableAuth ? '/@login' : '/@dashboard')
+    } else {
+      message.error(response.msg || '初始化失败')
+    }
+  } catch (error: unknown) {
+    console.error('初始化失败:', error)
+    message.error('初始化失败，请检查配置信息')
+  } finally {
+    loading.value = false
+  }
 }
 
 // 页面加载时自动获取baseURL

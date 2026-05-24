@@ -116,24 +116,21 @@ const getErrorMessage = (error: unknown) => {
   return '登录失败，请检查用户名和密码'
 }
 
-const handleLogin = () => {
-  formRef.value
-    ?.validate()
-    .then(() => {
-      loading.value = true
-      return authStore.login(formData)
-    })
-    .then(() => {
-      message.success('登录成功')
-      router.push('/@dashboard')
-    })
-    .catch((error: unknown) => {
-      console.error('登录失败:', error)
-      message.error(getErrorMessage(error))
-    })
-    .finally(() => {
-      loading.value = false
-    })
+const handleLogin = async () => {
+  if (loading.value) return
+
+  loading.value = true
+  try {
+    await formRef.value?.validate()
+    await authStore.login(formData)
+    message.success('登录成功')
+    await router.push('/@dashboard')
+  } catch (error: unknown) {
+    console.error('登录失败:', error)
+    message.error(getErrorMessage(error))
+  } finally {
+    loading.value = false
+  }
 }
 </script>
 

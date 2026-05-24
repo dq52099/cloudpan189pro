@@ -105,11 +105,18 @@ const setupPlayer = async (requestId: number) => {
     hls.value.on(HlsCtor.Events.MANIFEST_PARSED, () => {
       if (!isCurrentSource(requestId)) return
 
-      buildPlyr(requestId).then(() => {
-        if (isCurrentSource(requestId)) {
-          playIfNeeded(video)
-        }
-      })
+      buildPlyr(requestId)
+        .then(() => {
+          if (isCurrentSource(requestId)) {
+            playIfNeeded(video)
+          }
+        })
+        .catch((error: unknown) => {
+          if (!isCurrentSource(requestId)) return
+
+          console.error('buildPlyr error:', error)
+          message.error('视频播放器初始化失败')
+        })
     })
     hls.value.on(HlsCtor.Events.ERROR, (_event, data) => {
       if (isCurrentSource(requestId) && data?.fatal) {
