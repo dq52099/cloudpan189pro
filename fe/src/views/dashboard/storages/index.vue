@@ -151,7 +151,10 @@
           @click="handleBatchDelete"
           class="batch-btn"
           :disabled="
-            batchSubmitting || selectedIds.length === 0 || selectedIds.length > maxBatchActionIds
+            batchSubmitting ||
+            batchDeleteDialogOpen ||
+            selectedIds.length === 0 ||
+            selectedIds.length > maxBatchActionIds
           "
         >
           <template #icon
@@ -219,7 +222,14 @@
                 </template>
               </n-button>
 
-              <n-button size="small" quaternary circle @click="handleDelete(storage)">
+              <n-button
+                size="small"
+                quaternary
+                circle
+                :loading="isStorageDeleting(storage.mountPointId)"
+                :disabled="isStorageDeleteBlocked(storage.mountPointId)"
+                @click="handleDelete(storage)"
+              >
                 <template #icon>
                   <n-icon :size="16">
                     <TrashOutline />
@@ -1184,16 +1194,33 @@ const handleRefresh = (mountPointId: number, deep: boolean) => {
 
 // 处理删除
 const handleDelete = (storage: StorageInfo) => {
+  const id = storage.mountPointId
+  if (!isPageMounted || isStorageDeleteBlocked(id)) return
+
+  setDeleteDialogOpen(id, true)
+
   dialog.warning({
     title: '确认删除',
     content: `确定要删除存储挂载点 "${storage.name || '未命名存储'}" 吗？此操作不可撤销。`,
     positiveText: '确认删除',
     negativeText: '取消',
+    onAfterLeave: () => {
+      if (!isStorageDeleting(id)) {
+        setDeleteDialogOpen(id, false)
+      }
+    },
     onPositiveClick: () => {
+      if (!isPageMounted || isStorageDeleting(id)) return
+
+      setDeletingStorage(id, true)
       message.loading(`正在删除 ${storage.name || '存储'}...`)
 
-      deleteStorage({ id: storage.mountPointId })
+      return deleteStorage({ id })
         .then((res) => {
+          if (!isPageMounted) {
+            return
+          }
+
           if (!isBusinessSuccess(res)) {
             message.error(res.msg || '删除失败')
 
@@ -1203,8 +1230,16 @@ const handleDelete = (storage: StorageInfo) => {
           fetchStorageList()
         })
         .catch((error) => {
+          if (!isPageMounted) {
+            return
+          }
+
           console.error('删除存储失败:', error)
           message.error(getErrorMessage(error, '删除失败'))
+        })
+        .finally(() => {
+          setDeletingStorage(id, false)
+          setDeleteDialogOpen(id, false)
         })
     },
   })
@@ -1315,8 +1350,36 @@ const isBatchMode = ref(false)
 const selectedIds = ref<number[]>([])
 const batchSubmitting = ref(false)
 const clearingAll = ref(false)
+const batchDeleteDialogOpen = ref(false)
+const deletingStorageIds = ref<Set<number>>(new Set())
+const deleteDialogOpenIds = ref<Set<number>>(new Set())
 const batchModifyTokenIds = ref<number[]>([])
 let batchModifyTokenModalSession = 0
+
+const setDeletingStorage = (id: number, deleting: boolean) => {
+  const ids = new Set(deletingStorageIds.value)
+  if (deleting) {
+    ids.add(id)
+  } else {
+    ids.delete(id)
+  }
+  deletingStorageIds.value = ids
+}
+
+const setDeleteDialogOpen = (id: number, open: boolean) => {
+  const ids = new Set(deleteDialogOpenIds.value)
+  if (open) {
+    ids.add(id)
+  } else {
+    ids.delete(id)
+  }
+  deleteDialogOpenIds.value = ids
+}
+
+const isStorageDeleting = (id: number) => deletingStorageIds.value.has(id)
+
+const isStorageDeleteBlocked = (id: number) =>
+  batchSubmitting.value || isStorageDeleting(id) || deleteDialogOpenIds.value.has(id)
 
 // 进入批量模式
 const enterBatchMode = () => {
@@ -1353,24 +1416,34 @@ const handleCardClick = (id: number) => {
 
 // 处理批量删除
 const handleBatchDelete = () => {
-  if (batchSubmitting.value || selectedIds.value.length === 0) return
+  if (batchSubmitting.value || batchDeleteDialogOpen.value || selectedIds.value.length === 0) return
   if (!validateBatchSelectionLimit(maxBatchActionIds, '批量删除')) return
 
   const ids = [...selectedIds.value]
+  batchDeleteDialogOpen.value = true
 
   dialog.warning({
     title: '批量删除',
     content: `确定要删除选中的 ${ids.length} 个挂载点吗？此操作不可撤销。`,
     positiveText: '确认删除',
     negativeText: '取消',
+    onAfterLeave: () => {
+      if (!batchSubmitting.value) {
+        batchDeleteDialogOpen.value = false
+      }
+    },
     onPositiveClick: () => {
       if (batchSubmitting.value) return
 
       batchSubmitting.value = true
       message.loading('正在批量删除...')
 
-      batchDeleteStorage({ ids })
+      return batchDeleteStorage({ ids })
         .then((res) => {
+          if (!isPageMounted) {
+            return
+          }
+
           if (!isBusinessSuccess(res)) {
             message.error(res.msg || '批量删除失败')
 
@@ -1384,10 +1457,15 @@ const handleBatchDelete = () => {
           fetchStorageList()
         })
         .catch((error) => {
+          if (!isPageMounted) {
+            return
+          }
+
           message.error(getErrorMessage(error, '批量删除失败'))
         })
         .finally(() => {
           batchSubmitting.value = false
+          batchDeleteDialogOpen.value = false
         })
     },
   })
@@ -1924,6 +2002,9 @@ onUnmounted(() => {
   autoRefreshModalSession++
   modifyTokenModalSession++
   batchModifyTokenModalSession++
+  batchDeleteDialogOpen.value = false
+  deletingStorageIds.value = new Set()
+  deleteDialogOpenIds.value = new Set()
   stopAutoRefresh()
 })
 </script>

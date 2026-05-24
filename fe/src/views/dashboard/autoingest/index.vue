@@ -106,7 +106,7 @@
         size="small"
         type="error"
         @click="handleBatchDelete"
-        :disabled="batchActionLoading"
+        :disabled="batchActionLoading || batchDeleteDialogOpen"
         :loading="batchActionLoading"
       >
         <template #icon>
@@ -376,6 +376,7 @@ const planQuery = reactive({
 const selectedPlanIds = ref<number[]>([])
 const selectedPlanRows = ref<Models.AutoIngestPlan[]>([])
 const batchActionLoading = ref(false)
+const batchDeleteDialogOpen = ref(false)
 const hasEnabledPlans = computed(() => {
   return selectedPlanRows.value.some((p) => p.enabled)
 })
@@ -553,27 +554,33 @@ const handleBatchDisable = () => {
 }
 
 const handleBatchDelete = () => {
-  if (batchActionLoading.value || selectedPlanIds.value.length === 0) {
+  if (batchActionLoading.value || batchDeleteDialogOpen.value) {
     return
   }
 
+  const ids = [...selectedPlanIds.value]
+  if (ids.length === 0) {
+    return
+  }
+
+  batchDeleteDialogOpen.value = true
   dialog.warning({
     title: '批量删除计划',
-    content: `确定要删除选中的 ${selectedPlanIds.value.length} 个计划吗？此操作不可撤销。`,
+    content: `确定要删除选中的 ${ids.length} 个计划吗？此操作不可撤销。`,
     positiveText: '确认删除',
     negativeText: '取消',
+    onAfterLeave: () => {
+      if (!batchActionLoading.value) {
+        batchDeleteDialogOpen.value = false
+      }
+    },
     onPositiveClick: () => {
       if (batchActionLoading.value) {
         return
       }
 
-      const ids = [...selectedPlanIds.value]
-      if (ids.length === 0) {
-        return
-      }
-
       batchActionLoading.value = true
-      batchDeletePlan({ ids })
+      return batchDeletePlan({ ids })
         .then((res: ApiResponse<AutoIngestBatchOperationResponse>) => {
           if (res.code === 200) {
             if (showBatchOperationResult('批量删除', res.data, ids.length)) {
@@ -590,6 +597,7 @@ const handleBatchDelete = () => {
         })
         .finally(() => {
           batchActionLoading.value = false
+          batchDeleteDialogOpen.value = false
         })
     },
   })
@@ -1386,6 +1394,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   isPageAlive = false
+  batchDeleteDialogOpen.value = false
   cloudTokenRequestId++
   planListRequestId++
   logListRequestId++
