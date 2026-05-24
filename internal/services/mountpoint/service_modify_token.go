@@ -6,6 +6,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 var errPermissionDenied = errors.New("无权限操作")
@@ -47,11 +48,24 @@ func (s *service) ModifyToken(ctx context.Context, req *ModifyTokenRequest) erro
 		}
 	}
 
-	// 验证新令牌属于当前用户（非管理员情况下）
-	if !req.IsAdmin && req.TokenId > 0 {
+	// 验证新令牌存在，并在非管理员情况下确认归属。
+	if req.TokenId > 0 {
 		var token models.CloudToken
-		if err := s.getDB(ctx).Where("id = ? AND user_id = ?", req.TokenId, req.CreatorUserID).First(&token).Error; err != nil {
-			ctx.Error("验证令牌所属用户失败", zap.Error(err), zap.Int64("token_id", req.TokenId), zap.Int64("user_id", req.CreatorUserID))
+		if err := s.svc.GetDB(ctx).Model(new(models.CloudToken)).
+			Select("id", "user_id").
+			Where("id = ?", req.TokenId).
+			First(&token).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+
+			ctx.Error("查询云盘令牌失败", zap.Error(err), zap.Int64("token_id", req.TokenId))
+
+			return err
+		}
+
+		if !req.IsAdmin && token.UserID != req.CreatorUserID {
+			ctx.Error("验证令牌所属用户失败", zap.Int64("token_id", req.TokenId), zap.Int64("user_id", req.CreatorUserID))
 
 			return errPermissionDenied
 		}

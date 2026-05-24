@@ -84,14 +84,20 @@ func createMountPoint(t *testing.T, db *gorm.DB, fileID, creatorUserID int64, na
 	return mountPoint
 }
 
-func createCloudToken(t *testing.T, db *gorm.DB, id int64) *models.CloudToken {
+func createCloudToken(t *testing.T, db *gorm.DB, id int64, userIDs ...int64) *models.CloudToken {
 	t.Helper()
+
+	userID := int64(1)
+	if len(userIDs) > 0 {
+		userID = userIDs[0]
+	}
 
 	token := &models.CloudToken{
 		ID:          id,
 		Name:        fmt.Sprintf("token-%d", id),
 		AccessToken: fmt.Sprintf("access-token-%d", id),
 		ExpiresIn:   7200,
+		UserID:      userID,
 	}
 	if err := db.Create(token).Error; err != nil {
 		t.Fatalf("create cloud token: %v", err)
@@ -1223,6 +1229,7 @@ func TestModifyTokenUpdatesExistingMountPoint(t *testing.T) {
 	ctx := context.NewContext(stdctx.Background())
 
 	mountPoint := createMountPoint(t, tDB.db, 1003, 10, "modify-token")
+	createCloudToken(t, tDB.db, 99)
 
 	if err := svc.ModifyToken(ctx, &ModifyTokenRequest{ID: mountPoint.ID, TokenId: 99, IsAdmin: true}); err != nil {
 		t.Fatalf("modify token: %v", err)
@@ -1244,9 +1251,77 @@ func TestModifyTokenAllowsNoopUpdate(t *testing.T) {
 	ctx := context.NewContext(stdctx.Background())
 
 	mountPoint := createMountPoint(t, tDB.db, 1004, 10, "modify-token-repeat")
+	createCloudToken(t, tDB.db, mountPoint.TokenId)
 
 	if err := svc.ModifyToken(ctx, &ModifyTokenRequest{ID: mountPoint.ID, TokenId: mountPoint.TokenId, IsAdmin: true}); err != nil {
 		t.Fatalf("modify token with same value: %v", err)
+	}
+}
+
+func TestModifyTokenUpdatesOwnedTokenForNonAdmin(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	svc := NewService(tDB, nil, nil, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	mountPoint := createMountPoint(t, tDB.db, 1006, 10, "modify-owned-token")
+	createCloudToken(t, tDB.db, 199, 10)
+
+	if err := svc.ModifyToken(ctx, &ModifyTokenRequest{ID: mountPoint.ID, TokenId: 199, CreatorUserID: 10}); err != nil {
+		t.Fatalf("modify token with owned token: %v", err)
+	}
+
+	var updated models.MountPoint
+	if err := tDB.db.First(&updated, mountPoint.ID).Error; err != nil {
+		t.Fatalf("query updated mount point: %v", err)
+	}
+
+	if updated.TokenId != 199 {
+		t.Fatalf("expected token id 199, got %d", updated.TokenId)
+	}
+}
+
+func TestModifyTokenRejectsTokenOwnedByAnotherUserForNonAdmin(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	svc := NewService(tDB, nil, nil, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	mountPoint := createMountPoint(t, tDB.db, 1007, 10, "modify-other-token")
+	createCloudToken(t, tDB.db, 299, 20)
+
+	err := svc.ModifyToken(ctx, &ModifyTokenRequest{ID: mountPoint.ID, TokenId: 299, CreatorUserID: 10})
+	if !errors.Is(err, errPermissionDenied) {
+		t.Fatalf("expected permission denied, got %v", err)
+	}
+
+	var updated models.MountPoint
+	if err := tDB.db.First(&updated, mountPoint.ID).Error; err != nil {
+		t.Fatalf("query mount point: %v", err)
+	}
+
+	if updated.TokenId != mountPoint.TokenId {
+		t.Fatalf("expected token id unchanged at %d, got %d", mountPoint.TokenId, updated.TokenId)
+	}
+}
+
+func TestModifyTokenReturnsNotFoundWhenTokenMissing(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	svc := NewService(tDB, nil, nil, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	mountPoint := createMountPoint(t, tDB.db, 1008, 10, "modify-missing-token")
+
+	err := svc.ModifyToken(ctx, &ModifyTokenRequest{ID: mountPoint.ID, TokenId: 399, IsAdmin: true})
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected record not found, got %v", err)
+	}
+
+	var updated models.MountPoint
+	if err := tDB.db.First(&updated, mountPoint.ID).Error; err != nil {
+		t.Fatalf("query mount point: %v", err)
+	}
+
+	if updated.TokenId != mountPoint.TokenId {
+		t.Fatalf("expected token id unchanged at %d, got %d", mountPoint.TokenId, updated.TokenId)
 	}
 }
 

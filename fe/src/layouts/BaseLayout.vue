@@ -372,9 +372,33 @@ const routeKeyMap: Record<string, string> = {
   '/@dashboard/profile': 'personal-info',
 }
 
+const routeNameKeyMap: Record<string, string> = {
+  Dashboard: 'dashboard',
+  FileBrowser: 'file-browse',
+  FileBrowserPath: 'file-browse',
+  Storages: 'storage-manage',
+  AutoIngest: 'auto-import',
+  Users: 'user-manage',
+  UserGroups: 'group-manage',
+  CloudTokens: 'token',
+  Extensions: 'extend-feature',
+  ExtensionsIndex: 'extend-feature',
+  ExtensionsMedia: 'extend-feature',
+  Telegram: 'telegram-bot',
+  Subscriptions: 'subscription',
+  Logs: 'aggregate-log',
+  LogsIndex: 'aggregate-log',
+  LogsEngine: 'aggregate-log',
+  LogsFile: 'aggregate-log',
+  LogsLogin: 'aggregate-log',
+  Settings: 'system-setting',
+  Profile: 'personal-info',
+}
+
 const activeKey = computed(() => {
-  if (route.path === '/@dashboard/storages' && route.query.tab === 'overview') {
-    return 'storage'
+  const routeName = typeof route.name === 'string' ? route.name : ''
+  if (routeName && routeNameKeyMap[routeName]) {
+    return routeNameKeyMap[routeName]
   }
 
   if (route.path !== '/' && !route.path.startsWith('/@dashboard')) {
