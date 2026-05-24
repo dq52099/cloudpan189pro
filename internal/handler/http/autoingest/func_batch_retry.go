@@ -22,7 +22,9 @@ type BatchRetryRequest struct {
 // @Param Authorization header string true "Bearer token"
 // @Param request body BatchRetryRequest true "批量重试请求"
 // @Success 200 {object} httpcontext.Response "操作成功"
-// @Failure 400 {object} httpcontext.Response "参数验证失败"
+// @Failure 400 {object} httpcontext.Response "参数验证失败，code=99998"
+// @Failure 404 {object} httpcontext.Response "自动挂载计划不存在，code=xxxx"
+// @Router /api/auto_ingest/plan/batch_retry [post]
 func (h *handler) BatchRetry() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
 		req := new(BatchRetryRequest)

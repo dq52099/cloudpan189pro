@@ -2311,6 +2311,181 @@ paths:
       summary: 获取自动挂载日志列表
       tags:
       - 自动挂载管理
+  /api/auto_ingest/plan/batch_delete:
+    post:
+      consumes:
+      - application/json
+      description: 批量删除自动入库计划（上限 500 个 id，内部限流 16 并发）
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 批量删除请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/autoingest.BatchDeleteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 操作成功
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "400":
+          description: 参数验证失败，code=99998
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 自动挂载计划不存在，code=xxxx
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 批量删除计划
+      tags:
+      - 自动挂载管理
+  /api/auto_ingest/plan/batch_disable:
+    post:
+      consumes:
+      - application/json
+      description: 批量停用自动入库计划（上限 500 个，内部限流 16 并发）
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 批量停用请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/autoingest.BatchDisableRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 操作成功
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "400":
+          description: 参数验证失败，code=99998
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 自动挂载计划不存在，code=xxxx
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 批量停用计划
+      tags:
+      - 自动挂载管理
+  /api/auto_ingest/plan/batch_enable:
+    post:
+      consumes:
+      - application/json
+      description: 批量启用自动入库计划（上限 500 个，内部限流 16 并发）
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 批量启用请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/autoingest.BatchEnableRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 操作成功
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "400":
+          description: 参数验证失败，code=99998
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 自动挂载计划不存在，code=xxxx
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 批量启用计划
+      tags:
+      - 自动挂载管理
+  /api/auto_ingest/plan/batch_refresh:
+    post:
+      consumes:
+      - application/json
+      description: 批量触发计划的刷新任务（上限 500 个，内部限流 16 并发）
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 批量刷新请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/autoingest.BatchRefreshRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 操作成功
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "400":
+          description: 参数验证失败，code=99998
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 自动挂载计划不存在，code=xxxx
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 批量刷新计划
+      tags:
+      - 自动挂载管理
+  /api/auto_ingest/plan/batch_retry:
+    post:
+      consumes:
+      - application/json
+      description: 批量将计划的偏移量重置为 1 并重新扫描（上限 500 个，内部限流 16 并发）
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 批量重试请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/autoingest.BatchRetryRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 操作成功
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "400":
+          description: 参数验证失败，code=99998
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 自动挂载计划不存在，code=xxxx
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 批量重试计划
+      tags:
+      - 自动挂载管理
   /api/auto_ingest/plan/create_subscribe:
     post:
       consumes:
@@ -2352,6 +2527,10 @@ paths:
           description: 权限不足
           schema:
             $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 云盘令牌不存在，code=xxxx
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
       summary: 创建订阅型自动挂载计划
       tags:
       - 自动挂载管理
@@ -2389,6 +2568,10 @@ paths:
             $ref: '#/definitions/httpcontext.Response'
         "403":
           description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 自动挂载计划不存在，code=xxxx
           schema:
             $ref: '#/definitions/httpcontext.Response'
       summary: 删除自动挂载计划
@@ -2430,6 +2613,10 @@ paths:
           description: 权限不足
           schema:
             $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 自动挂载计划不存在，code=xxxx
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
       summary: 停用自动挂载计划
       tags:
       - 自动挂载管理
@@ -2467,6 +2654,10 @@ paths:
             $ref: '#/definitions/httpcontext.Response'
         "403":
           description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 自动挂载计划不存在，code=xxxx
           schema:
             $ref: '#/definitions/httpcontext.Response'
       summary: 启用自动挂载计划
@@ -2560,6 +2751,10 @@ paths:
           description: 权限不足
           schema:
             $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 自动挂载计划不存在，code=xxxx
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
       summary: 下发订阅计划刷新任务
       tags:
       - 自动挂载管理
@@ -2589,6 +2784,10 @@ paths:
             $ref: '#/definitions/httpcontext.Response'
         "400":
           description: 查询计划失败
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 自动挂载计划不存在，code=xxxx
           schema:
             $ref: '#/definitions/httpcontext.Response'
       summary: 重试计划（重新获取历史记录）
@@ -2630,6 +2829,10 @@ paths:
           description: 权限不足
           schema:
             $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 自动挂载计划不存在，code=xxxx
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
       summary: 重试失败的入库任务
       tags:
       - 自动挂载管理
@@ -2667,6 +2870,10 @@ paths:
             $ref: '#/definitions/httpcontext.Response'
         "403":
           description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 自动挂载计划不存在或云盘令牌不存在，code=xxxx
           schema:
             $ref: '#/definitions/httpcontext.Response'
       summary: 修改自动挂载计划

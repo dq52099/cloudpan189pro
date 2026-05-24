@@ -31,11 +31,11 @@ type retryFailedRequest struct {
 // @Param request body refreshPlanRequest true "刷新计划请求参数"
 // @Success 200 {object} httpcontext.Response "任务已下发"
 // @Failure 400 {object} httpcontext.Response "参数验证失败，code=99998"
-// @Failure 400 {object} httpcontext.Response "自动挂载计划不存在，code=xxxx"
 // @Failure 400 {object} httpcontext.Response "自动挂载计划来源类型不支持刷新，code=xxxx"
 // @Failure 400 {object} httpcontext.Response "下发订阅刷新任务失败，code=xxxx"
 // @Failure 401 {object} httpcontext.Response "未授权访问"
 // @Failure 403 {object} httpcontext.Response "权限不足"
+// @Failure 404 {object} httpcontext.Response "自动挂载计划不存在，code=xxxx"
 // @Router /api/auto_ingest/plan/refresh [post]
 func (h *handler) Refresh() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
@@ -106,10 +106,10 @@ func (h *handler) Refresh() httpcontext.HandlerFunc {
 // @Param request body retryFailedRequest true "重试请求参数"
 // @Success 200 {object} httpcontext.Response "任务已下发"
 // @Failure 400 {object} httpcontext.Response "参数验证失败，code=99998"
-// @Failure 400 {object} httpcontext.Response "自动挂载计划不存在，code=xxxx"
 // @Failure 400 {object} httpcontext.Response "重试任务失败，code=xxxx"
 // @Failure 401 {object} httpcontext.Response "未授权访问"
 // @Failure 403 {object} httpcontext.Response "权限不足"
+// @Failure 404 {object} httpcontext.Response "自动挂载计划不存在，code=xxxx"
 // @Router /api/auto_ingest/plan/retry_failed [post]
 func (h *handler) RetryFailed() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {

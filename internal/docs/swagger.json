@@ -190,6 +190,271 @@
                 }
             }
         },
+        "/api/auto_ingest/plan/batch_delete": {
+            "post": {
+                "description": "批量删除自动入库计划（上限 500 个 id，内部限流 16 并发）",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "自动挂载管理"
+                ],
+                "summary": "批量删除计划",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "批量删除请求",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/autoingest.BatchDeleteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "操作成功",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "参数验证失败，code=99998",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "自动挂载计划不存在，code=xxxx",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auto_ingest/plan/batch_disable": {
+            "post": {
+                "description": "批量停用自动入库计划（上限 500 个，内部限流 16 并发）",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "自动挂载管理"
+                ],
+                "summary": "批量停用计划",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "批量停用请求",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/autoingest.BatchDisableRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "操作成功",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "参数验证失败，code=99998",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "自动挂载计划不存在，code=xxxx",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auto_ingest/plan/batch_enable": {
+            "post": {
+                "description": "批量启用自动入库计划（上限 500 个，内部限流 16 并发）",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "自动挂载管理"
+                ],
+                "summary": "批量启用计划",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "批量启用请求",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/autoingest.BatchEnableRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "操作成功",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "参数验证失败，code=99998",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "自动挂载计划不存在，code=xxxx",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auto_ingest/plan/batch_refresh": {
+            "post": {
+                "description": "批量触发计划的刷新任务（上限 500 个，内部限流 16 并发）",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "自动挂载管理"
+                ],
+                "summary": "批量刷新计划",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "批量刷新请求",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/autoingest.BatchRefreshRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "操作成功",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "参数验证失败，code=99998",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "自动挂载计划不存在，code=xxxx",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auto_ingest/plan/batch_retry": {
+            "post": {
+                "description": "批量将计划的偏移量重置为 1 并重新扫描（上限 500 个，内部限流 16 并发）",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "自动挂载管理"
+                ],
+                "summary": "批量重试计划",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "批量重试请求",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/autoingest.BatchRetryRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "操作成功",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "参数验证失败，code=99998",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "自动挂载计划不存在，code=xxxx",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/auto_ingest/plan/create_subscribe": {
             "post": {
                 "description": "创建订阅计划；enable 字段为空时回退到 AutoIngestInterval \u003e 0 的旧语义，传入 false 则计划创建后保持停用。",
@@ -257,6 +522,12 @@
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
+                    },
+                    "404": {
+                        "description": "云盘令牌不存在，code=xxxx",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
                     }
                 }
             }
@@ -313,6 +584,12 @@
                     },
                     "403": {
                         "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "自动挂载计划不存在，code=xxxx",
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
@@ -375,6 +652,12 @@
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
+                    },
+                    "404": {
+                        "description": "自动挂载计划不存在，code=xxxx",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
                     }
                 }
             }
@@ -431,6 +714,12 @@
                     },
                     "403": {
                         "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "自动挂载计划不存在，code=xxxx",
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
@@ -575,6 +864,12 @@
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
+                    },
+                    "404": {
+                        "description": "自动挂载计划不存在，code=xxxx",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
                     }
                 }
             }
@@ -619,6 +914,12 @@
                     },
                     "400": {
                         "description": "查询计划失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "自动挂载计划不存在，code=xxxx",
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
@@ -681,6 +982,12 @@
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }
+                    },
+                    "404": {
+                        "description": "自动挂载计划不存在，code=xxxx",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
                     }
                 }
             }
@@ -737,6 +1044,12 @@
                     },
                     "403": {
                         "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "自动挂载计划不存在或云盘令牌不存在，code=xxxx",
                         "schema": {
                             "$ref": "#/definitions/httpcontext.Response"
                         }

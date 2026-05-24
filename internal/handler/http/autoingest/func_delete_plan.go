@@ -26,6 +26,7 @@ type deletePlanRequest struct {
 // @Failure 400 {object} httpcontext.Response "删除自动挂载计划失败，code=xxxx"
 // @Failure 401 {object} httpcontext.Response "未授权访问"
 // @Failure 403 {object} httpcontext.Response "权限不足"
+// @Failure 404 {object} httpcontext.Response "自动挂载计划不存在，code=xxxx"
 // @Router /api/auto_ingest/plan/delete [post]
 func (h *handler) DeletePlan() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {

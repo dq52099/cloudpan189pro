@@ -37,10 +37,10 @@ type updatePlanRequest struct {
 // @Success 200 {object} httpcontext.Response "修改成功"
 // @Failure 400 {object} httpcontext.Response "参数验证失败，code=99998"
 // @Failure 400 {object} httpcontext.Response "查询自动挂载计划失败，code=xxxx"
-// @Failure 400 {object} httpcontext.Response "自动挂载计划不存在，code=xxxx"
 // @Failure 400 {object} httpcontext.Response "更新自动挂载计划失败，code=xxxx"
 // @Failure 401 {object} httpcontext.Response "未授权访问"
 // @Failure 403 {object} httpcontext.Response "权限不足"
+// @Failure 404 {object} httpcontext.Response "自动挂载计划不存在或云盘令牌不存在，code=xxxx"
 // @Router /api/auto_ingest/plan/update [post]
 func (h *handler) UpdatePlan() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {

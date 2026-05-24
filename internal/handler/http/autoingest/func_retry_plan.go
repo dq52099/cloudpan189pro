@@ -23,6 +23,7 @@ type RetryPlanRequest struct {
 // @Success 200 {object} httpcontext.Response "操作成功"
 // @Failure 400 {object} httpcontext.Response "参数验证失败，code=99998"
 // @Failure 400 {object} httpcontext.Response "查询计划失败"
+// @Failure 404 {object} httpcontext.Response "自动挂载计划不存在，code=xxxx"
 // @Router /api/auto_ingest/plan/retry [post]
 func (h *handler) RetryPlan() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
