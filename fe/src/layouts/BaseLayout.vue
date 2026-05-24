@@ -217,6 +217,7 @@ type AppMenuItem = {
   icon?: () => ReturnType<typeof h>
   route?: string
   adminOnly?: boolean
+  authOnly?: boolean
   children?: AppMenuItem[]
 }
 
@@ -281,6 +282,7 @@ const menuTree: AppMenuItem[] = [
         key: 'personal-info',
         label: '个人资料',
         route: '/@dashboard/profile',
+        authOnly: true,
         icon: () => h(NIcon, null, { default: () => h(ProfileIcon) }),
       },
     ],
@@ -343,6 +345,7 @@ const showChangePasswordModal = ref(false)
 
 const filterMenuTree = (items: AppMenuItem[]): AppMenuItem[] => {
   return items
+    .filter((item) => !item.authOnly || systemInfo.enableAuth)
     .filter((item) => !item.adminOnly || !systemInfo.enableAuth || userStore.isAdmin)
     .map((item) => ({
       ...item,

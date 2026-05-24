@@ -59,7 +59,7 @@ func setupMountPointTestDB(t *testing.T) *mountPointTestDB {
 		t.Fatalf("open test db: %v", err)
 	}
 
-	if err := db.AutoMigrate(&models.MountPoint{}, &models.UserMountPointToken{}); err != nil {
+	if err := db.AutoMigrate(&models.MountPoint{}, &models.CloudToken{}, &models.UserMountPointToken{}); err != nil {
 		t.Fatalf("migrate test db: %v", err)
 	}
 
@@ -82,6 +82,22 @@ func createMountPoint(t *testing.T, db *gorm.DB, fileID, creatorUserID int64, na
 	}
 
 	return mountPoint
+}
+
+func createCloudToken(t *testing.T, db *gorm.DB, id int64) *models.CloudToken {
+	t.Helper()
+
+	token := &models.CloudToken{
+		ID:          id,
+		Name:        fmt.Sprintf("token-%d", id),
+		AccessToken: fmt.Sprintf("access-token-%d", id),
+		ExpiresIn:   7200,
+	}
+	if err := db.Create(token).Error; err != nil {
+		t.Fatalf("create cloud token: %v", err)
+	}
+
+	return token
 }
 
 func createUserMountPointTokenBinding(t *testing.T, db *gorm.DB, userID, mountPointID, tokenID int64) *models.UserMountPointToken {
@@ -120,6 +136,7 @@ func TestListIncludesMountPointsBoundToUserToken(t *testing.T) {
 	groupShared := createMountPoint(t, tDB.db, 3002, 20, "group-shared")
 	bound := createMountPoint(t, tDB.db, 3003, 30, "bound")
 	hidden := createMountPoint(t, tDB.db, 3004, 40, "hidden")
+	createCloudToken(t, tDB.db, 77)
 
 	if err := userTokenSvc.BindToken(ctx, 10, bound.ID, 77); err != nil {
 		t.Fatalf("bind token: %v", err)
@@ -174,6 +191,7 @@ func TestListNonAdminAppliesFiltersToAllAccessibleSources(t *testing.T) {
 	groupNoMatch := createMountPoint(t, tDB.db, 3014, 20, "music-group")
 	boundNoMatch := createMountPoint(t, tDB.db, 3015, 30, "music-bound")
 	hiddenMatch := createMountPoint(t, tDB.db, 3016, 40, "movie-hidden")
+	createCloudToken(t, tDB.db, 77)
 
 	if err := userTokenSvc.BindToken(ctx, 10, boundMatch.ID, 77); err != nil {
 		t.Fatalf("bind token for matching mount point: %v", err)
@@ -264,6 +282,7 @@ func TestGetAccessibleMountPointIDsIncludesOwnedGroupAndBoundMountPoints(t *test
 	groupShared := createMountPoint(t, tDB.db, 3202, 20, "accessible-group")
 	bound := createMountPoint(t, tDB.db, 3203, 30, "accessible-bound")
 	hidden := createMountPoint(t, tDB.db, 3204, 40, "accessible-hidden")
+	createCloudToken(t, tDB.db, 88)
 
 	if err := userTokenSvc.BindToken(ctx, 10, bound.ID, 88); err != nil {
 		t.Fatalf("bind token: %v", err)

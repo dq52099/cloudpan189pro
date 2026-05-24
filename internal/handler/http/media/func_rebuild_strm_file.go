@@ -10,6 +10,7 @@ import (
 	mountpointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 type rebuildStrmRequest struct {
@@ -50,7 +51,13 @@ func (h *handler) RebuildStrmFile() httpcontext.HandlerFunc {
 		// 检查媒体功能是否启用
 		cfg, err := h.mediaConfigService.Query(ctx.GetContext())
 		if err != nil {
-			ctx.Fail(codeMediaNotEnabled.WithError(err))
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(codeConfigNotInit.WithError(err))
+
+				return
+			}
+
+			ctx.Fail(codeConfigQueryFailed.WithError(err))
 
 			return
 		}

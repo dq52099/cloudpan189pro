@@ -244,7 +244,7 @@ router.beforeEach(async (to, _, next) => {
   }
 
   if (systemInfo.initialized && !systemInfo.enableAuth) {
-    if (to.name === 'Login') {
+    if (to.name === 'Login' || to.name === 'Profile') {
       next('/@dashboard')
       return
     }

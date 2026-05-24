@@ -11,7 +11,6 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type Service interface {
@@ -30,7 +29,7 @@ type service struct {
 	svc bootstrap.ServiceContext
 }
 
-var errInvalidBindTokenID = errors.New("userID、mountPointID、tokenID 必须全部大于 0")
+var errInvalidBindTokenID = errors.New("userID、mountPointID 必须大于 0，tokenID 不能小于 0")
 var errInvalidUnbindTokenID = errors.New("userID、mountPointID 必须全部大于 0")
 var errInvalidUserID = errors.New("userID 必须大于 0")
 var errInvalidMountPointID = errors.New("mountPointID 必须大于 0")
@@ -47,23 +46,60 @@ func (s *service) getDB(ctx context.Context) *gorm.DB {
 }
 
 func (s *service) BindToken(ctx context.Context, userID, mountPointID, tokenID int64) error {
-	if userID <= 0 || mountPointID <= 0 || tokenID <= 0 {
+	if userID <= 0 || mountPointID <= 0 || tokenID < 0 {
 		return errInvalidBindTokenID
 	}
 
-	if err := s.getDB(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{
-			{Name: "user_id"},
-			{Name: "mount_point_id"},
-		},
-		DoUpdates: clause.AssignmentColumns([]string{"token_id", "updated_at"}),
-	}).Create(&models.UserMountPointToken{
-		UserID:       userID,
-		MountPointID: mountPointID,
-		TokenID:      tokenID,
-	}).Error; err != nil {
-		ctx.Error("绑定用户挂载点令牌失败", zap.Error(err))
+	err := s.svc.GetDB(ctx).Transaction(func(tx *gorm.DB) error {
+		bindingDB := tx.Model(new(models.UserMountPointToken))
 
+		if err := bindingDB.
+			Where("user_id = ? AND mount_point_id = ?", userID, mountPointID).
+			Delete(new(models.UserMountPointToken)).Error; err != nil {
+			ctx.Error("删除用户挂载点旧令牌绑定失败", zap.Error(err))
+
+			return err
+		}
+
+		var mountPoint models.MountPoint
+		if err := tx.Select("id").Take(&mountPoint, "id = ?", mountPointID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+
+			ctx.Error("校验挂载点存在失败", zap.Error(err), zap.Int64("mount_point_id", mountPointID))
+
+			return err
+		}
+
+		if tokenID == 0 {
+			return nil
+		}
+
+		var token models.CloudToken
+		if err := tx.Select("id").Take(&token, "id = ?", tokenID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+
+			ctx.Error("校验云盘令牌存在失败", zap.Error(err), zap.Int64("token_id", tokenID))
+
+			return err
+		}
+
+		if err := bindingDB.Create(&models.UserMountPointToken{
+			UserID:       userID,
+			MountPointID: mountPointID,
+			TokenID:      tokenID,
+		}).Error; err != nil {
+			ctx.Error("绑定用户挂载点令牌失败", zap.Error(err))
+
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
 		return err
 	}
 

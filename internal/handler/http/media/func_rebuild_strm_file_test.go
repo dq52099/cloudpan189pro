@@ -3,6 +3,7 @@ package media
 import (
 	stdctx "context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,13 +18,24 @@ import (
 	mountpointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 type mockRebuildMediaConfigService struct {
 	mediaconfigSvi.Service
+	cfg *models.MediaConfig
+	err error
 }
 
 func (m *mockRebuildMediaConfigService) Query(ctx appContext.Context) (*models.MediaConfig, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+
+	if m.cfg != nil {
+		return m.cfg, nil
+	}
+
 	return &models.MediaConfig{Enable: true}, nil
 }
 
@@ -91,6 +103,126 @@ func TestRebuildStrmFileRejectsInvalidMountPointID(t *testing.T) {
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestRebuildStrmFileReturnsNotFoundWhenConfigMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockRebuildTaskEngine{}
+	router := gin.New()
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/rebuild", wrapper.Wrap(NewHandler(
+		&mockRebuildMediaConfigService{err: gorm.ErrRecordNotFound},
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		taskEngine,
+	).RebuildStrmFile()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/rebuild", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response httpcontext.Response
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.Code != codeConfigNotInit.GetCode() {
+		t.Fatalf("expected business code %d, got %d", codeConfigNotInit.GetCode(), response.Code)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no rebuild task, got %d", len(taskEngine.payloads))
+	}
+}
+
+func TestRebuildStrmFileReturnsQueryFailedWhenConfigQueryFails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockRebuildTaskEngine{}
+	router := gin.New()
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/rebuild", wrapper.Wrap(NewHandler(
+		&mockRebuildMediaConfigService{err: errors.New("db unavailable")},
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		taskEngine,
+	).RebuildStrmFile()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/rebuild", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response httpcontext.Response
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.Code != codeConfigQueryFailed.GetCode() {
+		t.Fatalf("expected business code %d, got %d", codeConfigQueryFailed.GetCode(), response.Code)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no rebuild task, got %d", len(taskEngine.payloads))
+	}
+}
+
+func TestRebuildStrmFileReturnsMediaNotEnabledWhenConfigDisabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockRebuildTaskEngine{}
+	router := gin.New()
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/rebuild", wrapper.Wrap(NewHandler(
+		&mockRebuildMediaConfigService{cfg: &models.MediaConfig{Enable: false}},
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		taskEngine,
+	).RebuildStrmFile()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/rebuild", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response httpcontext.Response
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.Code != codeMediaNotEnabled.GetCode() {
+		t.Fatalf("expected business code %d, got %d", codeMediaNotEnabled.GetCode(), response.Code)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no rebuild task, got %d", len(taskEngine.payloads))
 	}
 }
 

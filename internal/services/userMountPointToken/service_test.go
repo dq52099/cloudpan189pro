@@ -58,7 +58,7 @@ func setupUserMountPointTokenTestDB(t *testing.T) *userMountPointTokenTestDB {
 		t.Fatalf("open test db: %v", err)
 	}
 
-	if err := db.AutoMigrate(&models.UserMountPointToken{}); err != nil {
+	if err := db.AutoMigrate(&models.MountPoint{}, &models.CloudToken{}, &models.UserMountPointToken{}); err != nil {
 		t.Fatalf("migrate test db: %v", err)
 	}
 
@@ -122,6 +122,35 @@ func createBinding(t *testing.T, db *gorm.DB, userID, mountPointID, tokenID int6
 	}
 	if err := db.Create(binding).Error; err != nil {
 		t.Fatalf("create binding: %v", err)
+	}
+}
+
+func createMountPoint(t *testing.T, db *gorm.DB, id int64) {
+	t.Helper()
+
+	mountPoint := &models.MountPoint{
+		ID:       id,
+		FileId:   100000 + id,
+		OsType:   models.OsTypeFolder,
+		Name:     fmt.Sprintf("mount-point-%d", id),
+		FullPath: fmt.Sprintf("/mount-point-%d", id),
+	}
+	if err := db.Create(mountPoint).Error; err != nil {
+		t.Fatalf("create mount point: %v", err)
+	}
+}
+
+func createCloudToken(t *testing.T, db *gorm.DB, id int64) {
+	t.Helper()
+
+	token := &models.CloudToken{
+		ID:          id,
+		Name:        fmt.Sprintf("token-%d", id),
+		AccessToken: fmt.Sprintf("access-token-%d", id),
+		ExpiresIn:   7200,
+	}
+	if err := db.Create(token).Error; err != nil {
+		t.Fatalf("create cloud token: %v", err)
 	}
 }
 
@@ -220,6 +249,8 @@ func TestBindTokenUpsertsExistingBinding(t *testing.T) {
 	svc := NewService(tDB)
 	ctx := context.NewContext(stdctx.Background())
 
+	createMountPoint(t, tDB.db, 10)
+	createCloudToken(t, tDB.db, 999)
 	createBinding(t, tDB.db, 1, 10, 100)
 	createBinding(t, tDB.db, 2, 10, 300)
 
@@ -245,6 +276,67 @@ func TestBindTokenUpsertsExistingBinding(t *testing.T) {
 	}
 }
 
+func TestBindTokenReturnsRecordNotFoundWhenMountPointMissing(t *testing.T) {
+	tDB := setupUserMountPointTokenTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	createBinding(t, tDB.db, 1, 10, 100)
+
+	err := svc.BindToken(ctx, 1, 10, 999)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected missing mount point to return record not found, got %v", err)
+	}
+
+	if count := countBindings(t, tDB.db, "user_id = ? AND mount_point_id = ? AND token_id = ?", 1, 10, 100); count != 1 {
+		t.Fatalf("expected existing binding to remain after rollback, got count %d", count)
+	}
+}
+
+func TestBindTokenReturnsRecordNotFoundWhenTokenMissing(t *testing.T) {
+	tDB := setupUserMountPointTokenTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	createMountPoint(t, tDB.db, 10)
+	createBinding(t, tDB.db, 1, 10, 100)
+
+	err := svc.BindToken(ctx, 1, 10, 999)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected missing token to return record not found, got %v", err)
+	}
+
+	if count := countBindings(t, tDB.db, "user_id = ? AND mount_point_id = ? AND token_id = ?", 1, 10, 100); count != 1 {
+		t.Fatalf("expected existing binding to remain after rollback, got count %d", count)
+	}
+}
+
+func TestBindTokenWithZeroTokenClearsExistingBinding(t *testing.T) {
+	tDB := setupUserMountPointTokenTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	createMountPoint(t, tDB.db, 10)
+	createBinding(t, tDB.db, 1, 10, 100)
+
+	if err := svc.BindToken(ctx, 1, 10, 0); err != nil {
+		t.Fatalf("clear token binding: %v", err)
+	}
+
+	if count := countBindings(t, tDB.db, "user_id = ? AND mount_point_id = ?", 1, 10); count != 0 {
+		t.Fatalf("expected binding to be cleared, got count %d", count)
+	}
+
+	tokenID, err := svc.GetTokenID(ctx, 1, 10)
+	if err != nil {
+		t.Fatalf("get token id after clear: %v", err)
+	}
+
+	if tokenID != 0 {
+		t.Fatalf("expected cleared token id to be 0, got %d", tokenID)
+	}
+}
+
 func TestBindTokenRejectsDuplicateUserMountPointRows(t *testing.T) {
 	tDB := setupUserMountPointTokenTestDB(t)
 
@@ -267,7 +359,7 @@ func TestBindTokenRejectsInvalidIDWithoutDeletingExistingBinding(t *testing.T) {
 
 	createBinding(t, tDB.db, 1, 10, 100)
 
-	err := svc.BindToken(ctx, 1, 10, 0)
+	err := svc.BindToken(ctx, 1, 10, -1)
 	if err == nil {
 		t.Fatal("expected invalid token id to fail")
 	}
