@@ -4,11 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/pkg/errors"
 	appContext "github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/autoingest"
-	"gorm.io/gorm"
 )
 
 // DeleteByPlanIds 根据计划 ID 批量删除日志。
@@ -38,38 +36,9 @@ func (s *service) DeleteByIds(ctx appContext.Context, ids []int64) (int64, error
 		return 0, err
 	}
 
-	var deleted int64
+	result := s.getDB(ctx).Where("id IN ?", normalizedIds).Delete(&models.AutoIngestLog{})
 
-	err = s.svc.GetDB(ctx).Transaction(func(tx *gorm.DB) error {
-		tx = tx.Model(new(models.AutoIngestLog))
-
-		var count int64
-		if err := tx.Where("id IN ?", normalizedIds).Count(&count).Error; err != nil {
-			return err
-		}
-
-		if count != int64(len(normalizedIds)) {
-			return errors.Wrap(gorm.ErrRecordNotFound, "部分自动入库日志不存在")
-		}
-
-		result := tx.Where("id IN ?", normalizedIds).Delete(&models.AutoIngestLog{})
-		if result.Error != nil {
-			return result.Error
-		}
-
-		if result.RowsAffected != int64(len(normalizedIds)) {
-			return errors.Wrap(gorm.ErrRecordNotFound, "部分自动入库日志不存在")
-		}
-
-		deleted = result.RowsAffected
-
-		return nil
-	})
-	if err != nil {
-		return 0, err
-	}
-
-	return deleted, nil
+	return result.RowsAffected, result.Error
 }
 
 // DeleteErrorLogsByPlanId 删除指定计划的所有错误日志。

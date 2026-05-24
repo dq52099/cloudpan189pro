@@ -155,24 +155,29 @@ func TestDeleteByIdsRejectsInvalidIDWithoutDeletingLogs(t *testing.T) {
 	}
 }
 
-func TestDeleteByIdsReturnsNotFoundWhenSomeIDsMissing(t *testing.T) {
+func TestDeleteByIdsDeletesExistingLogsWhenSomeIDsMissing(t *testing.T) {
 	tDB := setupAutoIngestLogTestDB(t)
 	svc := NewService(tDB)
 	ctx := context.NewContext(stdctx.Background())
 
 	log := createAutoIngestLog(t, tDB.db, 10, autoingest.LogLevelInfo)
+	other := createAutoIngestLog(t, tDB.db, 20, autoingest.LogLevelError)
 
 	deleted, err := svc.DeleteByIds(ctx, []int64{log.ID, 99999})
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		t.Fatalf("expected record not found, got %v", err)
+	if err != nil {
+		t.Fatalf("delete by ids with missing log: %v", err)
 	}
 
-	if deleted != 0 {
-		t.Fatalf("expected zero deleted rows on not found, got %d", deleted)
+	if deleted != 1 {
+		t.Fatalf("expected one deleted row, got %d", deleted)
 	}
 
-	if count := countAutoIngestLogs(t, tDB.db, "id = ?", log.ID); count != 1 {
-		t.Fatalf("expected existing log to remain, got count %d", count)
+	if count := countAutoIngestLogs(t, tDB.db, "id = ?", log.ID); count != 0 {
+		t.Fatalf("expected existing log deleted, got count %d", count)
+	}
+
+	if count := countAutoIngestLogs(t, tDB.db, "id = ?", other.ID); count != 1 {
+		t.Fatalf("expected unrelated log to remain, got count %d", count)
 	}
 }
 
