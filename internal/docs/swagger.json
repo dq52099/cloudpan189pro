@@ -4259,6 +4259,594 @@
                 }
             }
         },
+        "/api/subscription/categories": {
+            "get": {
+                "description": "获取 TMDB 和豆瓣热门订阅分类配置",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "订阅管理"
+                ],
+                "summary": "获取订阅分类",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpcontext.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/subscription.CategoriesResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/subscription/config": {
+            "get": {
+                "description": "获取热门订阅功能配置；未保存配置时返回默认配置",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "订阅管理"
+                ],
+                "summary": "获取订阅配置",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpcontext.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_xxcheng123_cloudpan189-share_internal_handler_http_subscription.SubscriptionConfig"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "获取订阅配置失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "创建或更新热门订阅功能配置，支持只提交需要修改的字段",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "订阅管理"
+                ],
+                "summary": "更新订阅配置",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "订阅配置",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/subscription.UpdateConfigReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "更新成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpcontext.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.SubscriptionConfig"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数验证失败或更新失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "订阅配置不存在",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/subscription/douban/movies": {
+            "get": {
+                "description": "按分类获取豆瓣热门影视列表",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "订阅管理"
+                ],
+                "summary": "获取豆瓣热门影视",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "default": "热门",
+                        "description": "分类",
+                        "name": "category",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpcontext.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/subscription.HotMoviesResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "豆瓣服务未初始化或获取失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/subscription/mount": {
+            "post": {
+                "description": "根据分享链接创建订阅挂载点，未传挂载路径时使用订阅默认挂载路径",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "订阅管理"
+                ],
+                "summary": "挂载订阅资源",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "挂载参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/subscription.mountSubscriptionReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "挂载成功",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "参数验证失败、分享信息获取失败或挂载失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/subscription/search": {
+            "get": {
+                "description": "按关键词从配置的盘搜接口搜索天翼云盘资源",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "订阅管理"
+                ],
+                "summary": "搜索云盘资源",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "搜索关键词",
+                        "name": "keyword",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "搜索成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpcontext.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/github_com_xxcheng123_cloudpan189-share_internal_handler_http_subscription.SearchResult"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数验证失败或搜索失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/subscription/search/ai": {
+            "get": {
+                "description": "搜索云盘资源后使用 AI 生成优化关键词并推荐更合适的结果",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "订阅管理"
+                ],
+                "summary": "AI 推荐云盘资源",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "搜索关键词",
+                        "name": "keyword",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "推荐成功",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "参数验证失败或搜索失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/subscription/tmdb/movies": {
+            "get": {
+                "description": "按分类获取 TMDB 热门电影、剧集、动漫或纪录片",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "订阅管理"
+                ],
+                "summary": "获取 TMDB 热门影视",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "default": "movie_popular",
+                        "description": "分类",
+                        "name": "category",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpcontext.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/subscription.HotMoviesResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "TMDB 服务未初始化或获取失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/subscription/tmdb/tvs": {
+            "get": {
+                "description": "获取 TMDB 热门电视剧列表",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "订阅管理"
+                ],
+                "summary": "获取 TMDB 热门电视剧",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "default": "tv_popular",
+                        "description": "分类",
+                        "name": "category",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "获取成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpcontext.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/subscription.HotMoviesResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "TMDB 服务未初始化或获取失败",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权访问",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "权限不足",
+                        "schema": {
+                            "$ref": "#/definitions/httpcontext.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/task_state/file_log/clear": {
             "post": {
                 "description": "清空全部文件任务日志；传入 duration 时仅清理指定时长之前的日志",
@@ -7191,6 +7779,70 @@
                 }
             }
         },
+        "github_com_xxcheng123_cloudpan189-share_internal_handler_http_subscription.SearchResult": {
+            "type": "object",
+            "properties": {
+                "cover": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "shareCode": {
+                    "type": "string"
+                },
+                "shareUrl": {
+                    "type": "string"
+                },
+                "size": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "uploadTime": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_xxcheng123_cloudpan189-share_internal_handler_http_subscription.SubscriptionConfig": {
+            "type": "object",
+            "properties": {
+                "autoMount": {
+                    "type": "boolean"
+                },
+                "cronExpression": {
+                    "type": "string"
+                },
+                "defaultMountPath": {
+                    "type": "string"
+                },
+                "enableDouban": {
+                    "type": "boolean"
+                },
+                "enableTMDB": {
+                    "type": "boolean"
+                },
+                "openaiAPIKey": {
+                    "type": "string"
+                },
+                "openaiBaseURL": {
+                    "type": "string"
+                },
+                "openaiModel": {
+                    "type": "string"
+                },
+                "panSearchURL": {
+                    "type": "string"
+                },
+                "tmdbAPIKey": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_xxcheng123_cloudpan189-share_internal_pkgs_datatypes.JSONMap": {
             "type": "object",
             "additionalProperties": true
@@ -7852,6 +8504,44 @@
                 },
                 "workerCount": {
                     "type": "integer"
+                }
+            }
+        },
+        "models.SubscriptionConfig": {
+            "type": "object",
+            "properties": {
+                "autoMount": {
+                    "type": "boolean"
+                },
+                "cronExpression": {
+                    "type": "string"
+                },
+                "defaultMountPath": {
+                    "type": "string"
+                },
+                "enableDouban": {
+                    "type": "boolean"
+                },
+                "enableTMDB": {
+                    "type": "boolean"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "openaiAPIKey": {
+                    "type": "string"
+                },
+                "openaiBaseURL": {
+                    "type": "string"
+                },
+                "openaiModel": {
+                    "type": "string"
+                },
+                "panSearchURL": {
+                    "type": "string"
+                },
+                "tmdbAPIKey": {
+                    "type": "string"
                 }
             }
         },
@@ -8685,6 +9375,151 @@
                     "maximum": 1440,
                     "minimum": 30,
                     "example": 30
+                }
+            }
+        },
+        "subscription.CategoriesResponse": {
+            "type": "object",
+            "properties": {
+                "douban": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/subscription.CategoryOption"
+                    }
+                },
+                "tmdb": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/subscription.CategoryOption"
+                    }
+                }
+            }
+        },
+        "subscription.CategoryOption": {
+            "type": "object",
+            "properties": {
+                "children": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/subscription.CategoryOption"
+                    }
+                },
+                "label": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                }
+            }
+        },
+        "subscription.HotMovieItem": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string"
+                },
+                "cover": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "originalTitle": {
+                    "type": "string"
+                },
+                "posterPath": {
+                    "type": "string"
+                },
+                "rating": {
+                    "type": "number"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "year": {
+                    "type": "string"
+                }
+            }
+        },
+        "subscription.HotMoviesResponse": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string"
+                },
+                "movies": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/subscription.HotMovieItem"
+                    }
+                },
+                "source": {
+                    "type": "string"
+                }
+            }
+        },
+        "subscription.UpdateConfigReq": {
+            "type": "object",
+            "properties": {
+                "autoMount": {
+                    "type": "boolean"
+                },
+                "cronExpression": {
+                    "type": "string"
+                },
+                "defaultMountPath": {
+                    "type": "string"
+                },
+                "enableDouban": {
+                    "type": "boolean"
+                },
+                "enableTMDB": {
+                    "type": "boolean"
+                },
+                "openaiAPIKey": {
+                    "type": "string"
+                },
+                "openaiBaseURL": {
+                    "type": "string"
+                },
+                "openaiModel": {
+                    "type": "string"
+                },
+                "panSearchURL": {
+                    "type": "string"
+                },
+                "tmdbAPIKey": {
+                    "type": "string"
+                }
+            }
+        },
+        "subscription.mountSubscriptionReq": {
+            "type": "object",
+            "required": [
+                "shareUrl",
+                "title"
+            ],
+            "properties": {
+                "cover": {
+                    "type": "string"
+                },
+                "mountPath": {
+                    "type": "string"
+                },
+                "shareCode": {
+                    "type": "string"
+                },
+                "shareUrl": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
                 }
             }
         },

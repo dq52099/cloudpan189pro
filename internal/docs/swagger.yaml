@@ -751,6 +751,48 @@ definitions:
         example: 550e8400-e29b-41d4-a716-446655440000
         type: string
     type: object
+  github_com_xxcheng123_cloudpan189-share_internal_handler_http_subscription.SearchResult:
+    properties:
+      cover:
+        type: string
+      name:
+        type: string
+      note:
+        type: string
+      shareCode:
+        type: string
+      shareUrl:
+        type: string
+      size:
+        type: string
+      source:
+        type: string
+      uploadTime:
+        type: string
+    type: object
+  github_com_xxcheng123_cloudpan189-share_internal_handler_http_subscription.SubscriptionConfig:
+    properties:
+      autoMount:
+        type: boolean
+      cronExpression:
+        type: string
+      defaultMountPath:
+        type: string
+      enableDouban:
+        type: boolean
+      enableTMDB:
+        type: boolean
+      openaiAPIKey:
+        type: string
+      openaiBaseURL:
+        type: string
+      openaiModel:
+        type: string
+      panSearchURL:
+        type: string
+      tmdbAPIKey:
+        type: string
+    type: object
   github_com_xxcheng123_cloudpan189-share_internal_pkgs_datatypes.JSONMap:
     additionalProperties: true
     type: object
@@ -1216,6 +1258,31 @@ definitions:
         type: boolean
       workerCount:
         type: integer
+    type: object
+  models.SubscriptionConfig:
+    properties:
+      autoMount:
+        type: boolean
+      cronExpression:
+        type: string
+      defaultMountPath:
+        type: string
+      enableDouban:
+        type: boolean
+      enableTMDB:
+        type: boolean
+      enabled:
+        type: boolean
+      openaiAPIKey:
+        type: string
+      openaiBaseURL:
+        type: string
+      openaiModel:
+        type: string
+      panSearchURL:
+        type: string
+      tmdbAPIKey:
+        type: string
     type: object
   models.TelegramSetting:
     properties:
@@ -1807,6 +1874,101 @@ definitions:
     required:
     - enableAutoRefresh
     - id
+    type: object
+  subscription.CategoriesResponse:
+    properties:
+      douban:
+        items:
+          $ref: '#/definitions/subscription.CategoryOption'
+        type: array
+      tmdb:
+        items:
+          $ref: '#/definitions/subscription.CategoryOption'
+        type: array
+    type: object
+  subscription.CategoryOption:
+    properties:
+      children:
+        items:
+          $ref: '#/definitions/subscription.CategoryOption'
+        type: array
+      label:
+        type: string
+      value:
+        type: string
+    type: object
+  subscription.HotMovieItem:
+    properties:
+      category:
+        type: string
+      cover:
+        type: string
+      description:
+        type: string
+      id:
+        type: integer
+      originalTitle:
+        type: string
+      posterPath:
+        type: string
+      rating:
+        type: number
+      title:
+        type: string
+      type:
+        type: string
+      year:
+        type: string
+    type: object
+  subscription.HotMoviesResponse:
+    properties:
+      category:
+        type: string
+      movies:
+        items:
+          $ref: '#/definitions/subscription.HotMovieItem'
+        type: array
+      source:
+        type: string
+    type: object
+  subscription.UpdateConfigReq:
+    properties:
+      autoMount:
+        type: boolean
+      cronExpression:
+        type: string
+      defaultMountPath:
+        type: string
+      enableDouban:
+        type: boolean
+      enableTMDB:
+        type: boolean
+      openaiAPIKey:
+        type: string
+      openaiBaseURL:
+        type: string
+      openaiModel:
+        type: string
+      panSearchURL:
+        type: string
+      tmdbAPIKey:
+        type: string
+    type: object
+  subscription.mountSubscriptionReq:
+    properties:
+      cover:
+        type: string
+      mountPath:
+        type: string
+      shareCode:
+        type: string
+      shareUrl:
+        type: string
+      title:
+        type: string
+    required:
+    - shareUrl
+    - title
     type: object
   taskengine.ProcessorResult:
     properties:
@@ -5116,6 +5278,376 @@ paths:
       summary: 切换自动刷新配置
       tags:
       - 存储管理
+  /api/subscription/categories:
+    get:
+      consumes:
+      - application/json
+      description: 获取 TMDB 和豆瓣热门订阅分类配置
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpcontext.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/subscription.CategoriesResponse'
+              type: object
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "403":
+          description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 获取订阅分类
+      tags:
+      - 订阅管理
+  /api/subscription/config:
+    get:
+      consumes:
+      - application/json
+      description: 获取热门订阅功能配置；未保存配置时返回默认配置
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpcontext.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_xxcheng123_cloudpan189-share_internal_handler_http_subscription.SubscriptionConfig'
+              type: object
+        "400":
+          description: 获取订阅配置失败
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "403":
+          description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 获取订阅配置
+      tags:
+      - 订阅管理
+    post:
+      consumes:
+      - application/json
+      description: 创建或更新热门订阅功能配置，支持只提交需要修改的字段
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 订阅配置
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/subscription.UpdateConfigReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpcontext.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.SubscriptionConfig'
+              type: object
+        "400":
+          description: 参数验证失败或更新失败
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "403":
+          description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "404":
+          description: 订阅配置不存在
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 更新订阅配置
+      tags:
+      - 订阅管理
+  /api/subscription/douban/movies:
+    get:
+      consumes:
+      - application/json
+      description: 按分类获取豆瓣热门影视列表
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - default: 热门
+        description: 分类
+        in: query
+        name: category
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpcontext.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/subscription.HotMoviesResponse'
+              type: object
+        "400":
+          description: 豆瓣服务未初始化或获取失败
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "403":
+          description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 获取豆瓣热门影视
+      tags:
+      - 订阅管理
+  /api/subscription/mount:
+    post:
+      consumes:
+      - application/json
+      description: 根据分享链接创建订阅挂载点，未传挂载路径时使用订阅默认挂载路径
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 挂载参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/subscription.mountSubscriptionReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 挂载成功
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "400":
+          description: 参数验证失败、分享信息获取失败或挂载失败
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "403":
+          description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 挂载订阅资源
+      tags:
+      - 订阅管理
+  /api/subscription/search:
+    get:
+      consumes:
+      - application/json
+      description: 按关键词从配置的盘搜接口搜索天翼云盘资源
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 搜索关键词
+        in: query
+        name: keyword
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 搜索成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpcontext.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_xxcheng123_cloudpan189-share_internal_handler_http_subscription.SearchResult'
+                  type: array
+              type: object
+        "400":
+          description: 参数验证失败或搜索失败
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "403":
+          description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 搜索云盘资源
+      tags:
+      - 订阅管理
+  /api/subscription/search/ai:
+    get:
+      consumes:
+      - application/json
+      description: 搜索云盘资源后使用 AI 生成优化关键词并推荐更合适的结果
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 搜索关键词
+        in: query
+        name: keyword
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 推荐成功
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "400":
+          description: 参数验证失败或搜索失败
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "403":
+          description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: AI 推荐云盘资源
+      tags:
+      - 订阅管理
+  /api/subscription/tmdb/movies:
+    get:
+      consumes:
+      - application/json
+      description: 按分类获取 TMDB 热门电影、剧集、动漫或纪录片
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - default: movie_popular
+        description: 分类
+        in: query
+        name: category
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpcontext.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/subscription.HotMoviesResponse'
+              type: object
+        "400":
+          description: TMDB 服务未初始化或获取失败
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "403":
+          description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 获取 TMDB 热门影视
+      tags:
+      - 订阅管理
+  /api/subscription/tmdb/tvs:
+    get:
+      consumes:
+      - application/json
+      description: 获取 TMDB 热门电视剧列表
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - default: tv_popular
+        description: 分类
+        in: query
+        name: category
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpcontext.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/subscription.HotMoviesResponse'
+              type: object
+        "400":
+          description: TMDB 服务未初始化或获取失败
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "401":
+          description: 未授权访问
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+        "403":
+          description: 权限不足
+          schema:
+            $ref: '#/definitions/httpcontext.Response'
+      summary: 获取 TMDB 热门电视剧
+      tags:
+      - 订阅管理
   /api/task_state/file_log/clear:
     post:
       consumes:

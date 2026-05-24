@@ -168,6 +168,17 @@ type CategoriesResponse struct {
 	Douban []CategoryOption `json:"douban"`
 }
 
+// GetCategories 获取订阅分类
+// @Summary 获取订阅分类
+// @Description 获取 TMDB 和豆瓣热门订阅分类配置
+// @Tags 订阅管理
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Success 200 {object} httpcontext.Response{data=CategoriesResponse} "获取成功"
+// @Failure 401 {object} httpcontext.Response "未授权访问"
+// @Failure 403 {object} httpcontext.Response "权限不足"
+// @Router /api/subscription/categories [get]
 func (h *Handler) GetCategories() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		tmdbCategories := []CategoryOption{
@@ -296,6 +307,19 @@ var tmdbCategoryGenreMap = map[string]struct {
 	"doc_toprated":     {genreType: "movie", genreID: 99},
 }
 
+// GetTMDbMovies 获取 TMDB 热门影视
+// @Summary 获取 TMDB 热门影视
+// @Description 按分类获取 TMDB 热门电影、剧集、动漫或纪录片
+// @Tags 订阅管理
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param category query string false "分类" default(movie_popular)
+// @Success 200 {object} httpcontext.Response{data=HotMoviesResponse} "获取成功"
+// @Failure 400 {object} httpcontext.Response "TMDB 服务未初始化或获取失败"
+// @Failure 401 {object} httpcontext.Response "未授权访问"
+// @Failure 403 {object} httpcontext.Response "权限不足"
+// @Router /api/subscription/tmdb/movies [get]
 func (h *Handler) GetTMDbMovies() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		if h.tmdb == nil {
@@ -387,6 +411,19 @@ func (h *Handler) GetTMDbMovies() httpcontext.HandlerFunc {
 	}
 }
 
+// GetTMDbTVs 获取 TMDB 热门电视剧
+// @Summary 获取 TMDB 热门电视剧
+// @Description 获取 TMDB 热门电视剧列表
+// @Tags 订阅管理
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param category query string false "分类" default(tv_popular)
+// @Success 200 {object} httpcontext.Response{data=HotMoviesResponse} "获取成功"
+// @Failure 400 {object} httpcontext.Response "TMDB 服务未初始化或获取失败"
+// @Failure 401 {object} httpcontext.Response "未授权访问"
+// @Failure 403 {object} httpcontext.Response "权限不足"
+// @Router /api/subscription/tmdb/tvs [get]
 func (h *Handler) GetTMDbTVs() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		if h.tmdb == nil {
@@ -436,6 +473,19 @@ func (h *Handler) GetTMDbTVs() httpcontext.HandlerFunc {
 	}
 }
 
+// GetDoubanMovies 获取豆瓣热门影视
+// @Summary 获取豆瓣热门影视
+// @Description 按分类获取豆瓣热门影视列表
+// @Tags 订阅管理
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param category query string false "分类" default(热门)
+// @Success 200 {object} httpcontext.Response{data=HotMoviesResponse} "获取成功"
+// @Failure 400 {object} httpcontext.Response "豆瓣服务未初始化或获取失败"
+// @Failure 401 {object} httpcontext.Response "未授权访问"
+// @Failure 403 {object} httpcontext.Response "权限不足"
+// @Router /api/subscription/douban/movies [get]
 func (h *Handler) GetDoubanMovies() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		if h.douban == nil {
@@ -503,6 +553,18 @@ func (s Setting) TableName() string {
 	return "system_settings"
 }
 
+// GetConfig 获取订阅配置
+// @Summary 获取订阅配置
+// @Description 获取热门订阅功能配置；未保存配置时返回默认配置
+// @Tags 订阅管理
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Success 200 {object} httpcontext.Response{data=SubscriptionConfig} "获取成功"
+// @Failure 400 {object} httpcontext.Response "获取订阅配置失败"
+// @Failure 401 {object} httpcontext.Response "未授权访问"
+// @Failure 403 {object} httpcontext.Response "权限不足"
+// @Router /api/subscription/config [get]
 func (h *Handler) GetConfig() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		var setting Setting
@@ -606,6 +668,20 @@ type UpdateConfigReq struct {
 	OpenAIModel      *string `json:"openaiModel"`
 }
 
+// UpdateConfig 更新订阅配置
+// @Summary 更新订阅配置
+// @Description 创建或更新热门订阅功能配置，支持只提交需要修改的字段
+// @Tags 订阅管理
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param request body UpdateConfigReq true "订阅配置"
+// @Success 200 {object} httpcontext.Response{data=models.SubscriptionConfig} "更新成功"
+// @Failure 400 {object} httpcontext.Response "参数验证失败或更新失败"
+// @Failure 401 {object} httpcontext.Response "未授权访问"
+// @Failure 403 {object} httpcontext.Response "权限不足"
+// @Failure 404 {object} httpcontext.Response "订阅配置不存在"
+// @Router /api/subscription/config [post]
 func (h *Handler) UpdateConfig() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		var req UpdateConfigReq
@@ -756,6 +832,14 @@ type SearchResult struct {
 	Note       string `json:"note,omitempty"`
 }
 
+type mountSubscriptionReq struct {
+	Title     string `json:"title" binding:"required"`
+	ShareURL  string `json:"shareUrl" binding:"required"`
+	ShareCode string `json:"shareCode"`
+	Cover     string `json:"cover"`
+	MountPath string `json:"mountPath"`
+}
+
 type panSearchResponseV2 struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
@@ -774,6 +858,19 @@ type panSearchItem struct {
 	Images   []string `json:"images"`
 }
 
+// SearchPan 搜索云盘资源
+// @Summary 搜索云盘资源
+// @Description 按关键词从配置的盘搜接口搜索天翼云盘资源
+// @Tags 订阅管理
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param keyword query string true "搜索关键词"
+// @Success 200 {object} httpcontext.Response{data=[]SearchResult} "搜索成功"
+// @Failure 400 {object} httpcontext.Response "参数验证失败或搜索失败"
+// @Failure 401 {object} httpcontext.Response "未授权访问"
+// @Failure 403 {object} httpcontext.Response "权限不足"
+// @Router /api/subscription/search [get]
 func (h *Handler) SearchPan() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		keyword := strings.TrimSpace(c.Query("keyword"))
@@ -934,15 +1031,22 @@ func panSearchResultsFromResponse(result panSearchResponseV2) []SearchResult {
 	return results
 }
 
+// MountSubscription 挂载订阅资源
+// @Summary 挂载订阅资源
+// @Description 根据分享链接创建订阅挂载点，未传挂载路径时使用订阅默认挂载路径
+// @Tags 订阅管理
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param request body mountSubscriptionReq true "挂载参数"
+// @Success 200 {object} httpcontext.Response "挂载成功"
+// @Failure 400 {object} httpcontext.Response "参数验证失败、分享信息获取失败或挂载失败"
+// @Failure 401 {object} httpcontext.Response "未授权访问"
+// @Failure 403 {object} httpcontext.Response "权限不足"
+// @Router /api/subscription/mount [post]
 func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
-		var req struct {
-			Title     string `json:"title" binding:"required"`
-			ShareURL  string `json:"shareUrl" binding:"required"`
-			ShareCode string `json:"shareCode"`
-			Cover     string `json:"cover"`
-			MountPath string `json:"mountPath"`
-		}
+		var req mountSubscriptionReq
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.Fail(invalidParams(err))
 
@@ -1044,6 +1148,19 @@ func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 	}
 }
 
+// SearchPanWithAI AI 推荐云盘资源
+// @Summary AI 推荐云盘资源
+// @Description 搜索云盘资源后使用 AI 生成优化关键词并推荐更合适的结果
+// @Tags 订阅管理
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param keyword query string true "搜索关键词"
+// @Success 200 {object} httpcontext.Response "推荐成功"
+// @Failure 400 {object} httpcontext.Response "参数验证失败或搜索失败"
+// @Failure 401 {object} httpcontext.Response "未授权访问"
+// @Failure 403 {object} httpcontext.Response "权限不足"
+// @Router /api/subscription/search/ai [get]
 func (h *Handler) SearchPanWithAI() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		keyword := strings.TrimSpace(c.Query("keyword"))
