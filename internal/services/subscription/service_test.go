@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
+	appContext "github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/douban"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/tmdb"
@@ -440,6 +441,81 @@ func TestGetMatchHistory(t *testing.T) {
 	}
 }
 
+func TestMatchAndMountSucceedsWhenMatchHistoryCreateFails(t *testing.T) {
+	db, err := setupTestDB()
+	if err != nil {
+		t.Fatalf("Failed to setup test DB: %v", err)
+	}
+
+	svc := NewService(db, zap.NewNop(), &SubscriptionConfig{}).(*service)
+	mountService := &mockMountService{id: 42}
+	svc.SetMountService(mountService)
+	svc.SetShareInfoFetcher(&mockShareInfoFetcher{
+		info: &ShareInfo{ID: "share-file-id", Name: "分享目录", IsFolder: true},
+	})
+
+	sub := &models.Subscription{
+		Name:      "热门订阅",
+		Source:    "tmdb",
+		Category:  "movie",
+		MountPath: "/订阅",
+		Enable:    true,
+	}
+	if err := svc.CreateSubscription(sub); err != nil {
+		t.Fatalf("Failed to create subscription: %v", err)
+	}
+
+	callbackName := "subscription:test_match_history_create_error"
+	if err := db.Callback().Create().Before("gorm:create").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Schema != nil && tx.Statement.Schema.Table == (&models.MatchHistory{}).TableName() {
+			_ = tx.AddError(errors.New("injected match history create failure"))
+		}
+	}); err != nil {
+		t.Fatalf("register create callback: %v", err)
+	}
+	defer func() {
+		if removeErr := db.Callback().Create().Remove(callbackName); removeErr != nil {
+			t.Fatalf("remove create callback: %v", removeErr)
+		}
+	}()
+
+	result, err := svc.MatchAndMount(
+		sub,
+		SearchResult{Title: "测试电影", ShareURL: "https://cloud.189.cn/t/abcdef"},
+		"测试电影",
+		"2024",
+		"movie",
+	)
+	if err != nil {
+		t.Fatalf("MatchAndMount should not fail when only history create fails: %v", err)
+	}
+
+	if result == nil || !result.Success {
+		t.Fatalf("expected successful match result, got %+v", result)
+	}
+
+	if result.STrmPath != "/订阅/测试电影 (2024)" {
+		t.Fatalf("unexpected strm path: %q", result.STrmPath)
+	}
+
+	if len(mountService.requests) != 1 {
+		t.Fatalf("expected one mount request, got %d", len(mountService.requests))
+	}
+
+	if mountService.requests[0].FileId != "share-file-id" {
+		t.Fatalf("expected share file id passed to mount request, got %q", mountService.requests[0].FileId)
+	}
+
+	var historyCount int64
+	if err := db.Model(&models.MatchHistory{}).Where("subscription_id = ?", sub.ID).Count(&historyCount).Error; err != nil {
+		t.Fatalf("count match history: %v", err)
+	}
+
+	if historyCount != 0 {
+		t.Fatalf("expected no match history rows after injected create failure, got %d", historyCount)
+	}
+}
+
 // Mock services for testing
 type mockTelegramService struct{}
 
@@ -478,6 +554,44 @@ type mockOpenAIService struct{}
 
 func (m *mockOpenAIService) GenerateUpgradeKeyword(title, category string) (string, error) {
 	return "", nil
+}
+
+type mockMountService struct {
+	id       int64
+	err      error
+	requests []*MountStorageRequest
+}
+
+func (m *mockMountService) CreateStorage(_ appContext.Context, req *MountStorageRequest) (int64, error) {
+	m.requests = append(m.requests, req)
+	if m.err != nil {
+		return 0, m.err
+	}
+
+	if m.id == 0 {
+		return 1, nil
+	}
+
+	return m.id, nil
+}
+
+type mockShareInfoFetcher struct {
+	info       *ShareInfo
+	err        error
+	shareCodes []string
+}
+
+func (m *mockShareInfoFetcher) GetShareInfo(_ appContext.Context, shareCode string, _ string) (*ShareInfo, error) {
+	m.shareCodes = append(m.shareCodes, shareCode)
+	if m.err != nil {
+		return nil, m.err
+	}
+
+	if m.info != nil {
+		return m.info, nil
+	}
+
+	return &ShareInfo{ID: "share-file-id", Name: "分享目录", IsFolder: true}, nil
 }
 
 func TestHotResourceStruct(t *testing.T) {

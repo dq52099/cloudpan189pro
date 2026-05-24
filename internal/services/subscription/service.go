@@ -518,7 +518,7 @@ func (s *service) processAutoUpgrade(sub *models.Subscription, item HotResource)
 
 	// 记录升级历史
 	var matchedAt = time.Now()
-	if err := s.db.Create(&models.MatchHistory{
+	s.recordMatchHistory(&models.MatchHistory{
 		SubscriptionID: sub.ID,
 		Title:          item.Title,
 		Year:           item.Year,
@@ -527,9 +527,7 @@ func (s *service) processAutoUpgrade(sub *models.Subscription, item HotResource)
 		UpgradeKeyword: keyword,
 		Status:         models.MatchStatusUpgraded,
 		MatchedAt:      &matchedAt,
-	}).Error; err != nil {
-		s.logger.Error("记录升级历史失败", zap.String("title", item.Title), zap.Error(err))
-	}
+	}, "记录升级历史失败")
 }
 
 func (s *service) GetDailyHotMovies() ([]HotResource, error) {
@@ -741,9 +739,7 @@ func (s *service) MatchAndMount(sub *models.Subscription, result SearchResult, t
 			history.ErrorMessage = fmt.Sprintf("%s: %v", msg, err)
 		}
 
-		if createErr := s.db.Create(history).Error; createErr != nil {
-			s.logger.Error("记录失败匹配历史出错", zap.Error(createErr))
-		}
+		s.recordMatchHistory(history, "记录失败匹配历史出错")
 
 		return &MatchResult{
 			Success: false,
@@ -792,9 +788,7 @@ func (s *service) MatchAndMount(sub *models.Subscription, result SearchResult, t
 
 	// 记录成功
 	history.Status = models.MatchStatusMatched
-	if err := s.db.Create(history).Error; err != nil {
-		s.logger.Error("记录匹配历史失败", zap.String("title", title), zap.Error(err))
-	}
+	s.recordMatchHistory(history, "记录匹配历史失败")
 
 	s.logger.Info("订阅资源已挂载",
 		zap.String("title", title),
@@ -809,6 +803,25 @@ func (s *service) MatchAndMount(sub *models.Subscription, result SearchResult, t
 		STrmPath: mountPath,
 		Message:  "挂载成功",
 	}, nil
+}
+
+func (s *service) recordMatchHistory(history *models.MatchHistory, message string) {
+	if history == nil {
+		return
+	}
+
+	if err := s.db.Create(history).Error; err != nil {
+		s.logger.Error(message,
+			zap.Error(err),
+			zap.Int64("subscription_id", history.SubscriptionID),
+			zap.String("title", history.Title),
+			zap.String("category", string(history.Category)),
+			zap.String("status", string(history.Status)),
+			zap.String("share_url", history.ShareURL),
+			zap.String("strm_path", history.STrmPath),
+			zap.String("error_message", history.ErrorMessage),
+		)
+	}
 }
 
 func (s *service) GetSubscriptions() ([]models.Subscription, error) {
