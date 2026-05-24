@@ -33,6 +33,7 @@ type mockPlanAccessService struct {
 	updatedFields   [][]utils.Field
 	offsetIDs       []int64
 	resetCounterIDs []int64
+	deleteRequests  []*autoingestplanSvi.DeleteRequest
 	queryErr        error
 	deleteErr       error
 	updateErr       error
@@ -84,6 +85,11 @@ func (m *mockPlanAccessService) Update(ctx appContext.Context, id int64, fields 
 func (m *mockPlanAccessService) Delete(ctx appContext.Context, req *autoingestplanSvi.DeleteRequest) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if req != nil {
+		copied := *req
+		m.deleteRequests = append(m.deleteRequests, &copied)
+	}
 
 	return m.deleteErr
 }
@@ -169,7 +175,7 @@ func assertPlanNotFoundResponse(t *testing.T, recorder *httptest.ResponseRecorde
 func TestDeletePlanReturnsNotFoundWhenPlanMissing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	planService := &mockPlanAccessService{deleteErr: gorm.ErrRecordNotFound}
+	planService := &mockPlanAccessService{queryErr: gorm.ErrRecordNotFound}
 
 	router := newPlanAccessRouter(NewHandler(nil, planService, nil, nil).DeletePlan())
 	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/action", strings.NewReader(`{"id":11}`))
@@ -179,6 +185,65 @@ func TestDeletePlanReturnsNotFoundWhenPlanMissing(t *testing.T) {
 	router.ServeHTTP(recorder, req)
 
 	assertPlanNotFoundResponse(t, recorder)
+
+	if len(planService.deleteRequests) != 0 {
+		t.Fatalf("expected delete not to be called, got %v", planService.deleteRequests)
+	}
+}
+
+func TestDeletePlanRejectsOtherUsersPlan(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	planService := &mockPlanAccessService{
+		plans: map[int64]*models.AutoIngestPlan{
+			11: {ID: 11, UserID: 200, SourceType: autoingest.SourceTypeSubscribe},
+		},
+	}
+
+	router := newPlanAccessRouter(NewHandler(nil, planService, nil, nil).DeletePlan())
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/action", strings.NewReader(`{"id":11}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected forbidden, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if len(planService.deleteRequests) != 0 {
+		t.Fatalf("expected delete not to be called, got %v", planService.deleteRequests)
+	}
+}
+
+func TestDeletePlanKeepsUserContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	planService := &mockPlanAccessService{
+		plans: map[int64]*models.AutoIngestPlan{
+			11: {ID: 11, UserID: 100, SourceType: autoingest.SourceTypeSubscribe},
+		},
+	}
+
+	router := newPlanAccessRouter(NewHandler(nil, planService, nil, nil).DeletePlan())
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/action", strings.NewReader(`{"id":11}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if len(planService.deleteRequests) != 1 {
+		t.Fatalf("expected one delete request, got %d", len(planService.deleteRequests))
+	}
+
+	deleteReq := planService.deleteRequests[0]
+	if deleteReq.ID != 11 || deleteReq.UserID != 100 || deleteReq.IsAdmin {
+		t.Fatalf("unexpected delete request: %+v", deleteReq)
+	}
 }
 
 func TestUpdatePlanReturnsNotFoundWhenQueryMissing(t *testing.T) {

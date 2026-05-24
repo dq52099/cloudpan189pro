@@ -41,6 +41,23 @@ func (h *handler) DeletePlan() httpcontext.HandlerFunc {
 		userID := ctx.GetInt64(consts.CtxKeyUserId)
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
 
+		plan, err := h.planService.Query(ctx.GetContext(), req.ID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(codePlanNotFound.WithError(err))
+
+				return
+			}
+
+			ctx.Fail(codePlanQueryFailed.WithError(err))
+
+			return
+		}
+
+		if !ensurePlanAccess(ctx, plan) {
+			return
+		}
+
 		deleteReq := &autoingestplanSvi.DeleteRequest{
 			ID:      req.ID,
 			UserID:  userID,
