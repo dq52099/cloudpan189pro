@@ -13,6 +13,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/taskengine"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	"github.com/xxcheng123/cloudpan189-share/internal/types/autoingest"
 	"go.uber.org/zap"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -62,6 +63,7 @@ func setupCloudTokenTestDB(t *testing.T) *cloudTokenTestDB {
 		&models.CloudToken{},
 		&models.MountPoint{},
 		&models.UserMountPointToken{},
+		&models.AutoIngestPlan{},
 	); err != nil {
 		t.Fatalf("migrate test db: %v", err)
 	}
@@ -84,6 +86,23 @@ func createCloudToken(t *testing.T, db *gorm.DB, userID int64, name string) *mod
 	}
 
 	return token
+}
+
+func createAutoIngestPlanWithToken(t *testing.T, db *gorm.DB, userID, tokenID int64, name string) *models.AutoIngestPlan {
+	t.Helper()
+
+	plan := &models.AutoIngestPlan{
+		Name:       name,
+		SourceType: autoingest.SourceTypeSubscribe,
+		ParentPath: "/" + name,
+		TokenId:    tokenID,
+		UserID:     userID,
+	}
+	if err := db.Create(plan).Error; err != nil {
+		t.Fatalf("create auto ingest plan: %v", err)
+	}
+
+	return plan
 }
 
 func TestCheckCloudTokenUpdateResultAllowsNoopWhenTokenExists(t *testing.T) {
@@ -592,6 +611,8 @@ func TestDeleteOwnerTokenClearsReferences(t *testing.T) {
 		t.Fatalf("create token binding: %v", err)
 	}
 
+	plan := createAutoIngestPlanWithToken(t, tDB.db, 10, token.ID, "owner-plan")
+
 	if err := svc.Delete(ctx, &DeleteRequest{ID: token.ID, UserID: 10}); err != nil {
 		t.Fatalf("delete owner token: %v", err)
 	}
@@ -612,6 +633,15 @@ func TestDeleteOwnerTokenClearsReferences(t *testing.T) {
 
 	if bindingCount != 0 {
 		t.Fatalf("expected token bindings deleted, got count %d", bindingCount)
+	}
+
+	var updatedPlan models.AutoIngestPlan
+	if err := tDB.db.First(&updatedPlan, plan.ID).Error; err != nil {
+		t.Fatalf("query auto ingest plan: %v", err)
+	}
+
+	if updatedPlan.TokenId != 0 {
+		t.Fatalf("expected auto ingest plan token reset to 0, got %d", updatedPlan.TokenId)
 	}
 }
 
@@ -642,6 +672,8 @@ func TestDeleteOtherUserTokenKeepsReferences(t *testing.T) {
 		t.Fatalf("create token binding: %v", err)
 	}
 
+	plan := createAutoIngestPlanWithToken(t, tDB.db, 20, token.ID, "other-plan")
+
 	err := svc.Delete(ctx, &DeleteRequest{ID: token.ID, UserID: 10})
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("expected record not found, got %v", err)
@@ -663,6 +695,15 @@ func TestDeleteOtherUserTokenKeepsReferences(t *testing.T) {
 
 	if bindingCount != 1 {
 		t.Fatalf("expected token binding to remain, got count %d", bindingCount)
+	}
+
+	var updatedPlan models.AutoIngestPlan
+	if err := tDB.db.First(&updatedPlan, plan.ID).Error; err != nil {
+		t.Fatalf("query auto ingest plan: %v", err)
+	}
+
+	if updatedPlan.TokenId != token.ID {
+		t.Fatalf("expected auto ingest plan token unchanged, got %d", updatedPlan.TokenId)
 	}
 }
 
@@ -753,6 +794,8 @@ func TestDeleteAdminTokenClearsReferences(t *testing.T) {
 		t.Fatalf("create token binding: %v", err)
 	}
 
+	plan := createAutoIngestPlanWithToken(t, tDB.db, 10, token.ID, "admin-plan")
+
 	if err := svc.Delete(ctx, &DeleteRequest{ID: token.ID, IsAdmin: true}); err != nil {
 		t.Fatalf("admin delete token: %v", err)
 	}
@@ -782,6 +825,15 @@ func TestDeleteAdminTokenClearsReferences(t *testing.T) {
 
 	if bindingCount != 0 {
 		t.Fatalf("expected token bindings deleted, got count %d", bindingCount)
+	}
+
+	var updatedPlan models.AutoIngestPlan
+	if err := tDB.db.First(&updatedPlan, plan.ID).Error; err != nil {
+		t.Fatalf("query auto ingest plan: %v", err)
+	}
+
+	if updatedPlan.TokenId != 0 {
+		t.Fatalf("expected auto ingest plan token reset to 0, got %d", updatedPlan.TokenId)
 	}
 }
 

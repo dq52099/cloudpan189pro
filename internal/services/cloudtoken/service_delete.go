@@ -75,5 +75,14 @@ func clearCloudTokenReferences(ctx context.Context, tx *gorm.DB, tokenID int64) 
 		return errors.Wrap(err, "清理用户挂载点令牌绑定失败")
 	}
 
+	if err := tx.
+		Model(new(models.AutoIngestPlan)).
+		Where("token_id = ?", tokenID).
+		Update("token_id", 0).Error; err != nil {
+		ctx.Error("清理自动转存计划令牌引用失败", zap.Error(err), zap.Int64("id", tokenID))
+
+		return errors.Wrap(err, "清理自动转存计划令牌引用失败")
+	}
+
 	return nil
 }
