@@ -201,7 +201,7 @@ const message = useMessage()
 
 const userInfo = userStore.get()
 const systemInfo = systemStore.get()
-const canUseAdminFeatures = computed(() => !systemInfo.enableAuth || userInfo.isAdmin)
+const canUseAdminFeatures = computed(() => userInfo.isAdmin)
 
 const loadingSummary = ref(false)
 const summaryData = ref<ResourceSummary>({

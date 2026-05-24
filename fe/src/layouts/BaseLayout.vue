@@ -121,7 +121,7 @@
 
             <!-- 用户信息 -->
             <n-dropdown
-              v-if="systemInfo.enableAuth"
+              v-if="authStore.isLogin"
               :options="userMenuOptions"
               @select="handleUserMenuSelect"
             >
@@ -345,8 +345,8 @@ const showChangePasswordModal = ref(false)
 
 const filterMenuTree = (items: AppMenuItem[]): AppMenuItem[] => {
   return items
-    .filter((item) => !item.authOnly || systemInfo.enableAuth)
-    .filter((item) => !item.adminOnly || !systemInfo.enableAuth || userStore.isAdmin)
+    .filter((item) => !item.authOnly || authStore.isLogin)
+    .filter((item) => !item.adminOnly || userStore.isAdmin)
     .map((item) => ({
       ...item,
       children: item.children ? filterMenuTree(item.children) : undefined,
@@ -534,10 +534,6 @@ const handleMobileMenuSelect = (key: string) => {
 
 // 处理用户菜单选择
 const handleUserMenuSelect = (key: string) => {
-  if (!systemInfo.enableAuth) {
-    return
-  }
-
   switch (key) {
     case 'profile':
       router.push('/@dashboard/profile')
@@ -558,10 +554,6 @@ const handleChangePasswordSuccess = () => {
 
 // 处理退出登录
 const handleLogout = () => {
-  if (!systemInfo.enableAuth) {
-    return
-  }
-
   authStore.logout()
   message.success('已退出登录')
   router.push('/@login')
@@ -573,9 +565,7 @@ onMounted(() => {
   checkScreenSize()
   window.addEventListener('resize', checkScreenSize)
 
-  if (systemInfo.enableAuth) {
-    userStore.refresh()
-  }
+  userStore.refresh()
 })
 
 // 清理事件监听器

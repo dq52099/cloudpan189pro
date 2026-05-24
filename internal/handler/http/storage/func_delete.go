@@ -57,7 +57,7 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
 
 		if !isAdmin && (userID <= 0 || mountPointInfo.CreatorUserID != userID) {
-			ctx.Fail(busCodeStorageMountPointDeleteFail.WithError(errors.New("挂载点不存在或无权限删除")))
+			ctx.Forbidden("无权限删除")
 
 			return
 		}

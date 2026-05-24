@@ -1,5 +1,5 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
-import { useAuthStore, useSystemStore } from '@/stores'
+import { useAuthStore } from '@/stores'
 
 // 响应数据类型
 export interface ApiResponse<T = unknown> {
@@ -101,23 +101,6 @@ api.interceptors.response.use(
         case 400:
           return Promise.reject(new Error(getApiErrorMessage(data, '请求失败')))
         case 401:
-          {
-            const systemStore = useSystemStore()
-            const message = getApiErrorMessage(data, '未登录或会话已过期')
-
-            if (!isSystemInfoRequest(config.url)) {
-              await systemStore.ensureLoaded()
-            }
-
-            const systemInfo = systemStore.get()
-
-            if (systemInfo.initialized && !systemInfo.enableAuth) {
-              console.error('请求未授权:', message)
-
-              return Promise.reject(new Error(message))
-            }
-          }
-
           if (
             authStore.hasRefreshToken &&
             !isRefreshTokenRequest(config.url) &&
