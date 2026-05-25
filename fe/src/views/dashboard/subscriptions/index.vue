@@ -490,6 +490,10 @@ const showDetail = (movie: HotMovieItem) => {
 }
 
 const handleSearch = async () => {
+  if (searching.value || !isPageMounted) {
+    return
+  }
+
   if (!searchKeyword.value.trim()) {
     message.warning('请输入搜索关键词')
     return
@@ -533,6 +537,10 @@ const handleSearch = async () => {
 }
 
 const handleAISearch = async () => {
+  if (searching.value || !isPageMounted) {
+    return
+  }
+
   if (!searchKeyword.value.trim()) {
     message.warning('请输入搜索关键词')
     return
@@ -786,6 +794,10 @@ onUnmounted(() => {
   saveConfigRequestId++
   mountRequestId++
   mountModalSession++
+  loading.value = false
+  searching.value = false
+  savingConfig.value = false
+  mounting.value = false
 })
 </script>
 
