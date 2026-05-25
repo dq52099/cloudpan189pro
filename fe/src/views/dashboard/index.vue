@@ -169,7 +169,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import {
   NGrid,
   NGridItem,
@@ -204,6 +204,8 @@ const systemInfo = systemStore.get()
 const canUseAdminFeatures = computed(() => userInfo.isAdmin)
 
 const loadingSummary = ref(false)
+let isDashboardMounted = false
+let summaryRequestId = 0
 const summaryData = ref<ResourceSummary>({
   users: { total: 0, active: 0, disabled: 0 },
   userGroups: 0,
@@ -301,9 +303,19 @@ const normalizeResourceSummary = (value: unknown): ResourceSummary | null => {
 }
 
 const loadSummary = async () => {
+  if (!isDashboardMounted) {
+    return
+  }
+
+  const requestId = ++summaryRequestId
+
   loadingSummary.value = true
   try {
     const res = await getResourceSummary()
+    if (!isDashboardMounted || requestId !== summaryRequestId) {
+      return
+    }
+
     if (res.code === 200) {
       const summary = normalizeResourceSummary(res.data)
       if (!summary) {
@@ -318,10 +330,16 @@ const loadSummary = async () => {
       message.error(res.msg || '加载资源统计失败')
     }
   } catch (err) {
+    if (!isDashboardMounted || requestId !== summaryRequestId) {
+      return
+    }
+
     console.error('加载资源统计失败', err)
     message.error('加载资源统计失败')
   } finally {
-    loadingSummary.value = false
+    if (isDashboardMounted && requestId === summaryRequestId) {
+      loadingSummary.value = false
+    }
   }
 }
 
@@ -350,9 +368,16 @@ const getUserStatusText = (status: number) => {
 }
 
 onMounted(() => {
+  isDashboardMounted = true
   if (canUseAdminFeatures.value) {
     loadSummary()
   }
+})
+
+onUnmounted(() => {
+  isDashboardMounted = false
+  summaryRequestId++
+  loadingSummary.value = false
 })
 </script>
 
