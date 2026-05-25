@@ -81,6 +81,7 @@
                     size="small"
                     type="error"
                     :loading="clearingMedia"
+                    :disabled="mediaDangerActionBusy && !clearingMedia"
                     @click="handleClearMedia"
                   >
                     清理媒体文件
@@ -96,6 +97,7 @@
                     size="small"
                     type="warning"
                     :loading="rebuildingStrm"
+                    :disabled="mediaDangerActionBusy && !rebuildingStrm"
                     @click="handleRebuildStrm"
                   >
                     重建strm文件
@@ -288,7 +290,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, reactive } from 'vue'
+import { computed, ref, onMounted, onUnmounted, reactive } from 'vue'
 import {
   NForm,
   NFormItem,
@@ -335,6 +337,13 @@ const initSubmitting = ref(false)
 const editSubmitting = ref(false)
 const clearMediaDialogOpen = ref(false)
 const rebuildStrmDialogOpen = ref(false)
+const mediaDangerActionBusy = computed(
+  () =>
+    clearingMedia.value ||
+    rebuildingStrm.value ||
+    clearMediaDialogOpen.value ||
+    rebuildStrmDialogOpen.value
+)
 let isComponentMounted = false
 let configRequestId = 0
 let initRequestId = 0
@@ -705,7 +714,7 @@ const handleToggleEnable = (val: boolean) => {
 
 // 清理媒体文件
 const handleClearMedia = () => {
-  if (clearingMedia.value || clearMediaDialogOpen.value) return
+  if (mediaDangerActionBusy.value || !isComponentMounted) return
 
   clearMediaDialogOpen.value = true
   dialog.warning({
@@ -719,7 +728,7 @@ const handleClearMedia = () => {
       }
     },
     onPositiveClick: () => {
-      if (clearingMedia.value) return false
+      if (clearingMedia.value || rebuildingStrm.value || !isComponentMounted) return false
 
       clearingMedia.value = true
       return clearMediaFiles()
@@ -750,7 +759,7 @@ const handleClearMedia = () => {
 
 // 重建strm文件
 const handleRebuildStrm = () => {
-  if (rebuildingStrm.value || rebuildStrmDialogOpen.value) return
+  if (mediaDangerActionBusy.value || !isComponentMounted) return
 
   rebuildStrmDialogOpen.value = true
   dialog.info({
@@ -764,7 +773,7 @@ const handleRebuildStrm = () => {
       }
     },
     onPositiveClick: () => {
-      if (rebuildingStrm.value) return false
+      if (rebuildingStrm.value || clearingMedia.value || !isComponentMounted) return false
 
       rebuildingStrm.value = true
       return rebuildStrmFiles()
@@ -828,6 +837,10 @@ onUnmounted(() => {
   editRequestId += 1
   initSubmitting.value = false
   editSubmitting.value = false
+  clearingMedia.value = false
+  rebuildingStrm.value = false
+  clearMediaDialogOpen.value = false
+  rebuildStrmDialogOpen.value = false
 })
 </script>
 
