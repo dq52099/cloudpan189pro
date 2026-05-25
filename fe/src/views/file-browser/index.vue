@@ -20,7 +20,14 @@
 
       <div class="actions">
         <!-- 新增：批量删除按钮 -->
-        <n-button v-if="selectedRowKeys.length > 0" type="error" text @click="handleBatchDelete">
+        <n-button
+          v-if="selectedRowKeys.length > 0"
+          type="error"
+          text
+          :loading="batchDeleteSubmitting"
+          :disabled="loading || batchDeleteSubmitting || batchDeleteDialogOpen"
+          @click="handleBatchDelete"
+        >
           <template #icon>
             <n-icon :component="TrashOutline" />
           </template>
@@ -137,6 +144,8 @@ const breadcrumbs = ref<BreadcrumbItem[]>([])
 const showSearch = ref(false)
 // 新增：选中的文件ID列表
 const selectedRowKeys = ref<number[]>([])
+const batchDeleteSubmitting = ref(false)
+const batchDeleteDialogOpen = ref(false)
 let isComponentMounted = true
 let fileOpenRequestId = 0
 
@@ -286,12 +295,16 @@ const isCurrentFileOpenRequest = (requestId: number) => {
 }
 
 const loadPath = (path: string) => {
+  if (!isComponentMounted) {
+    return Promise.resolve()
+  }
+
   const requestId = ++fileOpenRequestId
   loading.value = true
   // 切换路径时清空选中状态
   selectedRowKeys.value = []
 
-  openFile(path)
+  return openFile(path)
     .then((response) => {
       if (!isCurrentFileOpenRequest(requestId)) return
 
@@ -336,7 +349,7 @@ const navigateToPath = (path: string) => {
 }
 
 const refreshCurrentPath = () => {
-  loadPath(currentPath.value)
+  return loadPath(currentPath.value)
 }
 
 const goAdmin = () => {
@@ -345,31 +358,59 @@ const goAdmin = () => {
 
 // 新增：处理批量删除
 const handleBatchDelete = () => {
-  if (selectedRowKeys.value.length === 0) return
+  if (
+    selectedRowKeys.value.length === 0 ||
+    loading.value ||
+    batchDeleteSubmitting.value ||
+    batchDeleteDialogOpen.value ||
+    !isComponentMounted
+  ) {
+    return
+  }
+
+  const ids = [...new Set(selectedRowKeys.value)]
+  batchDeleteDialogOpen.value = true
 
   dialog.warning({
     title: '确认删除',
-    content: `确定要删除选中的 ${selectedRowKeys.value.length} 个文件/文件夹吗？此操作不可恢复。`,
+    content: `确定要删除选中的 ${ids.length} 个文件/文件夹吗？此操作不可恢复。`,
     positiveText: '确定删除',
     negativeText: '取消',
+    onAfterLeave: () => {
+      if (!batchDeleteSubmitting.value) {
+        batchDeleteDialogOpen.value = false
+      }
+    },
     onPositiveClick: () => {
-      loading.value = true
-      batchDeleteFiles({ ids: selectedRowKeys.value })
+      if (batchDeleteSubmitting.value || !isComponentMounted) {
+        return
+      }
+
+      batchDeleteSubmitting.value = true
+
+      return batchDeleteFiles({ ids })
         .then((res) => {
+          if (!isComponentMounted) return
+
           if (res.code === 200) {
             message.success('删除任务已提交')
             selectedRowKeys.value = [] // 清空选中
-            refreshCurrentPath() // 刷新列表
+            return refreshCurrentPath() // 刷新列表
           } else {
             message.error(res.msg || '删除失败')
           }
         })
         .catch((err) => {
+          if (!isComponentMounted) return
+
           console.error(err)
           message.error('删除请求出错')
         })
         .finally(() => {
-          loading.value = false
+          if (isComponentMounted) {
+            batchDeleteSubmitting.value = false
+            batchDeleteDialogOpen.value = false
+          }
         })
     },
   })
@@ -438,6 +479,9 @@ watch(
 onUnmounted(() => {
   isComponentMounted = false
   fileOpenRequestId += 1
+  loading.value = false
+  batchDeleteSubmitting.value = false
+  batchDeleteDialogOpen.value = false
 })
 </script>
 
