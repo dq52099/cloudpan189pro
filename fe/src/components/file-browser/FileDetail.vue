@@ -32,15 +32,19 @@
     <!-- 推荐播放器 (仅视频文件显示) -->
     <div class="recommended-players" v-if="isVideoFile">
       <span class="label">使用外部播放器：</span>
-      <button class="player-btn vlc" @click="openWithPlayer('vlc')">
+      <button class="player-btn vlc" :disabled="openPlayerPending" @click="openWithPlayer('vlc')">
         <img class="player-icon" src="./icon/vlc.png" alt="VLC" />
         <span>VLC</span>
       </button>
-      <button class="player-btn potplayer" @click="openWithPlayer('potplayer')">
+      <button
+        class="player-btn potplayer"
+        :disabled="openPlayerPending"
+        @click="openWithPlayer('potplayer')"
+      >
         <img class="player-icon" src="./icon/potplayer.png" alt="PotPlayer" />
         <span>PotPlayer</span>
       </button>
-      <button class="player-btn mpc" @click="openWithPlayer('mpc')">
+      <button class="player-btn mpc" :disabled="openPlayerPending" @click="openWithPlayer('mpc')">
         <img class="player-icon" src="./icon/mpc-hc.png" alt="MPC-HC" />
         <span>MPC-HC</span>
       </button>
@@ -64,11 +68,11 @@
       </div>
 
       <div class="action-buttons">
-        <button class="action-btn copy-link" @click="copyLink">
+        <button class="action-btn copy-link" :disabled="copyPending" @click="copyLink">
           <n-icon><LinkOutline /></n-icon>
           <span>复制链接</span>
         </button>
-        <button class="action-btn download" @click="downloadFile">
+        <button class="action-btn download" :disabled="downloadPending" @click="downloadFile">
           <n-icon><DownloadOutline /></n-icon>
           <span>下载</span>
         </button>
@@ -96,7 +100,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { NIcon, NQrCode, useMessage } from 'naive-ui'
 import {
   QrCodeOutline,
@@ -191,11 +195,63 @@ const message = useMessage()
 // 二维码相关
 const shareUrl = computed(() => window.location.href)
 
+const isMounted = ref(true)
+const openPlayerPending = ref(false)
+const downloadPending = ref(false)
+const copyPending = ref(false)
+const openPlayerRequestId = ref(0)
+const downloadRequestId = ref(0)
+const copyRequestId = ref(0)
+
+const isActiveRequest = (requestId: number, currentRequestId: number, fileId?: number) => {
+  return (
+    isMounted.value &&
+    requestId === currentRequestId &&
+    (fileId === undefined || props.fileInfo.id === fileId)
+  )
+}
+
+const isActiveCopyRequest = (requestId: number, currentRequestId: number, href: string) => {
+  return isActiveRequest(requestId, currentRequestId) && window.location.href === href
+}
+
+watch(
+  () => props.fileInfo.id,
+  () => {
+    openPlayerRequestId.value += 1
+    downloadRequestId.value += 1
+    copyRequestId.value += 1
+    openPlayerPending.value = false
+    downloadPending.value = false
+    copyPending.value = false
+  }
+)
+
+onUnmounted(() => {
+  isMounted.value = false
+  openPlayerRequestId.value += 1
+  downloadRequestId.value += 1
+  copyRequestId.value += 1
+})
+
 // 功能实现
 const openWithPlayer = (player: string) => {
+  if (openPlayerPending.value) {
+    return
+  }
+
+  const fileId = props.fileInfo.id
+  const requestId = openPlayerRequestId.value + 1
+  openPlayerRequestId.value = requestId
+  openPlayerPending.value = true
+
   // 获取当前文件的下载链接，然后用指定播放器打开
-  createDownloadUrl({ fileId: props.fileInfo.id })
+  createDownloadUrl({ fileId })
     .then((response) => {
+      if (!isActiveRequest(requestId, openPlayerRequestId.value, fileId)) {
+        return
+      }
+
       if (response.code === 200) {
         const data = normalizeCreateDownloadUrlResponse(response.data)
         if (!data) {
@@ -233,33 +289,71 @@ const openWithPlayer = (player: string) => {
       }
     })
     .catch((error) => {
+      if (!isActiveRequest(requestId, openPlayerRequestId.value, fileId)) {
+        return
+      }
+
       console.error('获取播放链接失败:', error)
       message.error('获取播放链接失败')
+    })
+    .finally(() => {
+      if (isActiveRequest(requestId, openPlayerRequestId.value, fileId)) {
+        openPlayerPending.value = false
+      }
     })
 }
 
 const copyLink = () => {
+  if (copyPending.value) {
+    return
+  }
+
   const currentUrl = window.location.href
+  const requestId = copyRequestId.value + 1
+  copyRequestId.value = requestId
+  copyPending.value = true
 
   // 使用现代剪贴板 API
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard
       .writeText(currentUrl)
       .then(() => {
+        if (!isActiveCopyRequest(requestId, copyRequestId.value, currentUrl)) {
+          return
+        }
+
         message.success('链接已复制到剪贴板')
       })
       .catch((error) => {
+        if (!isActiveCopyRequest(requestId, copyRequestId.value, currentUrl)) {
+          return
+        }
+
         console.error('复制链接失败:', error)
         // 降级方案：使用传统方法复制
-        fallbackCopyToClipboard(currentUrl)
+        if (fallbackCopyToClipboard(currentUrl)) {
+          message.success('链接已复制到剪贴板')
+        } else {
+          message.error('复制链接失败')
+        }
+      })
+      .finally(() => {
+        if (isActiveRequest(requestId, copyRequestId.value)) {
+          copyPending.value = false
+        }
       })
   } else {
     // 直接使用降级方案
-    fallbackCopyToClipboard(currentUrl)
+    if (fallbackCopyToClipboard(currentUrl)) {
+      message.success('链接已复制到剪贴板')
+    } else {
+      message.error('复制链接失败')
+    }
+    copyPending.value = false
   }
 }
 
-const fallbackCopyToClipboard = (text: string) => {
+const fallbackCopyToClipboard = (text: string): boolean => {
   const textArea = document.createElement('textarea')
   textArea.value = text
   document.body.appendChild(textArea)
@@ -268,16 +362,25 @@ const fallbackCopyToClipboard = (text: string) => {
   const successful = document.execCommand('copy')
   document.body.removeChild(textArea)
 
-  if (successful) {
-    message.success('链接已复制到剪贴板')
-  } else {
-    message.error('复制链接失败')
-  }
+  return successful
 }
 
 const downloadFile = () => {
-  createDownloadUrl({ fileId: props.fileInfo.id })
+  if (downloadPending.value) {
+    return
+  }
+
+  const fileId = props.fileInfo.id
+  const requestId = downloadRequestId.value + 1
+  downloadRequestId.value = requestId
+  downloadPending.value = true
+
+  createDownloadUrl({ fileId })
     .then((response) => {
+      if (!isActiveRequest(requestId, downloadRequestId.value, fileId)) {
+        return
+      }
+
       if (response.code === 200) {
         const data = normalizeCreateDownloadUrlResponse(response.data)
         if (!data) {
@@ -298,8 +401,17 @@ const downloadFile = () => {
       }
     })
     .catch((error) => {
+      if (!isActiveRequest(requestId, downloadRequestId.value, fileId)) {
+        return
+      }
+
       console.error('下载失败:', error)
       message.error('下载失败')
+    })
+    .finally(() => {
+      if (isActiveRequest(requestId, downloadRequestId.value, fileId)) {
+        downloadPending.value = false
+      }
     })
 }
 </script>
@@ -546,6 +658,17 @@ const downloadFile = () => {
   color: var(--n-primary-color);
 }
 
+.player-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.player-btn:disabled:hover {
+  border-color: var(--n-border-color);
+  background: var(--n-card-color);
+  color: var(--n-text-color);
+}
+
 .player-icon {
   width: 20px;
   height: 20px;
@@ -609,6 +732,17 @@ const downloadFile = () => {
   color: var(--n-primary-color);
 }
 
+.action-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.action-btn:disabled:hover {
+  border-color: var(--n-border-color);
+  background: var(--n-card-color);
+  color: var(--n-text-color);
+}
+
 .action-btn.download {
   background: var(--n-primary-color);
   color: white;
@@ -618,6 +752,12 @@ const downloadFile = () => {
 .action-btn.download:hover {
   background: var(--n-primary-color-hover);
   border-color: var(--n-primary-color-hover);
+  color: white;
+}
+
+.action-btn.download:disabled:hover {
+  background: var(--n-primary-color);
+  border-color: var(--n-primary-color);
   color: white;
 }
 

@@ -29,12 +29,11 @@ import {
 import type { FileChild } from '@/api/file'
 import { formatFileSize, formatDate } from '@/utils/format'
 
-// 修改：直接调用 defineProps，不需要赋值给 const props，因为 JS 逻辑里没用到它
-// Vue 的宏会自动将 props 暴露给 template 使用
-defineProps<{
+const props = defineProps<{
   fileList: FileChild[]
   loading: boolean
   checkedRowKeys?: number[] // 接收父组件的选中状态
+  downloadingRowKeys?: number[]
 }>()
 
 // Emits 定义
@@ -136,6 +135,8 @@ const columns = computed<DataTableColumns<FileChild>>(() => [
     align: 'center',
     fixed: 'right',
     render(row) {
+      const isDownloading = props.downloadingRowKeys?.includes(row.id) ?? false
+
       if (row.isDir) {
         return h(
           NButton,
@@ -154,7 +155,13 @@ const columns = computed<DataTableColumns<FileChild>>(() => [
             size: 'small',
             text: true,
             type: 'error',
-            onClick: () => emit('download', row),
+            loading: isDownloading,
+            disabled: isDownloading,
+            onClick: () => {
+              if (!isDownloading) {
+                emit('download', row)
+              }
+            },
           },
           {
             icon: () => h(NIcon, null, { default: () => h(DownloadOutline) }),

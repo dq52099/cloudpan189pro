@@ -79,6 +79,7 @@
         <FileList
           :file-list="fileInfo.children || []"
           :loading="false"
+          :downloading-row-keys="downloadingRowKeys"
           v-model:checked-row-keys="selectedRowKeys"
           @file-click="handleFileClick"
           @download="downloadFile"
@@ -146,6 +147,7 @@ const showSearch = ref(false)
 const selectedRowKeys = ref<number[]>([])
 const batchDeleteSubmitting = ref(false)
 const batchDeleteDialogOpen = ref(false)
+const downloadingRowKeys = ref<number[]>([])
 let isComponentMounted = true
 let fileOpenRequestId = 0
 
@@ -303,6 +305,7 @@ const loadPath = (path: string) => {
   loading.value = true
   // 切换路径时清空选中状态
   selectedRowKeys.value = []
+  downloadingRowKeys.value = []
 
   return openFile(path)
     .then((response) => {
@@ -439,8 +442,19 @@ const goBack = () => {
 }
 
 const downloadFile = (file: FileChild) => {
+  if (file.isDir || downloadingRowKeys.value.includes(file.id) || !isComponentMounted) {
+    return
+  }
+
+  const fileId = file.id
+  const fileName = file.name
+  const navigationRequestId = fileOpenRequestId
+  downloadingRowKeys.value = [...downloadingRowKeys.value, fileId]
+
   createDownloadUrl({ fileId: file.id })
     .then((response) => {
+      if (!isComponentMounted || navigationRequestId !== fileOpenRequestId) return
+
       if (response.code === 200) {
         const data = normalizeCreateDownloadUrlResponse(response.data)
         if (!data) {
@@ -451,7 +465,7 @@ const downloadFile = (file: FileChild) => {
 
         const link = document.createElement('a')
         link.href = data.downloadUrl
-        link.download = file.name
+        link.download = fileName
         document.body.appendChild(link)
         link.click()
         document.body.removeChild(link)
@@ -461,8 +475,15 @@ const downloadFile = (file: FileChild) => {
       }
     })
     .catch((error) => {
+      if (!isComponentMounted || navigationRequestId !== fileOpenRequestId) return
+
       console.error('下载失败:', error)
       message.error('下载失败')
+    })
+    .finally(() => {
+      if (!isComponentMounted || navigationRequestId !== fileOpenRequestId) return
+
+      downloadingRowKeys.value = downloadingRowKeys.value.filter((id) => id !== fileId)
     })
 }
 
@@ -482,6 +503,7 @@ onUnmounted(() => {
   loading.value = false
   batchDeleteSubmitting.value = false
   batchDeleteDialogOpen.value = false
+  downloadingRowKeys.value = []
 })
 </script>
 
