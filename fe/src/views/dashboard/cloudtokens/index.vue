@@ -580,7 +580,7 @@ const handleConfirmEdit = () => {
         }
 
         console.error('修改令牌名称失败:', error)
-        message.error('修改令牌名称失败')
+        message.error(getErrorMessage(error, '修改令牌名称失败'))
       })
       .finally(() => {
         if (!isCurrentEditSession(sessionVersion)) {
@@ -623,7 +623,7 @@ const handleDelete = (tokenId: number): Promise<void> => {
       }
 
       console.error('删除令牌失败:', error)
-      message.error(error.message || '删除令牌失败')
+      message.error(getErrorMessage(error, '删除令牌失败'))
     })
     .finally(() => {
       deleteTokenTasks.delete(tokenId)

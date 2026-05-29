@@ -113,6 +113,7 @@ import {
   TimeOutline,
 } from '@vicons/ionicons5'
 import { initQrcode as initQrcodeApi, checkQrcode } from '@/api/cloudtoken'
+import { getErrorMessage } from '@/utils/api'
 
 // Props
 interface Props {
@@ -255,7 +256,7 @@ const initQrcode = () => {
       }
 
       console.error('初始化二维码失败:', error)
-      statusMessage.value = '二维码生成失败，请重试'
+      statusMessage.value = getErrorMessage(error, '二维码生成失败，请重试')
       statusType.value = 'error'
       qrcodeFormatInvalid.value = false
       qrcodeUrl.value = ''
@@ -358,7 +359,7 @@ const handleCheckLogin = () => {
       }
 
       console.error('检查二维码状态失败:', error)
-      message.error('检查登录状态失败')
+      message.error(getErrorMessage(error, '检查登录状态失败'))
     })
     .finally(() => {
       if (isCurrentOperation(currentOperation)) {

@@ -106,6 +106,7 @@ import {
   type FormRules,
 } from 'naive-ui'
 import { usernameLogin } from '@/api/cloudtoken'
+import { getErrorMessage } from '@/utils/api'
 
 // Props
 interface Props {
@@ -319,9 +320,9 @@ const performLogin = (currentOperation: number) => {
       }
 
       console.error('密码登录失败:', error)
-      statusMessage.value = '登录失败，请检查网络连接或稍后重试'
+      statusMessage.value = getErrorMessage(error, '登录失败，请检查网络连接或稍后重试')
       statusType.value = 'error'
-      message.error('登录失败')
+      message.error(getErrorMessage(error, '登录失败'))
     })
     .finally(() => {
       if (isCurrentOperation(currentOperation)) {
