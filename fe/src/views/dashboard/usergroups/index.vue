@@ -166,6 +166,8 @@ const fetchUserGroupList = () => {
         } else {
           paginationReactive.itemCount = total
         }
+      } else {
+        message.error(response.msg || '获取用户组列表失败')
       }
     })
     .catch((error) => {
@@ -173,6 +175,7 @@ const fetchUserGroupList = () => {
       if (currentRequestId !== userGroupListRequestId) return
 
       console.error('获取用户组列表失败:', error)
+      message.error('获取用户组列表失败')
     })
     .finally(() => {
       if (isComponentUnmounted) return

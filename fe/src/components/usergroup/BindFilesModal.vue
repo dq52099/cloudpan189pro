@@ -172,6 +172,7 @@ const selectedStorageIds = ref<number[]>([])
 const selectedStorageMap = ref<Record<number, StorageSelectItem>>({})
 const operationVersion = ref(0)
 const isComponentMounted = ref(true)
+let storageListRequestId = 0
 
 const pagination = reactive({
   page: 1,
@@ -213,6 +214,12 @@ const isCurrentOperation = (version: number, userGroupId: number | null) =>
   visible.value &&
   operationVersion.value === version &&
   getCurrentUserGroupId() === userGroupId
+
+const isCurrentStorageListRequest = (
+  version: number,
+  userGroupId: number | null,
+  requestId: number
+) => isCurrentOperation(version, userGroupId) && storageListRequestId === requestId
 
 onUnmounted(() => {
   isComponentMounted.value = false
@@ -409,11 +416,13 @@ const fetchStorageList = async (
 ) => {
   if (!isCurrentOperation(version, userGroupId)) return
 
+  const currentRequestId = ++storageListRequestId
+  const params = buildParams()
   loading.value = true
 
   try {
-    const response = await getStorageSelectList(buildParams())
-    if (!isCurrentOperation(version, userGroupId)) return
+    const response = await getStorageSelectList(params)
+    if (!isCurrentStorageListRequest(version, userGroupId, currentRequestId)) return
 
     if (response.code === 200 && response.data) {
       const page = normalizeStoragePage(response.data)
@@ -430,12 +439,12 @@ const fetchStorageList = async (
       message.error(response.msg || '获取存储列表失败')
     }
   } catch (error) {
-    if (!isCurrentOperation(version, userGroupId)) return
+    if (!isCurrentStorageListRequest(version, userGroupId, currentRequestId)) return
 
     console.error('获取存储列表失败:', error)
     message.error('获取存储列表失败')
   } finally {
-    if (isCurrentOperation(version, userGroupId)) {
+    if (isCurrentStorageListRequest(version, userGroupId, currentRequestId)) {
       loading.value = false
     }
   }

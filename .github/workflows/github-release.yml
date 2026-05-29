@@ -234,7 +234,8 @@ jobs:
                       -X ${{ env.CONFIG_PACKAGE }}.Commit=${{ env.VAR_COMMIT }} \
                       -X ${{ env.CONFIG_PACKAGE }}.BuildDate=${{ env.VAR_BUILD_DATE }} \
                       -X ${{ env.CONFIG_PACKAGE }}.GitSummary=${{ env.VAR_GIT_SUMMARY }} \
-                      -X ${{ env.CONFIG_PACKAGE }}.GitBranch=${{ env.VAR_GIT_BRANCH }}" \
+                      -X ${{ env.CONFIG_PACKAGE }}.GitBranch=${{ env.VAR_GIT_BRANCH }} \
+                      -X ${{ env.CONFIG_PACKAGE }}.Version=${{ env.VERSION }}" \
             -trimpath \
             -o output/${{ env.BINARY_NAME }}-${{ matrix.suffix }}${{ matrix.ext }} \
             ./cmd/main.go
@@ -437,5 +438,10 @@ jobs:
             
             # 运行（Web 界面将在 http://localhost:12395 可用）
             ./share-linux-amd64
+            ```
+
+            ## 🔐 校验和
+
+            下载后可使用 `SHA256SUMS` 校验压缩包完整性。
           files: |
             release-files/*

@@ -141,6 +141,10 @@
           />
         </n-form-item>
 
+        <n-form-item label="启用计划" path="enable" :show-feedback="false">
+          <n-switch v-model:value="detailForm.enable" :disabled="submitting" />
+        </n-form-item>
+
         <n-form-item label="一键添加历史" path="oneClickAddHistory" :show-feedback="false">
           <div class="row">
             <n-switch v-model:value="detailForm.oneClickAddHistory" :disabled="submitting" />
@@ -335,12 +339,14 @@ const canShowDetailForm = computed(
 const detailFormRef = ref<FormInst | null>(null)
 const detailForm = reactive<
   CreateSubscribePlanRequest & {
+    enable: boolean
     refreshStrategy: NonNullable<CreateSubscribePlanRequest['refreshStrategy']>
   }
 >({
   name: '',
   parentPath: '',
   upUserId: '', // 注意：提交时使用 parsedSubscribeUserId
+  enable: true,
   cloudToken: undefined,
   onConflict: 'abandon',
   autoIngestInterval: 30,
@@ -615,6 +621,7 @@ const resetAll = () => {
   detailForm.name = ''
   detailForm.parentPath = ''
   detailForm.upUserId = ''
+  detailForm.enable = true
   detailForm.cloudToken = undefined
   detailForm.onConflict = 'abandon'
   detailForm.autoIngestInterval = 30

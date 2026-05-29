@@ -6,6 +6,7 @@ VAR_COMMIT ?= $(shell git rev-parse HEAD)
 VAR_BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 VAR_GIT_SUMMARY ?= $(shell git describe --tags --dirty --always)
 VAR_GIT_BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
+VAR_VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null || git describe --tags --dirty --always)
 
 # 输出配置
 OUTPUT_DIR=output
@@ -39,7 +40,8 @@ build-backend:
 		-ldflags="-X $(CONFIG_PACKAGE).Commit=$(VAR_COMMIT) \
 		          -X $(CONFIG_PACKAGE).BuildDate=$(VAR_BUILD_DATE) \
 		          -X $(CONFIG_PACKAGE).GitSummary=$(VAR_GIT_SUMMARY) \
-		          -X $(CONFIG_PACKAGE).GitBranch=$(VAR_GIT_BRANCH)" \
+		          -X $(CONFIG_PACKAGE).GitBranch=$(VAR_GIT_BRANCH) \
+		          -X $(CONFIG_PACKAGE).Version=$(VAR_VERSION)" \
 		-o $(OUTPUT_DIR)/$(BINARY_NAME) ./cmd/main.go
 	@echo "✅ Backend build completed: $(OUTPUT_DIR)/$(BINARY_NAME)"
 
@@ -53,42 +55,48 @@ build-multi-arch:
 		-ldflags="-s -w -X $(CONFIG_PACKAGE).Commit=$(VAR_COMMIT) \
 		          -X $(CONFIG_PACKAGE).BuildDate=$(VAR_BUILD_DATE) \
 		          -X $(CONFIG_PACKAGE).GitSummary=$(VAR_GIT_SUMMARY) \
-		          -X $(CONFIG_PACKAGE).GitBranch=$(VAR_GIT_BRANCH)" \
+		          -X $(CONFIG_PACKAGE).GitBranch=$(VAR_GIT_BRANCH) \
+		          -X $(CONFIG_PACKAGE).Version=$(VAR_VERSION)" \
 		-o $(OUTPUT_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/main.go
 	@echo "📦 Building for Linux ARM64..."
 	GOOS=linux GOARCH=arm64 go build \
 		-ldflags="-s -w -X $(CONFIG_PACKAGE).Commit=$(VAR_COMMIT) \
 		          -X $(CONFIG_PACKAGE).BuildDate=$(VAR_BUILD_DATE) \
 		          -X $(CONFIG_PACKAGE).GitSummary=$(VAR_GIT_SUMMARY) \
-		          -X $(CONFIG_PACKAGE).GitBranch=$(VAR_GIT_BRANCH)" \
+		          -X $(CONFIG_PACKAGE).GitBranch=$(VAR_GIT_BRANCH) \
+		          -X $(CONFIG_PACKAGE).Version=$(VAR_VERSION)" \
 		-o $(OUTPUT_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/main.go
 	@echo "📦 Building for Linux ARMv7a..."
 	GOOS=linux GOARCH=arm GOARM=7 go build \
 		-ldflags="-s -w -X $(CONFIG_PACKAGE).Commit=$(VAR_COMMIT) \
 		          -X $(CONFIG_PACKAGE).BuildDate=$(VAR_BUILD_DATE) \
 		          -X $(CONFIG_PACKAGE).GitSummary=$(VAR_GIT_SUMMARY) \
-		          -X $(CONFIG_PACKAGE).GitBranch=$(VAR_GIT_BRANCH)" \
+		          -X $(CONFIG_PACKAGE).GitBranch=$(VAR_GIT_BRANCH) \
+		          -X $(CONFIG_PACKAGE).Version=$(VAR_VERSION)" \
 		-o $(OUTPUT_DIR)/$(BINARY_NAME)-linux-armv7a ./cmd/main.go
 	@echo "📦 Building for Windows AMD64..."
 	GOOS=windows GOARCH=amd64 go build \
 		-ldflags="-s -w -X $(CONFIG_PACKAGE).Commit=$(VAR_COMMIT) \
 		          -X $(CONFIG_PACKAGE).BuildDate=$(VAR_BUILD_DATE) \
 		          -X $(CONFIG_PACKAGE).GitSummary=$(VAR_GIT_SUMMARY) \
-		          -X $(CONFIG_PACKAGE).GitBranch=$(VAR_GIT_BRANCH)" \
+		          -X $(CONFIG_PACKAGE).GitBranch=$(VAR_GIT_BRANCH) \
+		          -X $(CONFIG_PACKAGE).Version=$(VAR_VERSION)" \
 		-o $(OUTPUT_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/main.go
 	@echo "📦 Building for macOS AMD64..."
 	GOOS=darwin GOARCH=amd64 go build \
 		-ldflags="-s -w -X $(CONFIG_PACKAGE).Commit=$(VAR_COMMIT) \
 		          -X $(CONFIG_PACKAGE).BuildDate=$(VAR_BUILD_DATE) \
 		          -X $(CONFIG_PACKAGE).GitSummary=$(VAR_GIT_SUMMARY) \
-		          -X $(CONFIG_PACKAGE).GitBranch=$(VAR_GIT_BRANCH)" \
+		          -X $(CONFIG_PACKAGE).GitBranch=$(VAR_GIT_BRANCH) \
+		          -X $(CONFIG_PACKAGE).Version=$(VAR_VERSION)" \
 		-o $(OUTPUT_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/main.go
 	@echo "📦 Building for macOS ARM64..."
 	GOOS=darwin GOARCH=arm64 go build \
 		-ldflags="-s -w -X $(CONFIG_PACKAGE).Commit=$(VAR_COMMIT) \
 		          -X $(CONFIG_PACKAGE).BuildDate=$(VAR_BUILD_DATE) \
 		          -X $(CONFIG_PACKAGE).GitSummary=$(VAR_GIT_SUMMARY) \
-		          -X $(CONFIG_PACKAGE).GitBranch=$(VAR_GIT_BRANCH)" \
+		          -X $(CONFIG_PACKAGE).GitBranch=$(VAR_GIT_BRANCH) \
+		          -X $(CONFIG_PACKAGE).Version=$(VAR_VERSION)" \
 		-o $(OUTPUT_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/main.go
 	@echo "✅ Multi-architecture build completed!"
 	@ls -la $(OUTPUT_DIR)/
@@ -113,6 +121,7 @@ docker-build:
 		--build-arg VAR_BUILD_DATE=$(VAR_BUILD_DATE) \
 		--build-arg VAR_GIT_SUMMARY=$(VAR_GIT_SUMMARY) \
 		--build-arg VAR_GIT_BRANCH=$(VAR_GIT_BRANCH) \
+		--build-arg VAR_VERSION=$(VAR_VERSION) \
 		-t $(DOCKER_IMAGE) .
 	@echo "✅ Docker image built: $(DOCKER_IMAGE)"
 
@@ -182,6 +191,7 @@ info:
 	@echo "  Date:    $(VAR_BUILD_DATE)"
 	@echo "  Summary: $(VAR_GIT_SUMMARY)"
 	@echo "  Branch:  $(VAR_GIT_BRANCH)"
+	@echo "  Version: $(VAR_VERSION)"
 	@echo "  Output:  $(OUTPUT_DIR)/$(BINARY_NAME)"
 	@echo ""
 	@echo "🏗️ Supported Architectures:"

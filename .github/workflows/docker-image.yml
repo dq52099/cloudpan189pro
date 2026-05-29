@@ -118,6 +118,7 @@ jobs:
             VAR_BUILD_DATE=${{ env.VAR_BUILD_DATE }}
             VAR_GIT_SUMMARY=${{ env.VAR_GIT_SUMMARY }}
             VAR_GIT_BRANCH=${{ env.VAR_GIT_BRANCH }}
+            VAR_VERSION=${{ env.APP_VERSION }}
           tags: ${{ env.TAGS }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

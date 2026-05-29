@@ -36,6 +36,7 @@ export interface CreateSubscribePlanRequest {
   name: string // 计划名称
   parentPath: string // 挂载父目录路径，例如：/Movies
   upUserId: string // 上传用户ID
+  enable?: boolean // 是否立即启用计划
   cloudToken?: number // 云盘令牌ID（可选）
   onConflict?: AutoIngestOnConflict // 冲突时处理策略
   autoIngestInterval?: number // 自动挂载间隔，单位分钟（>=5）

@@ -56,6 +56,7 @@ ARG VAR_COMMIT
 ARG VAR_BUILD_DATE
 ARG VAR_GIT_SUMMARY
 ARG VAR_GIT_BRANCH
+ARG VAR_VERSION
 ARG OUTPUT_DIR=/app
 ARG BINARY_NAME=share
 
@@ -70,7 +71,8 @@ RUN BUILD_DATE="${VAR_BUILD_DATE}" && \
               -X ${CONFIG_PACKAGE}.Commit=${VAR_COMMIT} \
               -X ${CONFIG_PACKAGE}.BuildDate=${BUILD_DATE} \
               -X ${CONFIG_PACKAGE}.GitSummary=${VAR_GIT_SUMMARY} \
-              -X ${CONFIG_PACKAGE}.GitBranch=${VAR_GIT_BRANCH}" \
+              -X ${CONFIG_PACKAGE}.GitBranch=${VAR_GIT_BRANCH} \
+              -X ${CONFIG_PACKAGE}.Version=${VAR_VERSION}" \
     -o ${OUTPUT_DIR}/${BINARY_NAME} ./cmd/main.go
 
 # Stage 3: Final image

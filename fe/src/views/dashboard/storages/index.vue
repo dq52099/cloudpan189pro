@@ -334,7 +334,7 @@
                   size="tiny"
                   type="primary"
                   :disabled="isStorageActionBlocked(storage.mountPointId)"
-                  @click="handleEditAutoRefresh(storage)"
+                  @click.stop="handleEditAutoRefresh(storage)"
                 >
                   编辑
                 </n-button>
@@ -1488,7 +1488,8 @@ const isStorageDeleteBlocked = (id: number) =>
   isStorageDeleting(id) ||
   deleteDialogOpenIds.value.has(id)
 
-const isStorageActionBlocked = (id: number) => isStorageDeleteBlocked(id) || isStorageRefreshing(id)
+const isStorageActionBlocked = (id: number) =>
+  isBatchMode.value || isStorageDeleteBlocked(id) || isStorageRefreshing(id)
 
 const isCurrentStorageAction = (session: number) =>
   isPageMounted && session === storageActionSession

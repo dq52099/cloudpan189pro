@@ -14,7 +14,7 @@
         placeholder="请输入搜索关键词"
         clearable
         :disabled="searching"
-        @keyup.enter="doSearch"
+        @keyup.enter="handleNewSearch"
         class="keyword-input"
       />
       <n-button
@@ -22,7 +22,7 @@
         secondary
         :loading="searching"
         :disabled="searching"
-        @click="doSearch"
+        @click="handleNewSearch"
       >
         <template #icon>
           <n-icon :component="SearchOutline" />
@@ -302,6 +302,11 @@ const doSearch = () => {
 
       searching.value = false
     })
+}
+
+const handleNewSearch = () => {
+  currentPage.value = 1
+  doSearch()
 }
 
 const prevPage = () => {
