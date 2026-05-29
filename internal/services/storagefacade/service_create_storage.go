@@ -46,6 +46,7 @@ var (
 	errInvalidPath        = errors.New("路径不合法，需要 / 开头的路径")
 	errRootPathNotAllowed = errors.New("不允许挂载根路径")
 	errInvalidCloudToken  = errors.New("云盘令牌不合法")
+	errInvalidCreatorUser = errors.New("创建者用户 ID 必须大于 0")
 )
 
 // CreateStorage 在一个统一流程中创建 VirtualFile 顶层节点与 MountPoint 记录，返回根 VirtualFile ID。
@@ -57,6 +58,10 @@ func (s *service) CreateStorage(ctx context.Context, req *CreateStorageRequest) 
 
 	if !utils.CheckIsPath(req.LocalPath) {
 		return 0, errInvalidPath
+	}
+
+	if !req.IsAdmin && req.CreatorUserID <= 0 {
+		return 0, errInvalidCreatorUser
 	}
 
 	if err := s.validateCloudTokenAccess(ctx, req); err != nil {

@@ -356,6 +356,32 @@ func TestCreateStorageAllowExistingRejectsExistingMountPointOwnedByOtherUser(t *
 	}
 }
 
+func TestCreateStorageRejectsOwnerlessNonAdminRequest(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+	svc := NewService(tDB)
+
+	_, err := svc.CreateStorage(context.NewContext(stdctx.Background()), &CreateStorageRequest{
+		LocalPath:     "/ownerless",
+		OsType:        models.OsTypeFolder,
+		CloudToken:    0,
+		FileId:        "cloud-id",
+		Addition:      datatypes.JSONMap{},
+		AllowExisting: true,
+	})
+	if !errors.Is(err, errInvalidCreatorUser) {
+		t.Fatalf("expected invalid creator user error, got %v", err)
+	}
+
+	var mountPointCount int64
+	if err = tDB.db.Model(&models.MountPoint{}).Where("full_path = ?", "/ownerless").Count(&mountPointCount).Error; err != nil {
+		t.Fatalf("count mount points: %v", err)
+	}
+
+	if mountPointCount != 0 {
+		t.Fatalf("expected no mount point created, got %d", mountPointCount)
+	}
+}
+
 func TestCreateStorageAllowExistingAllowsAdminToReuseExistingMountPoint(t *testing.T) {
 	tDB := setupStorageFacadeTestDB(t)
 	existingFile := createStorageFacadeVirtualDir(t, tDB.db, 0, "admin-reuse")

@@ -779,6 +779,8 @@ func (s *service) MatchAndMount(sub *models.Subscription, result SearchResult, t
 		CloudToken:        0,
 		FileId:            shareInfo.ID,
 		EnableDeepRefresh: true,
+		CreatorUserID:     1,
+		IsAdmin:           true,
 	}
 
 	mountID, err := s.mountService.CreateStorage(bgCtx, storageReq)

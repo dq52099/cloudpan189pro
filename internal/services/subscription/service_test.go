@@ -550,6 +550,10 @@ func TestMatchAndMountSucceedsWhenMatchHistoryCreateFails(t *testing.T) {
 		t.Fatalf("expected share file id passed to mount request, got %q", mountService.requests[0].FileId)
 	}
 
+	if !mountService.requests[0].IsAdmin || mountService.requests[0].CreatorUserID != 1 {
+		t.Fatalf("expected subscription background mount to use system admin owner, got %+v", mountService.requests[0])
+	}
+
 	var historyCount int64
 	if err := db.Model(&models.MatchHistory{}).Where("subscription_id = ?", sub.ID).Count(&historyCount).Error; err != nil {
 		t.Fatalf("count match history: %v", err)
