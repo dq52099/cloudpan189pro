@@ -4,6 +4,7 @@ import (
 	stdctx "context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/taskengine"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	cloudtokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/filetasklog"
 	group2fileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/group2file"
 	mountPointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
@@ -60,17 +62,38 @@ var _ bootstrap.ServiceContext = (*batchDeleteTaskLogTestDB)(nil)
 
 type mockBatchModifyTokenMountPointService struct {
 	mountPointSvi.Service
-	mountPoints        map[int64]*models.MountPoint
-	queryErrByID       map[int64]error
-	batchDeleteErrByID map[int64]error
+	mountPoints            map[int64]*models.MountPoint
+	mountPointsByPrimaryID map[int64]*models.MountPoint
+	queryErrByID           map[int64]error
+	queryByPrimaryErrByID  map[int64]error
+	queriedFileIDs         []int64
+	queriedMountPointIDs   []int64
+	batchDeleteErrByID     map[int64]error
 }
 
 func (m *mockBatchModifyTokenMountPointService) Query(ctx appContext.Context, fileID int64) (*models.MountPoint, error) {
+	m.queriedFileIDs = append(m.queriedFileIDs, fileID)
+
 	if err := m.queryErrByID[fileID]; err != nil {
 		return nil, err
 	}
 
 	mountPoint, ok := m.mountPoints[fileID]
+	if !ok {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	return mountPoint, nil
+}
+
+func (m *mockBatchModifyTokenMountPointService) QueryByID(ctx appContext.Context, id int64) (*models.MountPoint, error) {
+	m.queriedMountPointIDs = append(m.queriedMountPointIDs, id)
+
+	if err := m.queryByPrimaryErrByID[id]; err != nil {
+		return nil, err
+	}
+
+	mountPoint, ok := m.mountPointsByPrimaryID[id]
 	if !ok {
 		return nil, gorm.ErrRecordNotFound
 	}
@@ -150,6 +173,22 @@ type mockBatchModifyTokenGroup2FileService struct {
 
 func (m *mockBatchModifyTokenGroup2FileService) GetBindFiles(ctx appContext.Context, groupID int64) ([]int64, error) {
 	return m.bindFileIDs, m.bindFilesErr
+}
+
+type mockBatchModifyTokenCloudTokenService struct {
+	cloudtokenSvi.Service
+	err     error
+	queries []int64
+}
+
+func (m *mockBatchModifyTokenCloudTokenService) QueryAccessible(ctx appContext.Context, id, userID int64, isAdmin bool) (*models.CloudToken, error) {
+	m.queries = append(m.queries, id)
+
+	if m.err != nil {
+		return nil, m.err
+	}
+
+	return &models.CloudToken{ID: id, UserID: userID}, nil
 }
 
 type failingFailedFileTaskLogService struct {
@@ -1063,7 +1102,7 @@ func TestHandleBatchModifyTokenRecordsPartialFailureWithoutRetry(t *testing.T) {
 		zap.NewNop(),
 		nil,
 		nil,
-		nil,
+		&mockBatchModifyTokenCloudTokenService{},
 		&mockBatchModifyTokenMountPointService{
 			mountPoints: map[int64]*models.MountPoint{
 				10: {ID: 101, FileId: 10, CreatorUserID: 1, Name: "ok"},
@@ -1116,6 +1155,189 @@ func TestHandleBatchModifyTokenRecordsPartialFailureWithoutRetry(t *testing.T) {
 	}
 }
 
+func TestHandleBatchModifyTokenUsesMountPointIDsWhenPresent(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := filetasklog.NewService(tDB)
+	userMountPointTokenService := &mockBatchModifyTokenUserMountPointTokenService{}
+	mountPointService := &mockBatchModifyTokenMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			10: {ID: 101, FileId: 10, CreatorUserID: 1, Name: "first"},
+		},
+		mountPointsByPrimaryID: map[int64]*models.MountPoint{
+			202: {ID: 202, FileId: 10, CreatorUserID: 1, Name: "selected"},
+		},
+	}
+
+	handler := NewHandler(
+		zap.NewNop(),
+		nil,
+		nil,
+		&mockBatchModifyTokenCloudTokenService{},
+		mountPointService,
+		logService,
+		nil,
+		nil,
+		nil,
+		userMountPointTokenService,
+	)
+	req := topic.FileBatchModifyTokenRequest{
+		IDs:           []int64{10},
+		MountPointIDs: []int64{202},
+		TokenID:       99,
+		UserID:        7,
+		IsAdmin:       true,
+	}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.HandleBatchModifyToken())
+	if err := processor.Process(stdctx.Background(), payload); err != nil {
+		t.Fatalf("process batch modify token: %v", err)
+	}
+
+	if got, want := mountPointService.queriedMountPointIDs, []int64{202}; !slices.Equal(got, want) {
+		t.Fatalf("expected primary-key queries %v, got %v", want, got)
+	}
+
+	if len(mountPointService.queriedFileIDs) != 0 {
+		t.Fatalf("expected no file-id fallback queries, got %v", mountPointService.queriedFileIDs)
+	}
+
+	if got, want := userMountPointTokenService.boundMountPointIDs, []int64{202}; !slices.Equal(got, want) {
+		t.Fatalf("expected selected mount point to be bound %v, got %v", want, got)
+	}
+
+	var log models.FileTaskLog
+	if err := tDB.db.First(&log).Error; err != nil {
+		t.Fatalf("query task log: %v", err)
+	}
+
+	if log.FileId != 10 {
+		t.Fatalf("expected task log to keep file id 10, got %d", log.FileId)
+	}
+}
+
+func TestHandleBatchModifyTokenKeepsLegacyFileIDPayloadCompatible(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := filetasklog.NewService(tDB)
+	userMountPointTokenService := &mockBatchModifyTokenUserMountPointTokenService{}
+	mountPointService := &mockBatchModifyTokenMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			10: {ID: 101, FileId: 10, CreatorUserID: 1, Name: "legacy"},
+		},
+		mountPointsByPrimaryID: map[int64]*models.MountPoint{
+			10: {ID: 999, FileId: 10, CreatorUserID: 1, Name: "wrong-mode"},
+		},
+	}
+
+	handler := NewHandler(
+		zap.NewNop(),
+		nil,
+		nil,
+		&mockBatchModifyTokenCloudTokenService{},
+		mountPointService,
+		logService,
+		nil,
+		nil,
+		nil,
+		userMountPointTokenService,
+	)
+	req := topic.FileBatchModifyTokenRequest{
+		IDs:     []int64{10},
+		TokenID: 99,
+		UserID:  7,
+		IsAdmin: true,
+	}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.HandleBatchModifyToken())
+	if err := processor.Process(stdctx.Background(), payload); err != nil {
+		t.Fatalf("process legacy batch modify token: %v", err)
+	}
+
+	if got, want := mountPointService.queriedFileIDs, []int64{10}; !slices.Equal(got, want) {
+		t.Fatalf("expected legacy file-id queries %v, got %v", want, got)
+	}
+
+	if len(mountPointService.queriedMountPointIDs) != 0 {
+		t.Fatalf("expected no primary-key queries for legacy payload, got %v", mountPointService.queriedMountPointIDs)
+	}
+
+	if got, want := userMountPointTokenService.boundMountPointIDs, []int64{101}; !slices.Equal(got, want) {
+		t.Fatalf("expected legacy mount point to be bound %v, got %v", want, got)
+	}
+}
+
+func TestHandleBatchModifyTokenRejectsInaccessibleTokenBeforeBinding(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := filetasklog.NewService(tDB)
+	tokenErr := errors.New("token not accessible")
+	cloudTokenService := &mockBatchModifyTokenCloudTokenService{err: tokenErr}
+	userMountPointTokenService := &mockBatchModifyTokenUserMountPointTokenService{}
+
+	handler := NewHandler(
+		zap.NewNop(),
+		nil,
+		nil,
+		cloudTokenService,
+		&mockBatchModifyTokenMountPointService{
+			mountPoints: map[int64]*models.MountPoint{
+				10: {ID: 101, FileId: 10, CreatorUserID: 7, Name: "owned"},
+			},
+			queryErrByID: map[int64]error{},
+		},
+		logService,
+		nil,
+		nil,
+		nil,
+		userMountPointTokenService,
+	)
+	req := topic.FileBatchModifyTokenRequest{
+		IDs:     []int64{10},
+		TokenID: 99,
+		UserID:  7,
+		IsAdmin: false,
+	}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.HandleBatchModifyToken())
+	if err := processor.Process(stdctx.Background(), payload); err != nil {
+		t.Fatalf("inaccessible token should fail task status without retrying whole queue item, got %v", err)
+	}
+
+	if got, want := cloudTokenService.queries, []int64{99}; !slices.Equal(got, want) {
+		t.Fatalf("expected token access query %v, got %v", want, got)
+	}
+
+	if len(userMountPointTokenService.boundMountPointIDs) != 0 {
+		t.Fatalf("expected no binding when token is inaccessible, got %v", userMountPointTokenService.boundMountPointIDs)
+	}
+
+	var log models.FileTaskLog
+	if err := tDB.db.First(&log).Error; err != nil {
+		t.Fatalf("query task log: %v", err)
+	}
+
+	if log.Status != models.StatusFailed {
+		t.Fatalf("expected task status failed, got %q", log.Status)
+	}
+
+	if !strings.Contains(log.Result, "令牌不可用") {
+		t.Fatalf("expected token unavailable result, got %q", log.Result)
+	}
+}
+
 func TestHandleBatchModifyTokenReturnsFinalFailedStatusError(t *testing.T) {
 	tDB := setupBatchDeleteTaskLogTestDB(t)
 	statusErr := errors.New("failed status write failed")
@@ -1132,7 +1354,7 @@ func TestHandleBatchModifyTokenReturnsFinalFailedStatusError(t *testing.T) {
 		zap.NewNop(),
 		nil,
 		nil,
-		nil,
+		&mockBatchModifyTokenCloudTokenService{},
 		&mockBatchModifyTokenMountPointService{
 			mountPoints: map[int64]*models.MountPoint{
 				20: {ID: 202, FileId: 20, CreatorUserID: 1, Name: "fail"},
@@ -1178,7 +1400,7 @@ func TestHandleBatchModifyTokenJoinsBindFilesAndFailedStatusErrors(t *testing.T)
 		zap.NewNop(),
 		nil,
 		nil,
-		nil,
+		&mockBatchModifyTokenCloudTokenService{},
 		&mockBatchModifyTokenMountPointService{},
 		logService,
 		nil,

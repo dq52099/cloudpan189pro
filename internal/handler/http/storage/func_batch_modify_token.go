@@ -136,11 +136,12 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 		}
 
 		taskReq := &topic.FileBatchModifyTokenRequest{
-			IDs:         fileIDs,
-			TokenID:     req.TokenID,
-			UserID:      userID,
-			IsAdmin:     isAdmin,
-			UserGroupID: userGroupID,
+			IDs:           fileIDs,
+			MountPointIDs: requestIDs,
+			TokenID:       req.TokenID,
+			UserID:        userID,
+			IsAdmin:       isAdmin,
+			UserGroupID:   userGroupID,
 		}
 
 		body, err := json.Marshal(taskReq)

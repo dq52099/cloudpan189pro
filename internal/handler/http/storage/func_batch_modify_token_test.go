@@ -135,6 +135,10 @@ func TestBatchModifyTokenDeduplicatesIDsBeforePermissionCheckAndQueueing(t *test
 		t.Fatalf("expected queued task IDs %v, got %v", want, got)
 	}
 
+	if got, want := taskReq.MountPointIDs, []int64{101, 202}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected queued mount point IDs %v, got %v", want, got)
+	}
+
 	if taskReq.TokenID != 0 || taskReq.UserID != 100 || taskReq.IsAdmin {
 		t.Fatalf("unexpected queued task: %+v", taskReq)
 	}
@@ -218,6 +222,10 @@ func TestBatchModifyTokenAllowsDuplicateIDsBeyondRawLimit(t *testing.T) {
 
 	if got, want := taskReq.IDs, []int64{11}; !int64SlicesEqual(got, want) {
 		t.Fatalf("expected queued IDs %v, got %v", want, got)
+	}
+
+	if got, want := taskReq.MountPointIDs, []int64{101}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected queued mount point IDs %v, got %v", want, got)
 	}
 }
 

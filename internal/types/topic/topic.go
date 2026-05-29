@@ -78,11 +78,12 @@ func (r FileDeleteRequest) Topic() taskengine.Topic {
 }
 
 type FileBatchModifyTokenRequest struct {
-	IDs         []int64 `json:"ids"`
-	TokenID     int64   `json:"tokenId"`
-	UserID      int64   `json:"userId"`
-	IsAdmin     bool    `json:"isAdmin"`
-	UserGroupID int64   `json:"userGroupId"`
+	IDs           []int64 `json:"ids"`
+	MountPointIDs []int64 `json:"mountPointIds,omitempty"`
+	TokenID       int64   `json:"tokenId"`
+	UserID        int64   `json:"userId"`
+	IsAdmin       bool    `json:"isAdmin"`
+	UserGroupID   int64   `json:"userGroupId"`
 }
 
 func (r FileBatchModifyTokenRequest) Topic() taskengine.Topic {
