@@ -227,7 +227,13 @@
 
             <!-- 非批量模式才显示操作按钮 -->
             <div class="storage-actions" v-if="!isBatchMode">
-              <n-button size="small" quaternary circle @click="handleModifyToken(storage)">
+              <n-button
+                size="small"
+                quaternary
+                circle
+                :disabled="isStorageActionBlocked(storage.mountPointId)"
+                @click="handleModifyToken(storage)"
+              >
                 <template #icon>
                   <n-icon :size="16">
                     <KeyOutline />
@@ -324,7 +330,12 @@
                   </n-tag>
                   <n-tag v-else type="default" size="small">未启用</n-tag>
                 </div>
-                <n-button size="tiny" type="primary" @click="handleEditAutoRefresh(storage)">
+                <n-button
+                  size="tiny"
+                  type="primary"
+                  :disabled="isStorageActionBlocked(storage.mountPointId)"
+                  @click="handleEditAutoRefresh(storage)"
+                >
                   编辑
                 </n-button>
               </div>
@@ -1789,6 +1800,10 @@ const closeAutoRefreshModal = (force = false) => {
 
 // 处理编辑自动刷新
 const handleEditAutoRefresh = (storage: StorageInfo) => {
+  if (!isPageMounted || isStorageActionBlocked(storage.mountPointId)) {
+    return
+  }
+
   autoRefreshModalSession++
   currentEditStorage.value = storage
   autoRefreshForm.value = {
@@ -1805,7 +1820,12 @@ const handleEditAutoRefresh = (storage: StorageInfo) => {
 
 // 处理自动刷新配置确认
 const handleAutoRefreshConfirm = () => {
-  if (!currentEditStorage.value || autoRefreshSubmitting.value) return
+  if (
+    !currentEditStorage.value ||
+    autoRefreshSubmitting.value ||
+    isStorageActionBlocked(currentEditStorage.value.mountPointId)
+  )
+    return
 
   const session = autoRefreshModalSession
   const storageId = currentEditStorage.value.mountPointId
@@ -2016,6 +2036,10 @@ const handleBatchModifyToken = () => {
 
 // 处理修改令牌
 const handleModifyToken = (storage: StorageInfo) => {
+  if (!isPageMounted || isStorageActionBlocked(storage.mountPointId)) {
+    return
+  }
+
   const requestId = ++cloudTokenRequestId
   const session = ++modifyTokenModalSession
 
@@ -2041,7 +2065,8 @@ const handleModifyTokenConfirm = () => {
     !currentModifyStorage.value ||
     modifyTokenSubmitting.value ||
     selectedTokenId.value === null ||
-    selectedTokenId.value === undefined
+    selectedTokenId.value === undefined ||
+    isStorageActionBlocked(currentModifyStorage.value.mountPointId)
   )
     return
 
