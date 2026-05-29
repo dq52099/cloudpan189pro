@@ -201,10 +201,7 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 
 						existingFile, err := h.virtualFileService.QueryByPath(ctx.GetContext(), fullPath)
 						if err == nil && existingFile != nil {
-							scanReq := &topic.FileScanFileRequest{
-								FileId: existingFile.ID,
-								Deep:   true,
-							}
+							scanReq := newAutoIngestFileScanRequest(plan, existingFile.ID)
 
 							scanBody, marshalErr := json.Marshal(scanReq)
 							if marshalErr != nil {
@@ -253,10 +250,7 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 		logger.Info("开始并发入库", zap.Int("total", len(pendingItems)), zap.Int("concurrent", concurrentCount))
 
 		enqueueScanTask := func(fullPath string, fileID int64) error {
-			taskReq := &topic.FileScanFileRequest{
-				FileId: fileID,
-				Deep:   true,
-			}
+			taskReq := newAutoIngestFileScanRequest(plan, fileID)
 
 			body, err := json.Marshal(taskReq)
 			if err != nil {
@@ -456,10 +450,7 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 							break
 						}
 
-						taskReq := &topic.FileScanFileRequest{
-							FileId: id,
-							Deep:   true,
-						}
+						taskReq := newAutoIngestFileScanRequest(plan, id)
 
 						body, err := json.Marshal(taskReq)
 						if err != nil {
@@ -558,6 +549,19 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 
 		return nil
 	}
+}
+
+func newAutoIngestFileScanRequest(plan *models.AutoIngestPlan, fileID int64) *topic.FileScanFileRequest {
+	req := &topic.FileScanFileRequest{
+		FileId: fileID,
+		Deep:   true,
+	}
+
+	if plan != nil && plan.UserID > 0 {
+		req.ExpectedUserID = plan.UserID
+	}
+
+	return req
 }
 
 func validateRefreshSubscribeOwnerSnapshot(logger *zap.Logger, req *topic.AutoIngestRefreshSubscribeRequest, plan *models.AutoIngestPlan) bool {

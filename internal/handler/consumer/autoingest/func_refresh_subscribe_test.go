@@ -46,6 +46,7 @@ type mockRefreshSubscribeTaskEngine struct {
 	mu        sync.Mutex
 	err       error
 	pushCount int
+	payloads  [][]byte
 }
 
 func (m *mockRefreshSubscribeTaskEngine) PushMessage(ctx stdctx.Context, taskTopic taskengine.Topic, payload []byte) error {
@@ -53,6 +54,7 @@ func (m *mockRefreshSubscribeTaskEngine) PushMessage(ctx stdctx.Context, taskTop
 	defer m.mu.Unlock()
 
 	m.pushCount++
+	m.payloads = append(m.payloads, append([]byte(nil), payload...))
 
 	return m.err
 }
@@ -62,6 +64,25 @@ func (m *mockRefreshSubscribeTaskEngine) Count() int {
 	defer m.mu.Unlock()
 
 	return m.pushCount
+}
+
+func (m *mockRefreshSubscribeTaskEngine) ScanRequests(t *testing.T) []topic.FileScanFileRequest {
+	t.Helper()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	result := make([]topic.FileScanFileRequest, 0, len(m.payloads))
+	for _, payload := range m.payloads {
+		var req topic.FileScanFileRequest
+		if err := json.Unmarshal(payload, &req); err != nil {
+			t.Fatalf("unmarshal scan request: %v", err)
+		}
+
+		result = append(result, req)
+	}
+
+	return result
 }
 
 func TestIsDuplicateEntryErrorRecognizesDriverErrors(t *testing.T) {
@@ -602,6 +623,15 @@ func TestRefreshSubscribeAppliesRetryResetBeforeScanning(t *testing.T) {
 	if storageService.Count() != 1 {
 		t.Fatalf("expected item after reset to be created, got %d", storageService.Count())
 	}
+
+	scanReqs := taskEngine.ScanRequests(t)
+	if len(scanReqs) != 1 {
+		t.Fatalf("expected one scan request after reset, got %d", len(scanReqs))
+	}
+
+	if scanReqs[0].ExpectedUserID != planService.plan.UserID {
+		t.Fatalf("expected scan request owner snapshot %d, got %d", planService.plan.UserID, scanReqs[0].ExpectedUserID)
+	}
 }
 
 func TestRefreshSubscribeDoesNotAdvanceOffsetWhenScanEnqueueFails(t *testing.T) {
@@ -726,6 +756,15 @@ func TestRefreshSubscribeDuplicateCreateScansExistingAndAdvancesOffset(t *testin
 
 	if taskEngine.Count() != 1 {
 		t.Fatalf("expected existing file scan enqueued once, got %d", taskEngine.Count())
+	}
+
+	scanReqs := taskEngine.ScanRequests(t)
+	if len(scanReqs) != 1 {
+		t.Fatalf("expected one scan request, got %d", len(scanReqs))
+	}
+
+	if scanReqs[0].FileId != 55 || scanReqs[0].ExpectedUserID != planService.plan.UserID {
+		t.Fatalf("unexpected existing scan request: %+v", scanReqs[0])
 	}
 
 	if storageService.Count() != 1 {

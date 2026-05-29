@@ -58,6 +58,7 @@ func setupUserTestDB(t *testing.T) *userTestDB {
 
 	if err := db.AutoMigrate(
 		&models.User{},
+		&models.UserGroup{},
 		&models.CloudToken{},
 		&models.MountPoint{},
 		&models.VirtualFile{},
@@ -84,6 +85,20 @@ func createUser(t *testing.T, db *gorm.DB, username string, groupID int64) *mode
 	}
 
 	return user
+}
+
+func createUserGroup(t *testing.T, db *gorm.DB, id int64, name string) *models.UserGroup {
+	t.Helper()
+
+	group := &models.UserGroup{
+		ID:   id,
+		Name: name,
+	}
+	if err := db.Create(group).Error; err != nil {
+		t.Fatalf("create user group: %v", err)
+	}
+
+	return group
 }
 
 func TestAddRejectsInvalidRequest(t *testing.T) {
@@ -195,8 +210,9 @@ func TestBindGroupUpdatesOnlyRequestedUser(t *testing.T) {
 
 	target := createUser(t, tDB.db, "target", 1)
 	other := createUser(t, tDB.db, "other", 2)
+	group := createUserGroup(t, tDB.db, 3, "target-group")
 
-	if err := svc.BindGroup(ctx, &BindGroupRequest{UserID: target.ID, GroupID: 3}); err != nil {
+	if err := svc.BindGroup(ctx, &BindGroupRequest{UserID: target.ID, GroupID: group.ID}); err != nil {
 		t.Fatalf("bind group: %v", err)
 	}
 
@@ -219,6 +235,28 @@ func TestBindGroupUpdatesOnlyRequestedUser(t *testing.T) {
 	}
 }
 
+func TestBindGroupReturnsNotFoundWhenGroupMissing(t *testing.T) {
+	tDB := setupUserTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	user := createUser(t, tDB.db, "target", 1)
+
+	err := svc.BindGroup(ctx, &BindGroupRequest{UserID: user.ID, GroupID: 99999})
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected record not found, got %v", err)
+	}
+
+	var updated models.User
+	if err := tDB.db.First(&updated, user.ID).Error; err != nil {
+		t.Fatalf("query user: %v", err)
+	}
+
+	if updated.GroupID != 1 {
+		t.Fatalf("expected group id unchanged at 1, got %d", updated.GroupID)
+	}
+}
+
 func TestBindGroupReturnsNotFoundWhenUserMissing(t *testing.T) {
 	tDB := setupUserTestDB(t)
 	svc := NewService(tDB)
@@ -235,6 +273,7 @@ func TestBindGroupNoOpExistingUserSucceeds(t *testing.T) {
 	svc := NewService(tDB)
 	ctx := context.NewContext(stdctx.Background())
 
+	createUserGroup(t, tDB.db, 3, "target-group")
 	user := createUser(t, tDB.db, "target", 3)
 
 	if err := svc.BindGroup(ctx, &BindGroupRequest{UserID: user.ID, GroupID: user.GroupID}); err != nil {
