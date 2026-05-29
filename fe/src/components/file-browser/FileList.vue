@@ -44,8 +44,15 @@ const emit = defineEmits<{
 }>()
 
 // 处理选中事件
+const downloadingRowKeySet = computed(() => new Set(props.downloadingRowKeys ?? []))
+const isRowDownloading = (rowId: number) => downloadingRowKeySet.value.has(rowId)
+
 const handleCheck = (keys: Array<string | number>) => {
-  emit('update:checkedRowKeys', keys as number[])
+  const selectableKeys = keys.filter(
+    (key): key is number => typeof key === 'number' && !isRowDownloading(key)
+  )
+
+  emit('update:checkedRowKeys', selectableKeys)
 }
 
 // 处理行点击（点击行进入目录）
@@ -82,6 +89,7 @@ const columns = computed<DataTableColumns<FileChild>>(() => [
     type: 'selection', // 开启复选框列
     width: 40,
     fixed: 'left',
+    disabled: (row) => isRowDownloading(row.id),
   },
   {
     title: '名称',
@@ -135,7 +143,7 @@ const columns = computed<DataTableColumns<FileChild>>(() => [
     align: 'center',
     fixed: 'right',
     render(row) {
-      const isDownloading = props.downloadingRowKeys?.includes(row.id) ?? false
+      const isDownloading = isRowDownloading(row.id)
 
       if (row.isDir) {
         return h(

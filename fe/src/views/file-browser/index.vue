@@ -25,7 +25,12 @@
           type="error"
           text
           :loading="batchDeleteSubmitting"
-          :disabled="loading || batchDeleteSubmitting || batchDeleteDialogOpen"
+          :disabled="
+            loading ||
+            batchDeleteSubmitting ||
+            batchDeleteDialogOpen ||
+            selectedDownloadingRowCount > 0
+          "
           @click="handleBatchDelete"
         >
           <template #icon>
@@ -153,6 +158,11 @@ let fileOpenRequestId = 0
 
 // 计算属性
 const canGoBack = computed(() => breadcrumbs.value.length > 0)
+const selectedDownloadingRowCount = computed(() => {
+  const downloadingIds = new Set(downloadingRowKeys.value)
+
+  return selectedRowKeys.value.filter((id) => downloadingIds.has(id)).length
+})
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -366,6 +376,7 @@ const handleBatchDelete = () => {
     loading.value ||
     batchDeleteSubmitting.value ||
     batchDeleteDialogOpen.value ||
+    selectedDownloadingRowCount.value > 0 ||
     !isComponentMounted
   ) {
     return
@@ -449,6 +460,7 @@ const downloadFile = (file: FileChild) => {
   const fileId = file.id
   const fileName = file.name
   const navigationRequestId = fileOpenRequestId
+  selectedRowKeys.value = selectedRowKeys.value.filter((id) => id !== fileId)
   downloadingRowKeys.value = [...downloadingRowKeys.value, fileId]
 
   createDownloadUrl({ fileId: file.id })
