@@ -20,7 +20,7 @@ type configUpdateRequest struct {
 	BaseURL             *string                   `json:"baseURL" binding:"omitempty" example:"http://localhost:12395"`
 	IncludedSuffixes    *[]string                 `json:"includedSuffixes" binding:"omitempty" example:"['.mp4','.mkv','.avi']"`
 	AutoRebuildEnable   *bool                     `json:"autoRebuildEnable" binding:"omitempty" example:"false"`
-	AutoRebuildInterval *int                      `json:"autoRebuildInterval" binding:"omitempty" example:"24"`
+	AutoRebuildInterval *int                      `json:"autoRebuildInterval" binding:"omitempty,min=1" example:"24"`
 	AutoRebuildCron     *string                   `json:"autoRebuildCron" binding:"omitempty" example:"0 2 * * *"`
 }
 

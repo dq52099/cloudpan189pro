@@ -321,6 +321,49 @@ func TestUpdateUserPersistsFalseAdminValue(t *testing.T) {
 	}
 }
 
+func TestUpdateUserRejectsInvalidUserID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "missing", body: `{"mountPath":"/new","isAdmin":false}`},
+		{name: "zero", body: `{"userID":0,"mountPath":"/new","isAdmin":false}`},
+		{name: "negative", body: `{"userID":-1,"mountPath":"/new","isAdmin":false}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := setupTelegramHandlerTestDB(t)
+			router := newTelegramTestRouter(db)
+			req := httptest.NewRequestWithContext(
+				stdctx.Background(),
+				http.MethodPost,
+				"/users/update",
+				strings.NewReader(tt.body),
+			)
+			req.Header.Set("Content-Type", "application/json")
+
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, req)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+			}
+
+			var count int64
+			if err := db.Model(&models.TelegramUser{}).Count(&count).Error; err != nil {
+				t.Fatalf("count telegram users: %v", err)
+			}
+
+			if count != 0 {
+				t.Fatalf("expected invalid update not to create user, got count %d", count)
+			}
+		})
+	}
+}
+
 func TestUpdateUserReturnsNotFoundWhenMissing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

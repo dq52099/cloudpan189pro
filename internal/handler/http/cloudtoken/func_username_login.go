@@ -12,7 +12,7 @@ import (
 
 type (
 	usernameLoginRequest = struct {
-		ID       int64  `json:"id" binding:"omitempty" example:"1"`          // 云盘令牌ID，可选
+		ID       int64  `json:"id" binding:"omitempty,min=1" example:"1"`    // 云盘令牌ID，可选
 		Username string `json:"username"  binding:"omitempty" example:"用户名"` // 用户名，添加时必填
 		Password string `json:"password"  binding:"omitempty" example:"密码"`  // 密码，添加时必填
 		Name     string `json:"name" binding:"omitempty" example:"云盘令牌"`     // 令牌名称，可选

@@ -75,6 +75,46 @@ func TestConfigUpdatePassesAutoRebuildCron(t *testing.T) {
 	}
 }
 
+func TestConfigUpdateRejectsInvalidAutoRebuildIntervalBeforeUpdate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "zero", body: `{"autoRebuildInterval":0}`},
+		{name: "negative", body: `{"autoRebuildInterval":-1}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := &mockConfigUpdateMediaConfigService{}
+			router := gin.New()
+			wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+			router.POST("/config/update", wrapper.Wrap(NewHandler(service, nil, nil, nil, nil, nil, nil).ConfigUpdate()))
+
+			req := httptest.NewRequestWithContext(
+				stdctx.Background(),
+				http.MethodPost,
+				"/config/update",
+				strings.NewReader(tt.body),
+			)
+			req.Header.Set("Content-Type", "application/json")
+
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, req)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+			}
+
+			if len(service.fields) != 0 {
+				t.Fatalf("expected invalid interval not to update config, got %#v", service.fields)
+			}
+		})
+	}
+}
+
 func TestConfigUpdateAcceptsEmptyBodyAsNoop(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

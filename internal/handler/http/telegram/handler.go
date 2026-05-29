@@ -374,7 +374,7 @@ func (h *Handler) GetUserList() httpcontext.HandlerFunc {
 }
 
 type UpdateUserReq struct {
-	UserID    int64  `json:"userID"`
+	UserID    int64  `json:"userID" binding:"required,min=1"`
 	MountPath string `json:"mountPath"`
 	IsAdmin   bool   `json:"isAdmin"`
 }

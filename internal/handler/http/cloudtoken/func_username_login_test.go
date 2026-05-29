@@ -22,6 +22,7 @@ type mockUsernameLoginCloudTokenService struct {
 	cloudtokenSvi.Service
 	token               *models.CloudToken
 	queryErr            error
+	queryCalled         bool
 	usernameLoginErr    error
 	usernameLoginCalled bool
 }
@@ -31,6 +32,8 @@ func (m *mockUsernameLoginCloudTokenService) QueryAccessible(
 	id, userID int64,
 	isAdmin bool,
 ) (*models.CloudToken, error) {
+	m.queryCalled = true
+
 	return m.token, m.queryErr
 }
 
@@ -89,6 +92,28 @@ func TestUsernameLoginReturnsNotFoundWhenStoredCredentialsTokenMissing(t *testin
 
 	if cloudTokenService.usernameLoginCalled {
 		t.Fatal("expected username login service not to be called after missing token pre-query")
+	}
+}
+
+func TestUsernameLoginRejectsInvalidIDBeforeServiceCall(t *testing.T) {
+	cloudTokenService := &mockUsernameLoginCloudTokenService{}
+
+	recorder := performUsernameLoginRequest(
+		t,
+		cloudTokenService,
+		`{"id":-1,"username":"user","password":"pass"}`,
+	)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if cloudTokenService.queryCalled {
+		t.Fatal("expected invalid id not to query existing token")
+	}
+
+	if cloudTokenService.usernameLoginCalled {
+		t.Fatal("expected invalid id not to call username login service")
 	}
 }
 
