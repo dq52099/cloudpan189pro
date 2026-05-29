@@ -243,7 +243,7 @@ const handleDeleteUser = (userId: number) => {
       if (!usersPageAlive) return
 
       console.error('删除用户失败:', error)
-      message.error('删除用户失败')
+      message.error(getErrorMessage(error, '删除用户失败'))
     })
     .finally(() => {
       if (usersPageAlive) {

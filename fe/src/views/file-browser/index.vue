@@ -342,7 +342,7 @@ const loadPath = (path: string) => {
       if (!isCurrentFileOpenRequest(requestId)) return
 
       console.error('加载文件失败:', error)
-      message.error('加载文件失败')
+      message.error(getErrorMessage(error, '加载文件失败'))
     })
     .finally(() => {
       if (isCurrentFileOpenRequest(requestId)) {

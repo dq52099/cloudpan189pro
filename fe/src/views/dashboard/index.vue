@@ -194,6 +194,7 @@ import {
 } from '@vicons/ionicons5'
 import { useSystemStore, useUserStore } from '@/stores'
 import { getResourceSummary, type ResourceSummary } from '@/api/resource'
+import { getErrorMessage } from '@/utils/api'
 
 const userStore = useUserStore()
 const systemStore = useSystemStore()
@@ -335,7 +336,7 @@ const loadSummary = async () => {
     }
 
     console.error('加载资源统计失败', err)
-    message.error('加载资源统计失败')
+    message.error(getErrorMessage(err, '加载资源统计失败'))
   } finally {
     if (isDashboardMounted && requestId === summaryRequestId) {
       loadingSummary.value = false

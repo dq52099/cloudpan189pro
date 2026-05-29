@@ -72,6 +72,7 @@ import {
 } from 'naive-ui'
 import { modifyOwnPassword } from '@/api/user'
 import type { ModifyOwnPasswordRequest } from '@/api/user'
+import { getErrorMessage } from '@/utils/api'
 import { useAuthStore } from '@/stores'
 import { useRouter } from 'vue-router'
 
@@ -241,7 +242,7 @@ const handleSubmit = async () => {
     }
 
     console.error('修改密码失败:', error)
-    message.error('密码修改失败')
+    message.error(getErrorMessage(error, '密码修改失败'))
   } finally {
     if (isCurrentOperation(currentOperation)) {
       loading.value = false
