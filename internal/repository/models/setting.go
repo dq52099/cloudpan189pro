@@ -11,7 +11,7 @@ import (
 )
 
 type Setting struct {
-	ID          int64           `gorm:"primaryKey" json:"id"`
+	ID          int64           `gorm:"primaryKey;autoIncrement:false" json:"id"`
 	Title       string          `gorm:"column:title;type:varchar(255);not null" json:"title"`
 	EnableAuth  bool            `gorm:"column:enable_auth;type:boolean;default:true" json:"enableAuth"` // 是否启用鉴权 1 启用 0 不启用
 	SaltKey     string          `gorm:"column:salt_key;type:varchar(255);not null" json:"-"`

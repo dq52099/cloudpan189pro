@@ -400,13 +400,14 @@ func migrateSettings(src, dst *gorm.DB, userCount int64) error {
 		return nil
 	}
 
-	for i := range settings {
-		if userCount > 0 {
-			settings[i].Initialized = true
-		}
+	setting := firstSingletonRow(settings, func(item models.Setting) int64 { return item.ID })
+	setting.ID = 1
+
+	if userCount > 0 {
+		setting.Initialized = true
 	}
 
-	if err := upsertRows(dst, settings); err != nil {
+	if err := upsertRows(dst, []models.Setting{setting}); err != nil {
 		return err
 	}
 
@@ -418,7 +419,23 @@ func migrateMediaFiles(src, dst *gorm.DB) error {
 }
 
 func migrateMediaConfig(src, dst *gorm.DB) error {
-	return migrateRows[models.MediaConfig](src, dst, new(models.MediaConfig).TableName())
+	var rows []models.MediaConfig
+	if err := findSourceRows(src, &rows, new(models.MediaConfig).TableName()); err != nil {
+		return err
+	}
+
+	if len(rows) == 0 {
+		return nil
+	}
+
+	row := firstSingletonRow(rows, func(item models.MediaConfig) int64 { return item.ID })
+	row.ID = 1
+
+	if err := upsertRows(dst, []models.MediaConfig{row}); err != nil {
+		return err
+	}
+
+	return resetPostgresSequence(dst, new(models.MediaConfig).TableName())
 }
 
 func migrateLoginLogs(src, dst *gorm.DB) error {
@@ -591,7 +608,23 @@ func dedupeUserMountPointTokenRows(rows []models.UserMountPointToken) []models.U
 }
 
 func migrateTelegramSettings(src, dst *gorm.DB) error {
-	return migrateRows[models.TelegramSetting](src, dst, new(models.TelegramSetting).TableName())
+	var rows []models.TelegramSetting
+	if err := findSourceRows(src, &rows, new(models.TelegramSetting).TableName()); err != nil {
+		return err
+	}
+
+	if len(rows) == 0 {
+		return nil
+	}
+
+	row := firstSingletonRow(rows, func(item models.TelegramSetting) int64 { return item.ID })
+	row.ID = 1
+
+	if err := upsertRows(dst, []models.TelegramSetting{row}); err != nil {
+		return err
+	}
+
+	return resetPostgresSequence(dst, new(models.TelegramSetting).TableName())
 }
 
 func migrateTelegramUsers(src, dst *gorm.DB) error {
@@ -670,6 +703,21 @@ func migrateRows[T any](src, dst *gorm.DB, tableName string) error {
 	}
 
 	return resetPostgresSequence(dst, tableName)
+}
+
+func firstSingletonRow[T any](rows []T, idFn func(T) int64) T {
+	first := rows[0]
+	firstID := idFn(first)
+
+	for _, row := range rows[1:] {
+		id := idFn(row)
+		if id < firstID {
+			first = row
+			firstID = id
+		}
+	}
+
+	return first
 }
 
 func findSourceRows[T any](src *gorm.DB, rows *[]T, tableName string) error {

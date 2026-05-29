@@ -24,7 +24,7 @@ func (m *MediaFile) TableName() string {
 }
 
 type MediaConfig struct {
-	ID     int64 `gorm:"primaryKey" json:"id"`
+	ID     int64 `gorm:"primaryKey;autoIncrement:false" json:"id"`
 	Enable bool  `gorm:"column:enable;type:boolean;not null;default:false" json:"enable"`
 	// StoragePath StoragePath 落盘根路径
 	StoragePath string `gorm:"column:storage_path;type:varchar(255);not null" json:"storagePath"`

@@ -21,6 +21,10 @@ func (s SystemSetting) TableName() string {
 }
 
 func migrateDB(db *gorm.DB) (err error) {
+	if err := normalizeSingletonTables(db); err != nil {
+		return err
+	}
+
 	if err := dedupeGroup2Files(db); err != nil {
 		return err
 	}
@@ -51,6 +55,58 @@ func migrateDB(db *gorm.DB) (err error) {
 		new(models.DailyHotHistory),
 		new(SystemSetting),
 	)
+}
+
+func normalizeSingletonTables(db *gorm.DB) error {
+	normalizers := []func(*gorm.DB) error{
+		normalizeSettingSingleton,
+		normalizeMediaConfigSingleton,
+		normalizeTelegramSettingSingleton,
+	}
+
+	for _, normalize := range normalizers {
+		if err := normalize(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func normalizeSettingSingleton(db *gorm.DB) error {
+	return normalizeSingletonTable(db, new(models.Setting).TableName())
+}
+
+func normalizeMediaConfigSingleton(db *gorm.DB) error {
+	return normalizeSingletonTable(db, new(models.MediaConfig).TableName())
+}
+
+func normalizeTelegramSettingSingleton(db *gorm.DB) error {
+	return normalizeSingletonTable(db, new(models.TelegramSetting).TableName())
+}
+
+func normalizeSingletonTable(db *gorm.DB, tableName string) error {
+	if !db.Migrator().HasTable(tableName) {
+		return nil
+	}
+
+	var ids []int64
+	if err := db.Table(tableName).Order("id ASC").Pluck("id", &ids).Error; err != nil {
+		return err
+	}
+
+	if len(ids) == 0 {
+		return nil
+	}
+
+	keepID := ids[0]
+	if keepID != 1 {
+		if err := db.Table(tableName).Where("id = ?", keepID).Update("id", int64(1)).Error; err != nil {
+			return err
+		}
+	}
+
+	return db.Exec("DELETE FROM "+tableName+" WHERE id <> ?", int64(1)).Error
 }
 
 type duplicatedGroup2FileKey struct {
@@ -123,15 +179,8 @@ var (
 )
 
 func initSetting(db *gorm.DB) error {
-	var count int64
-
-	db.Model(new(models.Setting)).Count(&count)
-
-	if count > 0 {
-		return nil
-	}
-
 	setting := &models.Setting{
+		ID:         1,
 		Title:      defaultWebTitle,
 		EnableAuth: true,
 		SaltKey:    utils.GenerateString(16),
@@ -140,5 +189,5 @@ func initSetting(db *gorm.DB) error {
 		},
 	}
 
-	return db.Create(setting).Error
+	return db.FirstOrCreate(setting, "id = ?", int64(1)).Error
 }

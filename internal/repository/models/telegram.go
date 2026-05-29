@@ -8,7 +8,7 @@ import (
 )
 
 type TelegramSetting struct {
-	ID                int64     `gorm:"primaryKey" json:"id"`
+	ID                int64     `gorm:"primaryKey;autoIncrement:false" json:"id"`
 	BotTokenEncrypted string    `gorm:"column:bot_token_encrypted;type:varchar(512);not null" json:"-"`
 	BotToken          string    `gorm:"-" json:"botToken"`
 	ProxyURL          string    `gorm:"column:proxy_url;type:varchar(255);default:''" json:"proxyURL"`

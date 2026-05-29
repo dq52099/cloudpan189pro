@@ -79,6 +79,7 @@ func createMediaConfig(t *testing.T, db *gorm.DB) *models.MediaConfig {
 	t.Helper()
 
 	cfg := &models.MediaConfig{
+		ID:                  1,
 		Enable:              false,
 		StoragePath:         "/tmp/media-old",
 		AutoClean:           false,
@@ -181,6 +182,38 @@ func TestInitDefaultsAutoRebuildCron(t *testing.T) {
 
 	if shared.MediaConfig.AutoRebuildCron != "0 2 * * *" {
 		t.Fatalf("expected default auto rebuild cron, got %q", shared.MediaConfig.AutoRebuildCron)
+	}
+}
+
+func TestInitRejectsExistingSingletonConfig(t *testing.T) {
+	restoreSharedMediaConfig(t)
+
+	tDB := setupMediaConfigTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	if err := svc.Init(ctx, &InitRequest{
+		StoragePath: "/tmp/media",
+		BaseURL:     "http://media.example.test",
+	}); err != nil {
+		t.Fatalf("init media config first time: %v", err)
+	}
+
+	err := svc.Init(ctx, &InitRequest{
+		StoragePath: "/tmp/media-new",
+		BaseURL:     "http://new.example.test",
+	})
+	if !errors.Is(err, alreadyInitializedErr) {
+		t.Fatalf("expected already initialized error, got %v", err)
+	}
+
+	var count int64
+	if countErr := tDB.db.Model(&models.MediaConfig{}).Count(&count).Error; countErr != nil {
+		t.Fatalf("count media configs: %v", countErr)
+	}
+
+	if count != 1 {
+		t.Fatalf("expected exactly one media config, got %d", count)
 	}
 }
 

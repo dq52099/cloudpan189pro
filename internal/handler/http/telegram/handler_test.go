@@ -120,6 +120,7 @@ func TestUpdateSettingPersistsFalseBooleans(t *testing.T) {
 	db := setupTelegramHandlerTestDB(t)
 
 	setting := &models.TelegramSetting{
+		ID:                1,
 		BotTokenEncrypted: "old-token",
 		ProxyURL:          "http://old-proxy",
 		ProxyType:         "http",
@@ -171,12 +172,60 @@ func TestUpdateSettingPersistsFalseBooleans(t *testing.T) {
 	}
 }
 
+func TestUpdateSettingCreatesSingletonWithExplicitFalseValues(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupTelegramHandlerTestDB(t)
+	router := newTelegramTestRouter(db)
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/settings/update",
+		strings.NewReader(`{"botToken":"token","proxyURL":"","proxyType":"","apiURL":"https://api.telegram.org","chatID":"","defaultMountPath":"","enableNotify":false,"enable":false}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var settings []models.TelegramSetting
+	if err := db.Find(&settings).Error; err != nil {
+		t.Fatalf("query telegram settings: %v", err)
+	}
+
+	if len(settings) != 1 {
+		t.Fatalf("expected one telegram setting, got %d: %#v", len(settings), settings)
+	}
+
+	setting := settings[0]
+	if setting.ID != 1 {
+		t.Fatalf("expected singleton id 1, got %d", setting.ID)
+	}
+
+	if setting.EnableNotify {
+		t.Fatal("expected enable_notify to be false on create")
+	}
+
+	if setting.Enable {
+		t.Fatal("expected enable to be false on create")
+	}
+
+	if setting.DefaultMountPath != "" {
+		t.Fatalf("expected empty default mount path to be persisted, got %q", setting.DefaultMountPath)
+	}
+}
+
 func TestUpdateSettingPartialUpdatePreservesExistingValues(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	db := setupTelegramHandlerTestDB(t)
 
 	setting := &models.TelegramSetting{
+		ID:                1,
 		BotTokenEncrypted: "old-token",
 		ProxyURL:          "http://old-proxy",
 		ProxyType:         "http",
@@ -307,6 +356,7 @@ func TestCheckTelegramSettingUpdateResultAllowsExistingNoop(t *testing.T) {
 	handler := NewHandler(db, nil, zap.NewNop())
 
 	setting := &models.TelegramSetting{
+		ID:                1,
 		BotTokenEncrypted: "token",
 		DefaultMountPath:  "/转存",
 		APIURL:            "https://api.telegram.org",

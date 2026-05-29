@@ -148,7 +148,7 @@ func (h *Handler) UpdateSetting() httpcontext.HandlerFunc {
 
 		var setting models.TelegramSetting
 
-		result := h.db.First(&setting)
+		result := h.db.First(&setting, "id = ?", int64(1))
 		if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			c.Fail(invalidParams(result.Error))
 
@@ -156,6 +156,7 @@ func (h *Handler) UpdateSetting() httpcontext.HandlerFunc {
 		}
 
 		if setting.ID == 0 {
+			setting.ID = 1
 			setting.APIURL = "https://api.telegram.org"
 			setting.DefaultMountPath = "/转存"
 			setting.EnableNotify = true
@@ -165,8 +166,18 @@ func (h *Handler) UpdateSetting() httpcontext.HandlerFunc {
 
 		updates := telegramSettingUpdateMap(&req)
 
-		if setting.ID == 0 {
-			result = h.db.Create(&setting)
+		if result.Error != nil && errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			result = h.db.Model(new(models.TelegramSetting)).Create(map[string]interface{}{
+				"id":                  setting.ID,
+				"bot_token_encrypted": setting.BotTokenEncrypted,
+				"proxy_url":           setting.ProxyURL,
+				"proxy_type":          setting.ProxyType,
+				"api_url":             setting.APIURL,
+				"chat_id":             setting.ChatID,
+				"default_mount_path":  setting.DefaultMountPath,
+				"enable_notify":       setting.EnableNotify,
+				"enable":              setting.Enable,
+			})
 		} else {
 			if len(updates) == 0 {
 				result = &gorm.DB{RowsAffected: 0}
@@ -178,6 +189,12 @@ func (h *Handler) UpdateSetting() httpcontext.HandlerFunc {
 		}
 
 		if result.Error != nil {
+			if errors.Is(result.Error, gorm.ErrDuplicatedKey) || h.ensureTelegramSettingExists(1) == nil {
+				c.Fail(invalidParams(errors.New("telegram 配置已经初始化过了")))
+
+				return
+			}
+
 			c.Fail(invalidParams(result.Error))
 
 			return

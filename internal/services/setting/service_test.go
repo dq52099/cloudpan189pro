@@ -84,6 +84,7 @@ func createSetting(t *testing.T, db *gorm.DB) *models.Setting {
 	t.Helper()
 
 	setting := &models.Setting{
+		ID:          1,
 		Title:       "old title",
 		EnableAuth:  true,
 		SaltKey:     "old-salt",
@@ -272,6 +273,7 @@ func TestInitSystemRefreshesSharedSetting(t *testing.T) {
 	ctx := context.NewContext(stdctx.Background())
 
 	if err := tDB.db.Create(&models.Setting{
+		ID:         1,
 		Title:      "not initialized",
 		EnableAuth: true,
 		SaltKey:    "init-salt",

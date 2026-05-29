@@ -36,6 +36,58 @@ func (legacyGroup2File) TableName() string {
 	return new(models.Group2File).TableName()
 }
 
+type legacySingletonSetting struct {
+	ID          int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	Title       string    `gorm:"column:title;type:varchar(255);not null"`
+	EnableAuth  bool      `gorm:"column:enable_auth;type:boolean;default:true"`
+	SaltKey     string    `gorm:"column:salt_key;type:varchar(255);not null"`
+	BaseURL     string    `gorm:"column:base_url;type:varchar(255);not null;default:''"`
+	Initialized bool      `gorm:"column:initialized;type:boolean;default:false"`
+	CreatedAt   time.Time `gorm:"column:created_at;autoCreateTime;type:timestamp"`
+	UpdatedAt   time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp"`
+}
+
+func (legacySingletonSetting) TableName() string {
+	return new(models.Setting).TableName()
+}
+
+type legacySingletonMediaConfig struct {
+	ID                 int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	Enable             bool      `gorm:"column:enable;type:boolean;not null;default:false"`
+	StoragePath        string    `gorm:"column:storage_path;type:varchar(255);not null"`
+	AutoClean          bool      `gorm:"column:auto_clean;type:boolean;not null;default:false"`
+	ConflictPolicy     string    `gorm:"column:conflict_policy;type:varchar(20);not null;default:'skip'"`
+	IncludedSuffixes   string    `gorm:"column:included_suffixes;type:json;not null"`
+	BaseURL            string    `gorm:"column:base_url;type:varchar(255);not null"`
+	AutoRebuildEnable  bool      `gorm:"column:auto_rebuild_enable;type:boolean;not null;default:false"`
+	AutoRebuildCron    string    `gorm:"column:auto_rebuild_cron;type:varchar(50);not null;default:'0 2 * * *'"`
+	AutoRebuildInteral int       `gorm:"column:auto_rebuild_interval;type:int;not null;default:24"`
+	CreatedAt          time.Time `gorm:"column:created_at;autoCreateTime;type:timestamp"`
+	UpdatedAt          time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp"`
+}
+
+func (legacySingletonMediaConfig) TableName() string {
+	return new(models.MediaConfig).TableName()
+}
+
+type legacySingletonTelegramSetting struct {
+	ID                int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	BotTokenEncrypted string    `gorm:"column:bot_token_encrypted;type:varchar(512);not null"`
+	ProxyURL          string    `gorm:"column:proxy_url;type:varchar(255);default:''"`
+	ProxyType         string    `gorm:"column:proxy_type;type:varchar(20);default:''"`
+	APIURL            string    `gorm:"column:api_url;type:varchar(255);default:'https://api.telegram.org'"`
+	ChatID            string    `gorm:"column:chat_id;type:varchar(64);default:''"`
+	DefaultMountPath  string    `gorm:"column:default_mount_path;type:varchar(255);default:'/转存'"`
+	EnableNotify      bool      `gorm:"column:enable_notify;type:boolean;default:true"`
+	Enable            bool      `gorm:"column:enable;type:boolean;default:false"`
+	CreatedAt         time.Time `gorm:"column:created_at;autoCreateTime;type:timestamp"`
+	UpdatedAt         time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp"`
+}
+
+func (legacySingletonTelegramSetting) TableName() string {
+	return new(models.TelegramSetting).TableName()
+}
+
 type legacyUserGroupNaturalKey struct {
 	ID        int64     `gorm:"column:id;primaryKey;autoIncrement"`
 	Name      string    `gorm:"column:name;type:varchar(255);not null"`
@@ -355,12 +407,97 @@ func TestMigrateSettingsMarksInitializedWhenUsersExist(t *testing.T) {
 	}
 
 	var got models.Setting
-	if err := dst.First(&got, 7).Error; err != nil {
+	if err := dst.First(&got, 1).Error; err != nil {
 		t.Fatalf("query migrated setting: %v", err)
 	}
 
-	if !got.Initialized {
+	if got.ID != 1 || !got.Initialized {
 		t.Fatalf("expected setting to be initialized after migrating existing users: %+v", got)
+	}
+}
+
+func TestMigrateSingletonTablesKeepsFirstSourceRowAsIDOne(t *testing.T) {
+	src := openMigrationTestDB(t)
+	dst := openMigrationTestDB(t)
+
+	if err := src.AutoMigrate(&legacySingletonSetting{}, &legacySingletonMediaConfig{}, &legacySingletonTelegramSetting{}); err != nil {
+		t.Fatalf("migrate source singleton schemas: %v", err)
+	}
+
+	if err := dst.AutoMigrate(&models.Setting{}, &models.MediaConfig{}, &models.TelegramSetting{}); err != nil {
+		t.Fatalf("migrate destination singleton schemas: %v", err)
+	}
+
+	settings := []legacySingletonSetting{
+		{ID: 2, Title: "second", SaltKey: "salt-2", BaseURL: "http://second.example.test"},
+		{ID: 7, Title: "seventh", SaltKey: "salt-7", BaseURL: "http://seventh.example.test"},
+	}
+	if err := src.Create(&settings).Error; err != nil {
+		t.Fatalf("seed legacy settings: %v", err)
+	}
+
+	mediaConfigs := []legacySingletonMediaConfig{
+		{ID: 3, StoragePath: "/tmp/media-first", ConflictPolicy: "skip", IncludedSuffixes: "[]", BaseURL: "http://media-first.example.test", AutoRebuildCron: "0 2 * * *"},
+		{ID: 4, StoragePath: "/tmp/media-second", ConflictPolicy: "replace", IncludedSuffixes: "[]", BaseURL: "http://media-second.example.test", AutoRebuildCron: "0 4 * * *"},
+	}
+	if err := src.Create(&mediaConfigs).Error; err != nil {
+		t.Fatalf("seed legacy media configs: %v", err)
+	}
+
+	telegramSettings := []legacySingletonTelegramSetting{
+		{ID: 5, BotTokenEncrypted: "token-first", APIURL: "https://api.telegram.org", DefaultMountPath: "/first"},
+		{ID: 6, BotTokenEncrypted: "token-second", APIURL: "https://api.example.test", DefaultMountPath: "/second"},
+	}
+	if err := src.Create(&telegramSettings).Error; err != nil {
+		t.Fatalf("seed legacy telegram settings: %v", err)
+	}
+
+	if err := migrateSettings(src, dst, 0); err != nil {
+		t.Fatalf("migrate settings: %v", err)
+	}
+
+	if err := migrateMediaConfig(src, dst); err != nil {
+		t.Fatalf("migrate media config: %v", err)
+	}
+
+	if err := migrateTelegramSettings(src, dst); err != nil {
+		t.Fatalf("migrate telegram settings: %v", err)
+	}
+
+	var setting models.Setting
+	if err := dst.First(&setting, 1).Error; err != nil {
+		t.Fatalf("query migrated setting: %v", err)
+	}
+
+	if setting.Title != "second" || setting.SaltKey != "salt-2" {
+		t.Fatalf("expected first setting row normalized to id 1, got %+v", setting)
+	}
+
+	var settingCount int64
+	if err := dst.Model(&models.Setting{}).Count(&settingCount).Error; err != nil {
+		t.Fatalf("count settings: %v", err)
+	}
+
+	if settingCount != 1 {
+		t.Fatalf("expected one migrated setting, got %d", settingCount)
+	}
+
+	var mediaConfig models.MediaConfig
+	if err := dst.First(&mediaConfig, 1).Error; err != nil {
+		t.Fatalf("query migrated media config: %v", err)
+	}
+
+	if mediaConfig.StoragePath != "/tmp/media-first" || mediaConfig.BaseURL != "http://media-first.example.test" {
+		t.Fatalf("expected first media config normalized to id 1, got %+v", mediaConfig)
+	}
+
+	var telegramSetting models.TelegramSetting
+	if err := dst.First(&telegramSetting, 1).Error; err != nil {
+		t.Fatalf("query migrated telegram setting: %v", err)
+	}
+
+	if telegramSetting.BotTokenEncrypted != "token-first" || telegramSetting.DefaultMountPath != "/first" {
+		t.Fatalf("expected first telegram setting normalized to id 1, got %+v", telegramSetting)
 	}
 }
 
@@ -613,6 +750,78 @@ func TestMigrateDBDedupesGroup2FilesBeforeUniqueIndex(t *testing.T) {
 	}).Error
 	if err == nil {
 		t.Fatal("expected unique index to reject duplicate group file binding after migrate")
+	}
+}
+
+func TestMigrateDBNormalizesSingletonTablesBeforeAutoMigrate(t *testing.T) {
+	db := openMigrationTestDB(t)
+
+	if err := db.AutoMigrate(&legacySingletonSetting{}, &legacySingletonMediaConfig{}, &legacySingletonTelegramSetting{}); err != nil {
+		t.Fatalf("migrate legacy singleton schemas: %v", err)
+	}
+
+	settings := []legacySingletonSetting{
+		{ID: 2, Title: "first", SaltKey: "salt-first", BaseURL: "http://first.example.test"},
+		{ID: 9, Title: "second", SaltKey: "salt-second", BaseURL: "http://second.example.test"},
+	}
+	if err := db.Create(&settings).Error; err != nil {
+		t.Fatalf("seed legacy settings: %v", err)
+	}
+
+	mediaConfigs := []legacySingletonMediaConfig{
+		{ID: 3, StoragePath: "/tmp/media-first", ConflictPolicy: "skip", IncludedSuffixes: "[]", BaseURL: "http://media-first.example.test", AutoRebuildCron: "0 2 * * *"},
+		{ID: 7, StoragePath: "/tmp/media-second", ConflictPolicy: "replace", IncludedSuffixes: "[]", BaseURL: "http://media-second.example.test", AutoRebuildCron: "0 4 * * *"},
+	}
+	if err := db.Create(&mediaConfigs).Error; err != nil {
+		t.Fatalf("seed legacy media configs: %v", err)
+	}
+
+	telegramSettings := []legacySingletonTelegramSetting{
+		{ID: 4, BotTokenEncrypted: "token-first", APIURL: "https://api.telegram.org", DefaultMountPath: "/first"},
+		{ID: 8, BotTokenEncrypted: "token-second", APIURL: "https://api.example.test", DefaultMountPath: "/second"},
+	}
+	if err := db.Create(&telegramSettings).Error; err != nil {
+		t.Fatalf("seed legacy telegram settings: %v", err)
+	}
+
+	if err := migrateDB(db); err != nil {
+		t.Fatalf("migrate db: %v", err)
+	}
+
+	var setting models.Setting
+	if err := db.First(&setting, 1).Error; err != nil {
+		t.Fatalf("query normalized setting: %v", err)
+	}
+
+	if setting.Title != "first" || setting.SaltKey != "salt-first" {
+		t.Fatalf("expected first setting kept as singleton, got %+v", setting)
+	}
+
+	var settingCount int64
+	if err := db.Model(&models.Setting{}).Count(&settingCount).Error; err != nil {
+		t.Fatalf("count normalized settings: %v", err)
+	}
+
+	if settingCount != 1 {
+		t.Fatalf("expected one normalized setting, got %d", settingCount)
+	}
+
+	var mediaConfig models.MediaConfig
+	if err := db.First(&mediaConfig, 1).Error; err != nil {
+		t.Fatalf("query normalized media config: %v", err)
+	}
+
+	if mediaConfig.StoragePath != "/tmp/media-first" {
+		t.Fatalf("expected first media config kept as singleton, got %+v", mediaConfig)
+	}
+
+	var telegramSetting models.TelegramSetting
+	if err := db.First(&telegramSetting, 1).Error; err != nil {
+		t.Fatalf("query normalized telegram setting: %v", err)
+	}
+
+	if telegramSetting.BotTokenEncrypted != "token-first" || telegramSetting.DefaultMountPath != "/first" {
+		t.Fatalf("expected first telegram setting kept as singleton, got %+v", telegramSetting)
 	}
 }
 
