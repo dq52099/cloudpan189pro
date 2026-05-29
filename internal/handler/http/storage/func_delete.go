@@ -63,7 +63,9 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 		}
 
 		taskReq := &topic.FileBatchDeleteRequest{
-			IDs: []int64{mountPointInfo.FileId},
+			IDs:              []int64{mountPointInfo.FileId},
+			ExpectedUserID:   userID,
+			TriggeredByAdmin: isAdmin,
 		}
 
 		body, err := json.Marshal(taskReq)

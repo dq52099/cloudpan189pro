@@ -18,6 +18,22 @@ import (
 	"gorm.io/gorm"
 )
 
+var errDeleteTaskOwnerChanged = errors.New("删除任务归属已变化")
+
+type deleteTaskAccess struct {
+	userID           int64
+	triggeredByAdmin bool
+	enforced         bool
+}
+
+func newDeleteTaskAccess(userID int64, triggeredByAdmin bool) deleteTaskAccess {
+	return deleteTaskAccess{
+		userID:           userID,
+		triggeredByAdmin: triggeredByAdmin,
+		enforced:         userID > 0 || triggeredByAdmin,
+	}
+}
+
 // HandleBatchDelete 后台排队删除处理逻辑
 func (h *handler) HandleBatchDelete() taskcontext.HandlerFunc {
 	return func(ctx *taskcontext.Context) (retErr error) {
@@ -37,6 +53,8 @@ func (h *handler) HandleBatchDelete() taskcontext.HandlerFunc {
 		}
 
 		h.logger.Info("消费者开始处理批量删除", zap.Int("count", len(requestIDs)))
+
+		access := newDeleteTaskAccess(req.ExpectedUserID, req.TriggeredByAdmin)
 
 		// 获取父任务tracker（用于存储批量删除任务汇总进度）
 		var parentTracker *filetasklog.Tracker
@@ -126,11 +144,14 @@ func (h *handler) HandleBatchDelete() taskcontext.HandlerFunc {
 					continue
 				}
 
-				deleteReq := &mountpointSvi.BatchDeleteRequest{
-					FileIds:       []int64{id},
-					CreatorUserID: 0,
-					IsAdmin:       true,
+				if err := h.ensureDeleteTaskMountPointOwner(ctx.GetContext(), id, access); err != nil {
+					h.logger.Warn("删除任务归属校验失败，跳过", zap.Int64("id", id), zap.Error(err))
+					recordFailed()
+
+					continue
 				}
+
+				deleteReq := access.mountPointBatchDeleteRequest(id)
 				if err := h.mountPointService.BatchDelete(ctx.GetContext(), deleteReq); err != nil {
 					if !errors.Is(err, gorm.ErrRecordNotFound) {
 						h.logger.Error("后台删除挂载点记录失败", zap.Int64("id", id), zap.Error(err))
@@ -155,7 +176,19 @@ func (h *handler) HandleBatchDelete() taskcontext.HandlerFunc {
 			// 记录父ID，用于稍后递归清理
 			parentId := fileInfo.ParentId
 
-			if err := h.deleteVirtualFileTree(ctx.GetContext(), fileInfo); err != nil {
+			topID := fileInfo.TopId
+			if topID <= 0 {
+				topID = fileInfo.ID
+			}
+
+			if err := h.ensureDeleteTaskMountPointOwner(ctx.GetContext(), topID, access); err != nil {
+				h.logger.Warn("删除任务归属校验失败，跳过", zap.Int64("id", id), zap.Int64("top_id", topID), zap.Error(err))
+				recordFailed()
+
+				continue
+			}
+
+			if err := h.deleteVirtualFileTree(ctx.GetContext(), fileInfo, access); err != nil {
 				h.logger.Error("删除虚拟文件失败", zap.Int64("fid", targetFileID), zap.Error(err))
 				recordFailed()
 			} else {
@@ -198,6 +231,8 @@ func (h *handler) HandleDelete() taskcontext.HandlerFunc {
 		}
 
 		h.logger.Info("消费者开始处理单个文件删除", zap.Int64("file_id", targetFileID))
+
+		access := newDeleteTaskAccess(req.ExpectedUserID, req.TriggeredByAdmin)
 
 		// 获取父任务tracker（用于批量任务汇总进度）
 		var parentTracker *filetasklog.Tracker
@@ -260,11 +295,13 @@ func (h *handler) HandleDelete() taskcontext.HandlerFunc {
 				return fileErr
 			}
 
-			deleteReq := &mountpointSvi.BatchDeleteRequest{
-				FileIds:       []int64{targetFileID},
-				CreatorUserID: 0,
-				IsAdmin:       true,
+			if err := h.ensureDeleteTaskMountPointOwner(ctx.GetContext(), targetFileID, access); err != nil {
+				h.logger.Warn("删除任务归属校验失败，跳过", zap.Int64("id", targetFileID), zap.Error(err))
+
+				return err
 			}
+
+			deleteReq := access.mountPointBatchDeleteRequest(targetFileID)
 			if err := h.mountPointService.BatchDelete(ctx.GetContext(), deleteReq); err != nil {
 				if !errors.Is(err, gorm.ErrRecordNotFound) {
 					h.logger.Error("后台删除挂载点记录失败", zap.Int64("id", targetFileID), zap.Error(err))
@@ -291,7 +328,18 @@ func (h *handler) HandleDelete() taskcontext.HandlerFunc {
 		// 记录父ID，用于稍后递归清理
 		parentId := fileInfo.ParentId
 
-		if err := h.deleteVirtualFileTree(ctx.GetContext(), fileInfo); err != nil {
+		topID := fileInfo.TopId
+		if topID <= 0 {
+			topID = fileInfo.ID
+		}
+
+		if err := h.ensureDeleteTaskMountPointOwner(ctx.GetContext(), topID, access); err != nil {
+			h.logger.Warn("删除任务归属校验失败，跳过", zap.Int64("id", targetFileID), zap.Int64("top_id", topID), zap.Error(err))
+
+			return err
+		}
+
+		if err := h.deleteVirtualFileTree(ctx.GetContext(), fileInfo, access); err != nil {
 			h.logger.Error("删除虚拟文件失败", zap.Int64("fid", targetFileID), zap.Error(err))
 
 			return err
@@ -318,15 +366,11 @@ func (h *handler) HandleDelete() taskcontext.HandlerFunc {
 	}
 }
 
-func (h *handler) deleteVirtualFileTree(ctx appContext.Context, fileInfo *models.VirtualFile) error {
+func (h *handler) deleteVirtualFileTree(ctx appContext.Context, fileInfo *models.VirtualFile, access deleteTaskAccess) error {
 	targetFileID := fileInfo.ID
 
 	if fileInfo.IsTop || fileInfo.TopId == fileInfo.ID {
-		deleteReq := &mountpointSvi.BatchDeleteRequest{
-			FileIds:       []int64{targetFileID},
-			CreatorUserID: 0,
-			IsAdmin:       true,
-		}
+		deleteReq := access.mountPointBatchDeleteRequest(targetFileID)
 		if err := h.mountPointService.BatchDelete(ctx, deleteReq); err != nil {
 			if !errors.Is(err, gorm.ErrRecordNotFound) {
 				h.logger.Error("后台删除挂载点记录失败", zap.Int64("id", targetFileID), zap.Error(err))
@@ -357,6 +401,41 @@ func (h *handler) deleteVirtualFileTree(ctx appContext.Context, fileInfo *models
 		h.logger.Error("递归删除虚拟文件失败", zap.Int64("fid", targetFileID), zap.Error(err))
 
 		return err
+	}
+
+	return nil
+}
+
+func (a deleteTaskAccess) requiresOwnerCheck() bool {
+	return a.enforced && !a.triggeredByAdmin
+}
+
+func (a deleteTaskAccess) mountPointBatchDeleteRequest(fileID int64) *mountpointSvi.BatchDeleteRequest {
+	req := &mountpointSvi.BatchDeleteRequest{
+		FileIds: []int64{fileID},
+		IsAdmin: true,
+	}
+
+	if a.requiresOwnerCheck() {
+		req.CreatorUserID = a.userID
+		req.IsAdmin = false
+	}
+
+	return req
+}
+
+func (h *handler) ensureDeleteTaskMountPointOwner(ctx appContext.Context, fileID int64, access deleteTaskAccess) error {
+	if !access.requiresOwnerCheck() {
+		return nil
+	}
+
+	mountPoint, err := h.mountPointService.Query(ctx, fileID)
+	if err != nil {
+		return err
+	}
+
+	if mountPoint.CreatorUserID != access.userID {
+		return errDeleteTaskOwnerChanged
 	}
 
 	return nil

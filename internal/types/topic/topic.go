@@ -60,7 +60,9 @@ func (r MediaRebuildStrmFileByMountPointRequest) Topic() taskengine.Topic {
 
 // 2. 定义请求结构体
 type FileBatchDeleteRequest struct {
-	IDs []int64 `json:"ids"`
+	IDs              []int64 `json:"ids"`
+	ExpectedUserID   int64   `json:"expectedUserId,omitempty"`
+	TriggeredByAdmin bool    `json:"triggeredByAdmin,omitempty"`
 }
 
 // 3. 实现接口
@@ -70,7 +72,9 @@ func (r FileBatchDeleteRequest) Topic() taskengine.Topic {
 
 // 单个文件删除请求
 type FileDeleteRequest struct {
-	FileId int64 `json:"fileId"`
+	FileId           int64 `json:"fileId"`
+	ExpectedUserID   int64 `json:"expectedUserId,omitempty"`
+	TriggeredByAdmin bool  `json:"triggeredByAdmin,omitempty"`
 }
 
 func (r FileDeleteRequest) Topic() taskengine.Topic {

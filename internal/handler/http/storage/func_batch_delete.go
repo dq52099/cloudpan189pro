@@ -114,7 +114,9 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 
 		for _, mountPoint := range validMountPoints {
 			taskReq := &topic.FileBatchDeleteRequest{
-				IDs: []int64{mountPoint.FileId},
+				IDs:              []int64{mountPoint.FileId},
+				ExpectedUserID:   userID,
+				TriggeredByAdmin: isAdmin,
 			}
 
 			body, err := json.Marshal(taskReq)

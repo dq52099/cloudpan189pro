@@ -158,6 +158,10 @@ func TestBatchDeleteDeduplicatesIDsBeforeQueueing(t *testing.T) {
 	if got, want := taskReq.IDs, []int64{11, 22}; !int64SlicesEqual(got, want) {
 		t.Fatalf("expected queued IDs %v, got %v", want, got)
 	}
+
+	if taskReq.ExpectedUserID != 100 || taskReq.TriggeredByAdmin {
+		t.Fatalf("expected queued user snapshot user=100 admin=false, got %+v", taskReq)
+	}
 }
 
 func TestBatchDeleteAllowsDuplicateIDsBeyondRawLimit(t *testing.T) {

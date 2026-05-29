@@ -169,6 +169,10 @@ func TestBatchDeleteDeduplicatesIDsBeforeQueueingTasks(t *testing.T) {
 		t.Fatalf("expected first queued task IDs %v, got %v", want, got)
 	}
 
+	if firstTask.ExpectedUserID != 100 || firstTask.TriggeredByAdmin {
+		t.Fatalf("expected queued user snapshot user=100 admin=false, got %+v", firstTask)
+	}
+
 	var response struct {
 		Code int                 `json:"code"`
 		Data batchDeleteResponse `json:"data"`

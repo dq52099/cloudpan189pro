@@ -89,7 +89,11 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 		}
 
 		// 构造消息队列请求
-		task := &topic.FileBatchDeleteRequest{IDs: requestIDs}
+		task := &topic.FileBatchDeleteRequest{
+			IDs:              requestIDs,
+			ExpectedUserID:   userID,
+			TriggeredByAdmin: isAdmin,
+		}
 
 		body, err := json.Marshal(task)
 		if err != nil {

@@ -69,6 +69,7 @@ type mockBatchModifyTokenMountPointService struct {
 	queriedFileIDs         []int64
 	queriedMountPointIDs   []int64
 	batchDeleteErrByID     map[int64]error
+	batchDeleteRequests    []*mountPointSvi.BatchDeleteRequest
 }
 
 func (m *mockBatchModifyTokenMountPointService) Query(ctx appContext.Context, fileID int64) (*models.MountPoint, error) {
@@ -102,6 +103,13 @@ func (m *mockBatchModifyTokenMountPointService) QueryByID(ctx appContext.Context
 }
 
 func (m *mockBatchModifyTokenMountPointService) BatchDelete(ctx appContext.Context, req *mountPointSvi.BatchDeleteRequest) error {
+	copiedReq := &mountPointSvi.BatchDeleteRequest{
+		FileIds:       append([]int64(nil), req.FileIds...),
+		CreatorUserID: req.CreatorUserID,
+		IsAdmin:       req.IsAdmin,
+	}
+	m.batchDeleteRequests = append(m.batchDeleteRequests, copiedReq)
+
 	for _, id := range req.FileIds {
 		if err := m.batchDeleteErrByID[id]; err != nil {
 			return err
@@ -723,6 +731,124 @@ func TestHandleBatchDeleteRecordsMountPointDeleteFailure(t *testing.T) {
 
 	if log.Completed != 0 || log.Total != 1 || log.Failed != 1 {
 		t.Fatalf("expected completed=0 total=1 failed=1, got completed=%d total=%d failed=%d", log.Completed, log.Total, log.Failed)
+	}
+}
+
+func TestHandleBatchDeleteSkipsWhenMountPointOwnerChanged(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := filetasklog.NewService(tDB)
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		filesByID: map[int64]*models.VirtualFile{
+			10: {ID: 10, TopId: 10, IsTop: true, Name: "top"},
+		},
+		childrenByParent: map[int64][]*models.VirtualFile{},
+		deleteErrByID:    map[int64]error{},
+	}
+	mountPointService := &mockBatchModifyTokenMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			10: {ID: 1001, FileId: 10, CreatorUserID: 200, Name: "changed-owner"},
+		},
+	}
+
+	handler := NewHandler(
+		zap.NewNop(),
+		virtualFileService,
+		nil,
+		nil,
+		mountPointService,
+		logService,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	req := topic.FileBatchDeleteRequest{
+		IDs:            []int64{10},
+		ExpectedUserID: 100,
+	}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.HandleBatchDelete())
+	if err := processor.Process(stdctx.Background(), payload); err != nil {
+		t.Fatalf("owner change should be recorded as item failure without retrying whole batch: %v", err)
+	}
+
+	if len(mountPointService.batchDeleteRequests) != 0 {
+		t.Fatalf("expected no mount point delete after owner changed, got %+v", mountPointService.batchDeleteRequests)
+	}
+
+	if len(virtualFileService.deletedIDs) != 0 || len(virtualFileService.batchDeletedIDs) != 0 {
+		t.Fatalf("expected no virtual file deletion after owner changed, got deleted=%v batch=%v", virtualFileService.deletedIDs, virtualFileService.batchDeletedIDs)
+	}
+
+	var log models.FileTaskLog
+	if err := tDB.db.First(&log).Error; err != nil {
+		t.Fatalf("query task log: %v", err)
+	}
+
+	if log.Status != models.StatusFailed {
+		t.Fatalf("expected task status failed, got %q", log.Status)
+	}
+
+	if log.Completed != 0 || log.Total != 1 || log.Failed != 1 {
+		t.Fatalf("expected completed=0 total=1 failed=1, got completed=%d total=%d failed=%d", log.Completed, log.Total, log.Failed)
+	}
+}
+
+func TestHandleBatchDeleteUsesOwnerScopedMountPointDelete(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := filetasklog.NewService(tDB)
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		filesByID: map[int64]*models.VirtualFile{
+			10: {ID: 10, TopId: 10, IsTop: true, Name: "top"},
+		},
+		childrenByParent: map[int64][]*models.VirtualFile{},
+		deleteErrByID:    map[int64]error{},
+	}
+	mountPointService := &mockBatchModifyTokenMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			10: {ID: 1001, FileId: 10, CreatorUserID: 100, Name: "owned"},
+		},
+	}
+
+	handler := NewHandler(
+		zap.NewNop(),
+		virtualFileService,
+		nil,
+		nil,
+		mountPointService,
+		logService,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	req := topic.FileBatchDeleteRequest{
+		IDs:            []int64{10},
+		ExpectedUserID: 100,
+	}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.HandleBatchDelete())
+	if err := processor.Process(stdctx.Background(), payload); err != nil {
+		t.Fatalf("process batch delete: %v", err)
+	}
+
+	if len(mountPointService.batchDeleteRequests) != 1 {
+		t.Fatalf("expected one mount point delete, got %+v", mountPointService.batchDeleteRequests)
+	}
+
+	deleteReq := mountPointService.batchDeleteRequests[0]
+	if deleteReq.IsAdmin || deleteReq.CreatorUserID != 100 {
+		t.Fatalf("expected owner-scoped mount point delete, got %+v", deleteReq)
 	}
 }
 

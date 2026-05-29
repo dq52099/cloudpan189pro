@@ -170,6 +170,10 @@ func TestDeleteQueuesTaskWithoutImmediateDataDeletion(t *testing.T) {
 		t.Fatalf("expected queued task IDs %v, got %v", want, got)
 	}
 
+	if taskReq.ExpectedUserID != 100 || taskReq.TriggeredByAdmin {
+		t.Fatalf("expected queued user snapshot user=100 admin=false, got %+v", taskReq)
+	}
+
 	if taskEngine.paths[0] != "/movies" {
 		t.Fatalf("expected queued full path /movies, got %v", taskEngine.paths[0])
 	}
