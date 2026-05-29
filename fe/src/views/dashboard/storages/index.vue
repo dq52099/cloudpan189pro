@@ -942,6 +942,7 @@ const nextRefreshTime = ref(dayjs().add(pageAutoRefreshStore.refreshInterval, 's
 const intervalTimer = ref<ReturnType<typeof setInterval> | null>(null)
 let isPageMounted = false
 let storageListRequestId = 0
+let storageListRequestInFlight = false
 let selectAllPagesRequestId = 0
 let storageActionSession = 0
 
@@ -977,7 +978,7 @@ const startAutoRefresh = () => {
         return
       }
 
-      fetchStorageList()
+      fetchStorageList(true)
       updateNextRefreshTime()
     }, pageAutoRefreshStore.refreshInterval * 1000)
   }
@@ -1040,13 +1041,21 @@ const getStorageListFilterParams = () => ({
   taskLogStatus: selectedTaskLogStatus.value || undefined,
 })
 
-const fetchStorageList = () => {
+const fetchStorageList = (silent = false) => {
   if (!isPageMounted) {
     return
   }
 
+  if (silent && storageListRequestInFlight) {
+    return
+  }
+
   const requestId = ++storageListRequestId
-  loading.value = true
+  storageListRequestInFlight = true
+
+  if (!silent) {
+    loading.value = true
+  }
 
   const params = {
     currentPage: paginationReactive.page || 1,
@@ -1093,6 +1102,7 @@ const fetchStorageList = () => {
     .finally(() => {
       if (isPageMounted && requestId === storageListRequestId) {
         loading.value = false
+        storageListRequestInFlight = false
         refreshTime.value = dayjs()
       }
     })
@@ -2173,6 +2183,7 @@ onMounted(() => {
 onUnmounted(() => {
   isPageMounted = false
   storageListRequestId++
+  storageListRequestInFlight = false
   selectAllPagesRequestId++
   storageActionSession++
   cloudTokenRequestId++
