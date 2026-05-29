@@ -340,6 +340,7 @@ import {
   toggleSystemEnableAuth,
   type ModifySettingAdditionRequest,
 } from '@/api/setting'
+import { getErrorMessage } from '@/utils/api'
 import { formatFileSize } from '@/utils/format'
 
 const message = useMessage()
@@ -550,7 +551,7 @@ const handleToggleEnableAuth = async (val: boolean) => {
   } catch (err) {
     if (!isSettingsMounted) return
 
-    message.error(err instanceof Error ? err.message : '网络错误')
+    message.error(getErrorMessage(err, '网络错误'))
     enableAuth.value = !val
   } finally {
     if (isSettingsMounted) {
@@ -756,7 +757,7 @@ const saveAdditionField = (
     .catch((err) => {
       if (!isSettingsMounted) return
 
-      message.error(err instanceof Error ? err.message : '网络错误')
+      message.error(getErrorMessage(err, '网络错误'))
       if (!pendingAdditionPayloads.has(payloadKey)) {
         rollbackAdditionPayload(requestPayload)
       }
@@ -942,7 +943,7 @@ const handleSaveTitle = async () => {
   } catch (err) {
     if (!isSettingsMounted) return
 
-    message.error(err instanceof Error ? err.message : '网络错误')
+    message.error(getErrorMessage(err, '网络错误'))
     form.title = previousTitle
   } finally {
     if (isSettingsMounted) {
@@ -986,7 +987,7 @@ const handleSaveBaseURL = async () => {
   } catch (err) {
     if (!isSettingsMounted) return
 
-    message.error(err instanceof Error ? err.message : '网络错误')
+    message.error(getErrorMessage(err, '网络错误'))
     form.baseURL = previousBaseURL
   } finally {
     if (isSettingsMounted) {
@@ -1017,14 +1018,14 @@ onMounted(() => {
           .catch((err) => {
             if (!isSettingsMounted) return
 
-            message.error(err instanceof Error ? err.message : '获取系统信息失败')
+            message.error(getErrorMessage(err, '获取系统信息失败'))
           })
       }
     })
     .catch((err) => {
       if (!isSettingsMounted) return
 
-      message.error(err instanceof Error ? err.message : '获取系统信息失败')
+      message.error(getErrorMessage(err, '获取系统信息失败'))
     })
 
   let loadedAddition = false
@@ -1046,7 +1047,7 @@ onMounted(() => {
     .catch((err) => {
       if (!isSettingsMounted) return
 
-      message.error(err instanceof Error ? err.message : '获取附加设置失败')
+      message.error(getErrorMessage(err, '获取附加设置失败'))
     })
     .finally(() => {
       if (!isSettingsMounted) return
