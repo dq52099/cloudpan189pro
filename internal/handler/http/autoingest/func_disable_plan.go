@@ -3,7 +3,9 @@ package autoingest
 import (
 	"errors"
 
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	autoingestplanSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestplan"
 	"gorm.io/gorm"
 )
 
@@ -52,7 +54,17 @@ func (h *handler) DisablePlan() httpcontext.HandlerFunc {
 			return
 		}
 
-		if err := h.planService.Disable(ctx.GetContext(), req.ID); err != nil {
+		if err := h.planService.DisableByOwner(ctx.GetContext(), &autoingestplanSvi.UpdateRequest{
+			ID:      req.ID,
+			UserID:  ctx.GetInt64(consts.CtxKeyUserId),
+			IsAdmin: ctx.GetBool(consts.CtxKeyIsAdmin),
+		}); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(codePlanNotFound.WithError(err))
+
+				return
+			}
+
 			ctx.Fail(codePlanDisableFailed.WithError(err))
 
 			return

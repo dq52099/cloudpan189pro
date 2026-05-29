@@ -29,6 +29,8 @@ type mockPlanAccessService struct {
 	plans           map[int64]*models.AutoIngestPlan
 	enabledIDs      []int64
 	disabledIDs     []int64
+	enableRequests  []*autoingestplanSvi.UpdateRequest
+	disableRequests []*autoingestplanSvi.UpdateRequest
 	updatedIDs      []int64
 	updatedFields   [][]utils.Field
 	updateRequests  []*autoingestplanSvi.UpdateRequest
@@ -60,11 +62,37 @@ func (m *mockPlanAccessService) Enable(ctx appContext.Context, id int64) error {
 	return nil
 }
 
+func (m *mockPlanAccessService) EnableByOwner(ctx appContext.Context, req *autoingestplanSvi.UpdateRequest) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if req != nil {
+		copied := *req
+		m.enableRequests = append(m.enableRequests, &copied)
+		m.enabledIDs = append(m.enabledIDs, req.ID)
+	}
+
+	return nil
+}
+
 func (m *mockPlanAccessService) Disable(ctx appContext.Context, id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.disabledIDs = append(m.disabledIDs, id)
+
+	return nil
+}
+
+func (m *mockPlanAccessService) DisableByOwner(ctx appContext.Context, req *autoingestplanSvi.UpdateRequest) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if req != nil {
+		copied := *req
+		m.disableRequests = append(m.disableRequests, &copied)
+		m.disabledIDs = append(m.disabledIDs, req.ID)
+	}
 
 	return nil
 }
@@ -426,6 +454,66 @@ func TestEnablePlanRejectsOtherUsersPlan(t *testing.T) {
 
 	if len(planService.enabledIDs) != 0 {
 		t.Fatalf("expected enable not to be called, got %v", planService.enabledIDs)
+	}
+}
+
+func TestEnablePlanPassesOwnerToService(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	planService := &mockPlanAccessService{
+		plans: map[int64]*models.AutoIngestPlan{
+			11: {ID: 11, UserID: 100, SourceType: autoingest.SourceTypeSubscribe},
+		},
+	}
+
+	router := newPlanAccessRouter(NewHandler(nil, planService, nil, nil).EnablePlan())
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/action", strings.NewReader(`{"id":11}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if len(planService.enableRequests) != 1 {
+		t.Fatalf("expected one enable request, got %d", len(planService.enableRequests))
+	}
+
+	enableReq := planService.enableRequests[0]
+	if enableReq.ID != 11 || enableReq.UserID != 100 || enableReq.IsAdmin {
+		t.Fatalf("unexpected enable request: %+v", enableReq)
+	}
+}
+
+func TestDisablePlanPassesOwnerToService(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	planService := &mockPlanAccessService{
+		plans: map[int64]*models.AutoIngestPlan{
+			11: {ID: 11, UserID: 100, SourceType: autoingest.SourceTypeSubscribe},
+		},
+	}
+
+	router := newPlanAccessRouter(NewHandler(nil, planService, nil, nil).DisablePlan())
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/action", strings.NewReader(`{"id":11}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if len(planService.disableRequests) != 1 {
+		t.Fatalf("expected one disable request, got %d", len(planService.disableRequests))
+	}
+
+	disableReq := planService.disableRequests[0]
+	if disableReq.ID != 11 || disableReq.UserID != 100 || disableReq.IsAdmin {
+		t.Fatalf("unexpected disable request: %+v", disableReq)
 	}
 }
 

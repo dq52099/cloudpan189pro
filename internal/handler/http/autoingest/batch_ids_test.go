@@ -30,6 +30,8 @@ type mockBatchAutoIngestPlanService struct {
 	mu            sync.Mutex
 	enabledIDs    []int64
 	disabledIDs   []int64
+	enableReqs    []*autoingestplanSvi.UpdateRequest
+	disableReqs   []*autoingestplanSvi.UpdateRequest
 	updatedIDs    []int64
 	updatedFields [][]utils.Field
 	deletedReqs   []*autoingestplanSvi.DeleteRequest
@@ -54,12 +56,48 @@ func (m *mockBatchAutoIngestPlanService) Enable(ctx appContext.Context, id int64
 	return nil
 }
 
+func (m *mockBatchAutoIngestPlanService) EnableByOwner(ctx appContext.Context, req *autoingestplanSvi.UpdateRequest) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.enableReqs = append(m.enableReqs, &autoingestplanSvi.UpdateRequest{
+		ID:      req.ID,
+		UserID:  req.UserID,
+		IsAdmin: req.IsAdmin,
+	})
+
+	m.enabledIDs = append(m.enabledIDs, req.ID)
+	if err, ok := m.enableErrs[req.ID]; ok {
+		return err
+	}
+
+	return nil
+}
+
 func (m *mockBatchAutoIngestPlanService) Disable(ctx appContext.Context, id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.disabledIDs = append(m.disabledIDs, id)
 	if err, ok := m.disableErrs[id]; ok {
+		return err
+	}
+
+	return nil
+}
+
+func (m *mockBatchAutoIngestPlanService) DisableByOwner(ctx appContext.Context, req *autoingestplanSvi.UpdateRequest) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.disableReqs = append(m.disableReqs, &autoingestplanSvi.UpdateRequest{
+		ID:      req.ID,
+		UserID:  req.UserID,
+		IsAdmin: req.IsAdmin,
+	})
+
+	m.disabledIDs = append(m.disabledIDs, req.ID)
+	if err, ok := m.disableErrs[req.ID]; ok {
 		return err
 	}
 
@@ -452,6 +490,16 @@ func TestBatchEnableDeduplicatesIDs(t *testing.T) {
 		t.Fatalf("expected enabled IDs %v, got %v", want, got)
 	}
 
+	if len(planService.enableReqs) != 2 {
+		t.Fatalf("expected two enable requests, got %d", len(planService.enableReqs))
+	}
+
+	for _, req := range planService.enableReqs {
+		if req.UserID != 100 || req.IsAdmin {
+			t.Fatalf("expected enable request to keep user context, got %+v", req)
+		}
+	}
+
 	var response struct {
 		Data map[string]int `json:"data"`
 	}
@@ -591,6 +639,16 @@ func TestBatchDisableDeduplicatesIDsAndCountsFailures(t *testing.T) {
 
 	if want := []int64{11, 22}; !int64SlicesEqual(got, want) {
 		t.Fatalf("expected disabled IDs %v, got %v", want, got)
+	}
+
+	if len(planService.disableReqs) != 2 {
+		t.Fatalf("expected two disable requests, got %d", len(planService.disableReqs))
+	}
+
+	for _, req := range planService.disableReqs {
+		if req.UserID != 100 || req.IsAdmin {
+			t.Fatalf("expected disable request to keep user context, got %+v", req)
+		}
 	}
 
 	response := parseBatchResponse(t, recorder)

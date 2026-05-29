@@ -381,6 +381,71 @@ func TestServiceEnableDisable(t *testing.T) {
 	}
 }
 
+func TestServiceEnableByOwnerRejectsOwnerMismatch(t *testing.T) {
+	tDB := setupTestDB(t)
+	svc := NewService(tDB)
+
+	ctx := context.NewContext(stdctx.Background())
+
+	plan := &models.AutoIngestPlan{
+		Name:       "Enable Owner",
+		Enabled:    false,
+		SourceType: autoingest.SourceTypeSubscribe,
+		Offset:     1,
+		ParentPath: "/test",
+		UserID:     20,
+	}
+	if _, err := svc.Create(ctx, plan); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	err := svc.EnableByOwner(ctx, &UpdateRequest{ID: plan.ID, UserID: 10})
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected record not found, got %v", err)
+	}
+
+	retrieved, err := svc.Query(ctx, plan.ID)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if retrieved.Enabled {
+		t.Fatal("expected plan to remain disabled")
+	}
+}
+
+func TestServiceDisableByOwnerAllowsAdmin(t *testing.T) {
+	tDB := setupTestDB(t)
+	svc := NewService(tDB)
+
+	ctx := context.NewContext(stdctx.Background())
+
+	plan := &models.AutoIngestPlan{
+		Name:       "Disable Admin",
+		Enabled:    true,
+		SourceType: autoingest.SourceTypeSubscribe,
+		Offset:     1,
+		ParentPath: "/test",
+		UserID:     20,
+	}
+	if _, err := svc.Create(ctx, plan); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	if err := svc.DisableByOwner(ctx, &UpdateRequest{ID: plan.ID, IsAdmin: true}); err != nil {
+		t.Fatalf("DisableByOwner as admin failed: %v", err)
+	}
+
+	retrieved, err := svc.Query(ctx, plan.ID)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if retrieved.Enabled {
+		t.Fatal("expected admin to disable plan")
+	}
+}
+
 func TestServiceUpdateOffset(t *testing.T) {
 	tDB := setupTestDB(t)
 	svc := NewService(tDB)

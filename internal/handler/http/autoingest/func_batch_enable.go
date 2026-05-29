@@ -3,7 +3,9 @@ package autoingest
 import (
 	"sync"
 
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	autoingestplanSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestplan"
 )
 
 // BatchEnableRequest 批量启用请求
@@ -68,7 +70,11 @@ func (h *handler) BatchEnable() httpcontext.HandlerFunc {
 				defer wg.Done()
 				defer func() { <-sem }()
 
-				if err := h.planService.Enable(ctx.GetContext(), planId); err != nil {
+				if err := h.planService.EnableByOwner(ctx.GetContext(), &autoingestplanSvi.UpdateRequest{
+					ID:      planId,
+					UserID:  ctx.GetInt64(consts.CtxKeyUserId),
+					IsAdmin: ctx.GetBool(consts.CtxKeyIsAdmin),
+				}); err != nil {
 					mu.Lock()
 					failCnt++
 					mu.Unlock()

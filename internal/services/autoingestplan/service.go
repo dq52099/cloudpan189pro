@@ -27,6 +27,8 @@ type Service interface {
 	// 状态/配置
 	Enable(ctx context.Context, id int64) error
 	Disable(ctx context.Context, id int64) error
+	EnableByOwner(ctx context.Context, req *UpdateRequest) error
+	DisableByOwner(ctx context.Context, req *UpdateRequest) error
 
 	// 运行相关数据
 	UpdateOffset(ctx context.Context, id int64, offset int64) error
