@@ -192,6 +192,7 @@ import { getListItems } from '@/utils/pagination'
 import { normalizeCloudTokens, normalizeFileNodes } from '@/utils/responseGuards'
 import { OS_TYPES } from '@/utils/osType'
 import { useMountPointBind } from '@/composables/useMountPointBind'
+import { getErrorMessage } from '@/utils/api'
 
 // Emits
 interface Emits {
@@ -308,7 +309,7 @@ const fetchTokenList = () => {
       }
 
       console.error('获取令牌列表失败:', error)
-      message.error('获取令牌列表失败')
+      message.error(getErrorMessage(error, '获取令牌列表失败'))
     })
     .finally(() => {
       if (isCurrentTokenRequest(currentRequestId, currentOperation)) {
@@ -396,7 +397,7 @@ const fetchPersonFiles = (parentId: string = '-11') => {
       }
 
       console.error('获取文件列表失败:', error)
-      message.error('获取文件列表失败')
+      message.error(getErrorMessage(error, '获取文件列表失败'))
     })
     .finally(() => {
       if (isCurrentFileRequest(parentId, currentRequestId, currentOperation, currentCloudToken)) {
