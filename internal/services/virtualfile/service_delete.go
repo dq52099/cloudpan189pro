@@ -17,20 +17,40 @@ func (s *service) Delete(ctx context.Context, id int64, hooks ...DeleteHook) err
 		return errInvalidVirtualFileID
 	}
 
-	result := s.withLock(ctx, func(db *gorm.DB) *gorm.DB {
-		return db.Where("id = ?", id).Delete(new(models.VirtualFile))
-	})
+	var result *gorm.DB
 
-	for _, hook := range hooks {
-		hook(ctx, result, id)
+	err := s.withWriteLock(ctx, func(db *gorm.DB) error {
+		return db.Transaction(func(tx *gorm.DB) error {
+			result = tx.Where("id = ?", id).Delete(new(models.VirtualFile))
+			if result.Error != nil {
+				return result.Error
+			}
+
+			if result.RowsAffected == 0 {
+				return nil
+			}
+
+			if err := deleteGroup2FileBindingsByFileIDs(tx, []int64{id}); err != nil {
+				return err
+			}
+
+			return nil
+		})
+	})
+	if err != nil {
+		return err
 	}
 
-	if result.Error != nil {
-		return result.Error
+	if result == nil {
+		return errors.Wrap(gorm.ErrRecordNotFound, "文件不存在")
 	}
 
 	if result.RowsAffected == 0 {
 		return errors.Wrap(gorm.ErrRecordNotFound, "文件不存在")
+	}
+
+	for _, hook := range hooks {
+		hook(ctx, result, id)
 	}
 
 	return nil
@@ -76,14 +96,36 @@ func (s *service) BatchDelete(ctx context.Context, ids []int64, hooks ...BatchDe
 	}
 
 	// 2. 执行删除操作
-	result := s.withLock(ctx, func(db *gorm.DB) *gorm.DB {
-		return db.Where("id IN ?", matchIdList).Delete(new(models.VirtualFile))
+	var result *gorm.DB
+
+	err = s.withWriteLock(ctx, func(db *gorm.DB) error {
+		return db.Transaction(func(tx *gorm.DB) error {
+			result = tx.Where("id IN ?", matchIdList).Delete(new(models.VirtualFile))
+			if result.Error != nil {
+				return result.Error
+			}
+
+			if result.RowsAffected == 0 {
+				return nil
+			}
+
+			if err := deleteGroup2FileBindingsByFileIDs(tx, matchIdList); err != nil {
+				return err
+			}
+
+			return nil
+		})
 	})
+	if err != nil {
+		ctx.Error("批量删除文件 - 数据库删除失败", zap.Int64s("file_ids", matchIdList), zap.Error(err))
 
-	if result.Error != nil {
-		ctx.Error("批量删除文件 - 数据库删除失败", zap.Int64s("file_ids", matchIdList), zap.Error(result.Error))
+		return nil, err
+	}
 
-		return nil, result.Error
+	if result == nil {
+		ctx.Error("批量删除文件 - 删除结果为空", zap.Int64s("file_ids", matchIdList))
+
+		return nil, errors.Wrap(gorm.ErrRecordNotFound, "部分文件未删除")
 	}
 
 	if result.RowsAffected != int64(len(matchIdList)) {
@@ -104,4 +146,14 @@ func (s *service) BatchDelete(ctx context.Context, ids []int64, hooks ...BatchDe
 	ctx.Debug("批量删除文件完成", zap.Int64s("deleted_ids", matchIdList), zap.Int64("affected_rows", result.RowsAffected))
 
 	return matchIdList, nil
+}
+
+func deleteGroup2FileBindingsByFileIDs(db *gorm.DB, fileIDs []int64) error {
+	if len(fileIDs) == 0 {
+		return nil
+	}
+
+	return db.Session(&gorm.Session{NewDB: true}).
+		Where("file_id IN ?", fileIDs).
+		Delete(new(models.Group2File)).Error
 }

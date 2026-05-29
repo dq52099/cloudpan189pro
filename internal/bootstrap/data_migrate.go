@@ -361,7 +361,21 @@ func migrateUserGroups(src, dst *gorm.DB) error {
 }
 
 func migrateGroup2Files(src, dst *gorm.DB) error {
-	return migrateRows[models.Group2File](src, dst, new(models.Group2File).TableName())
+	var rows []models.Group2File
+	if err := findSourceRows(src, &rows, new(models.Group2File).TableName()); err != nil {
+		return err
+	}
+
+	rows = dedupeGroup2FileRows(rows)
+	if len(rows) == 0 {
+		return nil
+	}
+
+	if err := upsertGroup2FileRows(dst, rows); err != nil {
+		return err
+	}
+
+	return resetPostgresSequence(dst, new(models.Group2File).TableName())
 }
 
 func migrateCloudTokens(src, dst *gorm.DB) error {
@@ -435,6 +449,74 @@ func migrateUserMountPointTokens(src, dst *gorm.DB) error {
 	}
 
 	return resetPostgresSequence(dst, new(models.UserMountPointToken).TableName())
+}
+
+func upsertGroup2FileRows(dst *gorm.DB, rows []models.Group2File) error {
+	for i := range rows {
+		row := rows[i]
+
+		var existing models.Group2File
+
+		err := dst.
+			Where("group_id = ? AND file_id = ?", row.GroupId, row.FileId).
+			Take(&existing).Error
+		if err == nil {
+			if err := dst.Model(new(models.Group2File)).
+				Where("id = ?", existing.ID).
+				Update("updated_at", row.UpdatedAt).Error; err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+
+		if err := dst.Clauses(clause.OnConflict{UpdateAll: true}).Create(&row).Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func dedupeGroup2FileRows(rows []models.Group2File) []models.Group2File {
+	if len(rows) <= 1 {
+		return rows
+	}
+
+	type key struct {
+		groupID int64
+		fileID  int64
+	}
+
+	kept := make(map[key]models.Group2File, len(rows))
+	order := make([]key, 0, len(rows))
+
+	for _, row := range rows {
+		k := key{groupID: row.GroupId, fileID: row.FileId}
+
+		current, ok := kept[k]
+		if !ok {
+			order = append(order, k)
+			kept[k] = row
+
+			continue
+		}
+
+		if row.ID > current.ID {
+			kept[k] = row
+		}
+	}
+
+	result := make([]models.Group2File, 0, len(kept))
+	for _, k := range order {
+		result = append(result, kept[k])
+	}
+
+	return result
 }
 
 func upsertUserMountPointTokenRows(dst *gorm.DB, rows []models.UserMountPointToken) error {

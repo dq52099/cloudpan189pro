@@ -94,7 +94,7 @@
           :type="isAllSelected ? 'warning' : 'default'"
           @click="toggleSelectAll"
           class="batch-btn"
-          :disabled="batchSubmitting"
+          :disabled="isSelectAllPagesBlocked"
         >
           {{ isAllSelected ? '取消当页' : '全选当页' }}
         </n-button>
@@ -103,7 +103,7 @@
           @click="selectAllPages"
           :loading="isSelectingAllPages"
           class="batch-btn"
-          :disabled="batchSubmitting"
+          :disabled="isSelectAllPagesBlocked"
         >
           {{ isAllSelectedAllPages ? '取消全选' : '全选所有' }}
         </n-button>
@@ -1314,6 +1314,10 @@ const isAllSelected = computed(() => {
 
 // 处理全选/取消全选
 const toggleSelectAll = () => {
+  if (isSelectAllPagesBlocked.value) {
+    return
+  }
+
   if (isAllSelected.value) {
     selectedIds.value = selectedIds.value.filter((id) => !currentViewIds.value.includes(id))
   } else {
@@ -1324,13 +1328,20 @@ const toggleSelectAll = () => {
 
 // 全选所有页
 const isSelectingAllPages = ref(false)
+const isSelectAllPagesBlocked = computed(
+  () =>
+    batchSubmitting.value ||
+    clearingAll.value ||
+    storageDangerDialogOpen.value ||
+    hasRefreshingStorage.value
+)
 const isAllSelectedAllPages = computed(() => {
   const total = paginationReactive.itemCount || 0
   return total > 0 && selectedIds.value.length === total
 })
 const selectAllPages = async () => {
   const total = paginationReactive.itemCount || 0
-  if (total <= 0 || isSelectingAllPages.value || batchSubmitting.value) {
+  if (total <= 0 || isSelectingAllPages.value || isSelectAllPagesBlocked.value) {
     return
   }
 
@@ -1342,6 +1353,7 @@ const selectAllPages = async () => {
   }
 
   const requestId = ++selectAllPagesRequestId
+  const filterParams = getStorageListFilterParams()
   isSelectingAllPages.value = true
 
   try {
@@ -1353,7 +1365,7 @@ const selectAllPages = async () => {
       const res = await getStorageList({
         currentPage: page,
         pageSize,
-        ...getStorageListFilterParams(),
+        ...filterParams,
       })
 
       if (!isPageMounted || requestId !== selectAllPagesRequestId) {
@@ -1488,7 +1500,7 @@ const exitBatchMode = () => {
 
 // 切换选中状态
 const toggleSelection = (id: number) => {
-  if (batchSubmitting.value) return
+  if (isSelectAllPagesBlocked.value) return
 
   if (selectedIds.value.includes(id)) {
     selectedIds.value = selectedIds.value.filter((item) => item !== id)
@@ -1499,7 +1511,7 @@ const toggleSelection = (id: number) => {
 
 // 处理卡片点击
 const handleCardClick = (id: number) => {
-  if (isBatchMode.value && !batchSubmitting.value) {
+  if (isBatchMode.value && !isSelectAllPagesBlocked.value) {
     toggleSelection(id)
   }
 }
@@ -1596,6 +1608,7 @@ const handleClearAll = () => {
       if (!isPageMounted || clearingAll.value || batchSubmitting.value) return
 
       const actionSession = ++storageActionSession
+      exitBatchMode()
       clearingAll.value = true
       message.loading('正在清空所有数据...')
 
@@ -1617,6 +1630,7 @@ const handleClearAll = () => {
           }
 
           message.success(`已清空 ${res.data} 个挂载点`)
+          exitBatchMode()
           fetchStorageList()
         })
         .catch((error) => {

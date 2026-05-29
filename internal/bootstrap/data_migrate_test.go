@@ -24,6 +24,18 @@ func (legacyUserMountPointToken) TableName() string {
 	return new(models.UserMountPointToken).TableName()
 }
 
+type legacyGroup2File struct {
+	ID        int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	GroupID   int64     `gorm:"column:group_id;type:bigint;not null;index"`
+	FileID    int64     `gorm:"column:file_id;type:bigint;not null;index"`
+	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime;type:timestamp"`
+	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp"`
+}
+
+func (legacyGroup2File) TableName() string {
+	return new(models.Group2File).TableName()
+}
+
 type legacyUserGroupNaturalKey struct {
 	ID        int64     `gorm:"column:id;primaryKey;autoIncrement"`
 	Name      string    `gorm:"column:name;type:varchar(255);not null"`
@@ -422,6 +434,70 @@ func TestDedupeUserMountPointTokenRowsKeepsLatestID(t *testing.T) {
 	}
 }
 
+func TestDedupeGroup2FileRowsKeepsLatestID(t *testing.T) {
+	rows := []models.Group2File{
+		{ID: 1, GroupId: 10, FileId: 1001},
+		{ID: 3, GroupId: 10, FileId: 1001},
+		{ID: 2, GroupId: 20, FileId: 1001},
+	}
+
+	got := dedupeGroup2FileRows(rows)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 rows, got %d: %#v", len(got), got)
+	}
+
+	if got[0].ID != 3 {
+		t.Fatalf("expected first key to keep latest row, got %#v", got[0])
+	}
+
+	if got[1].ID != 2 {
+		t.Fatalf("expected unrelated binding preserved, got %#v", got[1])
+	}
+}
+
+func TestMigrateGroup2FilesDedupesLegacyRows(t *testing.T) {
+	src := openMigrationTestDB(t)
+	dst := openMigrationTestDB(t)
+
+	if err := src.AutoMigrate(&legacyGroup2File{}); err != nil {
+		t.Fatalf("migrate source schema: %v", err)
+	}
+
+	if err := dst.AutoMigrate(&models.Group2File{}); err != nil {
+		t.Fatalf("migrate destination schema: %v", err)
+	}
+
+	rows := []legacyGroup2File{
+		{ID: 1, GroupID: 10, FileID: 1001},
+		{ID: 3, GroupID: 10, FileID: 1001},
+		{ID: 2, GroupID: 20, FileID: 1001},
+	}
+	if err := src.Create(&rows).Error; err != nil {
+		t.Fatalf("seed legacy group file bindings: %v", err)
+	}
+
+	if err := migrateGroup2Files(src, dst); err != nil {
+		t.Fatalf("migrate group file bindings: %v", err)
+	}
+
+	var got []models.Group2File
+	if err := dst.Order("id").Find(&got).Error; err != nil {
+		t.Fatalf("query migrated group file bindings: %v", err)
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("expected 2 migrated rows, got %d: %#v", len(got), got)
+	}
+
+	if got[0].ID != 2 || got[0].GroupId != 20 {
+		t.Fatalf("expected first migrated row to be ID 2, got %#v", got[0])
+	}
+
+	if got[1].ID != 3 || got[1].GroupId != 10 {
+		t.Fatalf("expected duplicate key to keep ID 3, got %#v", got[1])
+	}
+}
+
 func TestMigrateUserMountPointTokensDedupesLegacyRows(t *testing.T) {
 	src := openMigrationTestDB(t)
 	dst := openMigrationTestDB(t)
@@ -500,6 +576,43 @@ func TestMigrateDBDedupesUserMountPointTokensBeforeUniqueIndex(t *testing.T) {
 	}).Error
 	if err == nil {
 		t.Fatal("expected unique index to reject duplicate binding after migrate")
+	}
+}
+
+func TestMigrateDBDedupesGroup2FilesBeforeUniqueIndex(t *testing.T) {
+	db := openMigrationTestDB(t)
+
+	if err := db.AutoMigrate(&legacyGroup2File{}); err != nil {
+		t.Fatalf("migrate legacy group file schema: %v", err)
+	}
+
+	rows := []legacyGroup2File{
+		{ID: 1, GroupID: 10, FileID: 1001},
+		{ID: 2, GroupID: 10, FileID: 1001},
+	}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatalf("seed duplicate legacy group file bindings: %v", err)
+	}
+
+	if err := migrateDB(db); err != nil {
+		t.Fatalf("migrate db: %v", err)
+	}
+
+	var count int64
+	if err := db.Model(&models.Group2File{}).Where("group_id = ? AND file_id = ?", 10, 1001).Count(&count).Error; err != nil {
+		t.Fatalf("count migrated group file bindings: %v", err)
+	}
+
+	if count != 1 {
+		t.Fatalf("expected duplicate group file bindings to be deduped, got %d", count)
+	}
+
+	err := db.Create(&models.Group2File{
+		GroupId: 10,
+		FileId:  1001,
+	}).Error
+	if err == nil {
+		t.Fatal("expected unique index to reject duplicate group file binding after migrate")
 	}
 }
 

@@ -14,7 +14,11 @@
     <div class="init-card">
       <div class="init-header">
         <div class="header-actions">
-          <n-switch :value="themeStore.isDark" @update:value="themeStore.toggleTheme">
+          <n-switch
+            :value="themeStore.isDark"
+            :disabled="loading"
+            @update:value="themeStore.toggleTheme"
+          >
             <template #checked>夜间模式</template>
             <template #unchecked>日间模式</template>
           </n-switch>
@@ -25,13 +29,27 @@
 
       <n-form ref="formRef" :model="formData" :rules="rules" size="large" label-placement="top">
         <n-form-item label="系统标题" path="title">
-          <n-input v-model:value="formData.title" placeholder="请输入系统标题" />
+          <n-input
+            v-model:value="formData.title"
+            placeholder="请输入系统标题"
+            :disabled="loading"
+          />
         </n-form-item>
 
         <n-form-item label="系统基础URL" path="baseURL">
           <n-input-group>
-            <n-input v-model:value="formData.baseURL" placeholder="请输入系统基础URL" />
-            <n-button type="primary" ghost :loading="autoGetUrlLoading" @click="autoGetBaseURL">
+            <n-input
+              v-model:value="formData.baseURL"
+              placeholder="请输入系统基础URL"
+              :disabled="loading"
+            />
+            <n-button
+              type="primary"
+              ghost
+              :loading="autoGetUrlLoading"
+              :disabled="loading"
+              @click="autoGetBaseURL"
+            >
               <template #icon>
                 <n-icon :component="RefreshOutline" />
               </template>
@@ -41,7 +59,7 @@
         </n-form-item>
 
         <n-form-item label="启用认证" path="enableAuth">
-          <n-switch v-model:value="formData.enableAuth">
+          <n-switch v-model:value="formData.enableAuth" :disabled="loading">
             <template #checked> 启用 </template>
             <template #unchecked> 禁用 </template>
           </n-switch>
@@ -54,6 +72,7 @@
           <n-input
             v-model:value="formData.superUsername"
             placeholder="请输入超级管理员用户名（3-20位）"
+            :disabled="loading"
           >
             <template #prefix>
               <n-icon :component="PersonOutline" />
@@ -67,6 +86,7 @@
             type="password"
             placeholder="请输入超级管理员密码（6-20位）"
             show-password-on="mousedown"
+            :disabled="loading"
           >
             <template #prefix>
               <n-icon :component="LockClosedOutline" />
@@ -208,7 +228,8 @@ const handleInit = async () => {
       return
     }
 
-    const response = await initSystem(formData)
+    const payload: InitSystemRequest = { ...formData }
+    const response = await initSystem(payload)
     if (!isCurrentInitRequest(requestSeq)) {
       return
     }

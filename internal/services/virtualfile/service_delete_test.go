@@ -58,7 +58,7 @@ func setupVirtualFileTestDB(t *testing.T) *virtualFileTestDB {
 		t.Fatalf("open test db: %v", err)
 	}
 
-	if err := db.AutoMigrate(&models.VirtualFile{}); err != nil {
+	if err := db.AutoMigrate(&models.VirtualFile{}, &models.Group2File{}); err != nil {
 		t.Fatalf("migrate test db: %v", err)
 	}
 
@@ -118,6 +118,25 @@ func countVirtualFiles(t *testing.T, db *gorm.DB, query string, args ...any) int
 	}
 
 	return count
+}
+
+func countGroup2FileBindings(t *testing.T, db *gorm.DB, query string, args ...any) int64 {
+	t.Helper()
+
+	var count int64
+	if err := db.Model(&models.Group2File{}).Where(query, args...).Count(&count).Error; err != nil {
+		t.Fatalf("count group file bindings: %v", err)
+	}
+
+	return count
+}
+
+func createGroup2FileBinding(t *testing.T, db *gorm.DB, groupID, fileID int64) {
+	t.Helper()
+
+	if err := db.Create(&models.Group2File{GroupId: groupID, FileId: fileID}).Error; err != nil {
+		t.Fatalf("create group file binding: %v", err)
+	}
 }
 
 func newVirtualFileForCreate(name string, rev string) *models.VirtualFile {
@@ -656,6 +675,31 @@ func TestDeleteVirtualFileDeletesOnlyRequestedID(t *testing.T) {
 	}
 }
 
+func TestDeleteVirtualFileRemovesGroupBindings(t *testing.T) {
+	tDB := setupVirtualFileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	target := createVirtualFile(t, tDB.db, 1, "bound-target.txt")
+	other := createVirtualFile(t, tDB.db, 1, "bound-other.txt")
+
+	createGroup2FileBinding(t, tDB.db, 10, target.ID)
+	createGroup2FileBinding(t, tDB.db, 20, target.ID)
+	createGroup2FileBinding(t, tDB.db, 10, other.ID)
+
+	if err := svc.Delete(ctx, target.ID); err != nil {
+		t.Fatalf("delete virtual file: %v", err)
+	}
+
+	if count := countGroup2FileBindings(t, tDB.db, "file_id = ?", target.ID); count != 0 {
+		t.Fatalf("expected target bindings deleted, got count %d", count)
+	}
+
+	if count := countGroup2FileBindings(t, tDB.db, "file_id = ?", other.ID); count != 1 {
+		t.Fatalf("expected other file binding to remain, got count %d", count)
+	}
+}
+
 func TestDeleteVirtualFileReturnsNotFoundWhenMissing(t *testing.T) {
 	tDB := setupVirtualFileTestDB(t)
 	svc := NewService(tDB)
@@ -710,6 +754,32 @@ func TestBatchDeleteVirtualFileReturnsMatchedIDsAndFiles(t *testing.T) {
 
 	if count := countVirtualFiles(t, tDB.db, "id = ?", other.ID); count != 1 {
 		t.Fatalf("expected unrelated file to remain, got count %d", count)
+	}
+}
+
+func TestBatchDeleteVirtualFileRemovesGroupBindings(t *testing.T) {
+	tDB := setupVirtualFileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	first := createVirtualFile(t, tDB.db, 1, "bound-first.txt")
+	second := createVirtualFile(t, tDB.db, 1, "bound-second.txt")
+	other := createVirtualFile(t, tDB.db, 1, "bound-third.txt")
+
+	createGroup2FileBinding(t, tDB.db, 10, first.ID)
+	createGroup2FileBinding(t, tDB.db, 10, second.ID)
+	createGroup2FileBinding(t, tDB.db, 10, other.ID)
+
+	if _, err := svc.BatchDelete(ctx, []int64{first.ID, second.ID}); err != nil {
+		t.Fatalf("batch delete virtual files: %v", err)
+	}
+
+	if count := countGroup2FileBindings(t, tDB.db, "file_id IN ?", []int64{first.ID, second.ID}); count != 0 {
+		t.Fatalf("expected deleted file bindings removed, got count %d", count)
+	}
+
+	if count := countGroup2FileBindings(t, tDB.db, "file_id = ?", other.ID); count != 1 {
+		t.Fatalf("expected unrelated file binding to remain, got count %d", count)
 	}
 }
 
@@ -799,6 +869,30 @@ func TestBatchDeleteVirtualFileRejectsInvalidIDAndKeepsRows(t *testing.T) {
 
 	if count := countVirtualFiles(t, tDB.db, "id = ?", file.ID); count != 1 {
 		t.Fatalf("expected file to remain, got count %d", count)
+	}
+}
+
+func TestClearAllVirtualFileRemovesGroupBindings(t *testing.T) {
+	tDB := setupVirtualFileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	first := createVirtualFile(t, tDB.db, 1, "clear-first.txt")
+	second := createVirtualFile(t, tDB.db, 1, "clear-second.txt")
+
+	createGroup2FileBinding(t, tDB.db, 10, first.ID)
+	createGroup2FileBinding(t, tDB.db, 20, second.ID)
+
+	if err := svc.ClearAll(ctx); err != nil {
+		t.Fatalf("clear all virtual files: %v", err)
+	}
+
+	if count := countVirtualFiles(t, tDB.db, "1 = 1"); count != 0 {
+		t.Fatalf("expected all virtual files deleted, got count %d", count)
+	}
+
+	if count := countGroup2FileBindings(t, tDB.db, "1 = 1"); count != 0 {
+		t.Fatalf("expected all group file bindings deleted, got count %d", count)
 	}
 }
 

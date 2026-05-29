@@ -140,6 +140,17 @@ func TestBatchBindFilesReplacesExistingBindingsAndDeduplicates(t *testing.T) {
 	}
 }
 
+func TestBatchBindFilesUniqueIndexRejectsDuplicateBindings(t *testing.T) {
+	tDB := setupGroup2FileTestDB(t)
+
+	createGroupFileBinding(t, tDB.db, 10, 1001)
+
+	err := tDB.db.Create(&models.Group2File{GroupId: 10, FileId: 1001}).Error
+	if err == nil {
+		t.Fatal("expected duplicate group file binding to fail")
+	}
+}
+
 func TestBatchBindFilesRejectsMissingFileIDWithoutChangingBindings(t *testing.T) {
 	tDB := setupGroup2FileTestDB(t)
 	svc := NewService(tDB)

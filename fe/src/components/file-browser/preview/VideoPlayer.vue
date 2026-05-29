@@ -38,6 +38,16 @@ const isHlsByName = (name: string) => name.toLowerCase().endsWith('.m3u8')
 const isHlsByUrl = (url: string) => url.toLowerCase().includes('.m3u8')
 const isCurrentSource = (requestId: number) => isComponentMounted && requestId === sourceRequestId
 
+// 清空原生 video 状态，避免销毁、切换或失败后残留旧画面/播放状态。
+const resetVideoSource = () => {
+  const video = videoRef.value
+  if (!video) return
+
+  video.pause()
+  video.removeAttribute('src')
+  video.load()
+}
+
 // 初始化播放源并构建播放器
 const initSource = async () => {
   if (!isComponentMounted) return
@@ -53,6 +63,7 @@ const initSource = async () => {
     if (res.code === 200) {
       const data = normalizeCreateDownloadUrlResponse(res.data)
       if (!data) {
+        destroyPlayer()
         message.error('获取播放链接失败：响应数据格式异常')
 
         return
@@ -61,11 +72,13 @@ const initSource = async () => {
       sourceUrl.value = data.downloadUrl
       await setupPlayer(requestId)
     } else {
+      destroyPlayer()
       message.error(res.msg || '获取播放链接失败')
     }
   } catch (e) {
     if (!isCurrentSource(requestId)) return
 
+    destroyPlayer()
     console.error('createDownloadUrl error:', e)
     message.error('获取播放链接失败')
   }
@@ -120,6 +133,7 @@ const setupPlayer = async (requestId: number) => {
     })
     hls.value.on(HlsCtor.Events.ERROR, (_event, data) => {
       if (isCurrentSource(requestId) && data?.fatal) {
+        destroyPlayer()
         message.error('HLS 播放失败')
       }
     })
@@ -188,6 +202,7 @@ const destroyPlayer = () => {
     hls.value.destroy()
     hls.value = null
   }
+  resetVideoSource()
 }
 
 const playIfNeeded = (video: HTMLVideoElement) => {

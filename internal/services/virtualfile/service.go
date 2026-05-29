@@ -86,3 +86,14 @@ func (s *service) withLock(ctx context.Context, fn func(db *gorm.DB) *gorm.DB) *
 
 	return fn(s.getDB(ctx))
 }
+
+func (s *service) withWriteLock(ctx context.Context, fn func(db *gorm.DB) error) error {
+	if !s.usesLocalLock {
+		return fn(s.getDB(ctx))
+	}
+
+	s.dbLock.Lock()
+	defer s.dbLock.Unlock()
+
+	return fn(s.getDB(ctx))
+}

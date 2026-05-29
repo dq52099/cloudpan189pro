@@ -38,8 +38,8 @@ func (u *UserGroup) TableName() string {
 
 type Group2File struct {
 	ID        int64     `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
-	GroupId   int64     `gorm:"column:group_id;type:bigint;default:0;index" json:"groupId"`
-	FileId    int64     `gorm:"column:file_id;type:bigint;default:0;index;" json:"fileId"`
+	GroupId   int64     `gorm:"column:group_id;type:bigint;not null;default:0;index;uniqueIndex:idx_group2file_group_file,priority:1" json:"groupId"`
+	FileId    int64     `gorm:"column:file_id;type:bigint;not null;default:0;index;uniqueIndex:idx_group2file_group_file,priority:2" json:"fileId"`
 	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"createdAt"`
 	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime;type:timestamp;default:CURRENT_TIMESTAMP" json:"updatedAt"`
 }

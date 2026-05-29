@@ -21,6 +21,10 @@ func (s SystemSetting) TableName() string {
 }
 
 func migrateDB(db *gorm.DB) (err error) {
+	if err := dedupeGroup2Files(db); err != nil {
+		return err
+	}
+
 	if err := dedupeUserMountPointTokens(db); err != nil {
 		return err
 	}
@@ -47,6 +51,38 @@ func migrateDB(db *gorm.DB) (err error) {
 		new(models.DailyHotHistory),
 		new(SystemSetting),
 	)
+}
+
+type duplicatedGroup2FileKey struct {
+	GroupID int64
+	FileID  int64
+	KeepID  int64
+	Count   int64
+}
+
+func dedupeGroup2Files(db *gorm.DB) error {
+	if !db.Migrator().HasTable(new(models.Group2File)) {
+		return nil
+	}
+
+	var duplicates []duplicatedGroup2FileKey
+	if err := db.Model(new(models.Group2File)).
+		Select("group_id, file_id, MAX(id) AS keep_id, COUNT(*) AS count").
+		Group("group_id, file_id").
+		Having("COUNT(*) > 1").
+		Scan(&duplicates).Error; err != nil {
+		return err
+	}
+
+	for _, duplicate := range duplicates {
+		if err := db.
+			Where("group_id = ? AND file_id = ? AND id <> ?", duplicate.GroupID, duplicate.FileID, duplicate.KeepID).
+			Delete(new(models.Group2File)).Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 type duplicatedUserMountPointTokenKey struct {

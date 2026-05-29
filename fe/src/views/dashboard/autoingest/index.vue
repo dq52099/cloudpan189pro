@@ -114,7 +114,9 @@
         </template>
         批量删除
       </n-button>
-      <n-button size="small" @click="clearPlanSelection">取消选择</n-button>
+      <n-button size="small" :disabled="isPlanSelectionBlocked" @click="clearPlanSelection">
+        取消选择
+      </n-button>
     </div>
 
     <!-- 头部区域（Logs） -->
@@ -174,7 +176,7 @@
       :loading="planLoading"
       :pagination="planPagination"
       :row-key="(row: Models.AutoIngestPlan) => row.id"
-      v-model:checked-row-keys="selectedPlanIds"
+      :checked-row-keys="selectedPlanIds"
       @update:checked-row-keys="handlePlanSelectionChange"
       class="autoingest-table"
       remote
@@ -403,6 +405,9 @@ const hasPlanRowPending = computed(() => planActionPending.value.size > 0)
 const hasPlanBatchActionInFlight = computed(
   () => batchActionLoading.value || batchDeleteDialogOpen.value
 )
+const isPlanSelectionBlocked = computed(
+  () => hasPlanBatchActionInFlight.value || hasPlanRowPending.value
+)
 const setPlanActionPending = (
   action: PlanRowAction,
   planId: number | undefined,
@@ -436,6 +441,10 @@ const syncSelectedPlanRows = () => {
 
 // 处理复选框选择变化
 const handlePlanSelectionChange = (keys: DataTableRowKey[]) => {
+  if (isPlanSelectionBlocked.value) {
+    return
+  }
+
   const selectedIds = keys.filter((key): key is number => typeof key === 'number')
 
   selectedPlanIds.value = selectedIds
@@ -703,6 +712,7 @@ const handlePlanReset = () => {
 const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
   {
     type: 'selection',
+    disabled: () => isPlanSelectionBlocked.value,
   },
   {
     title: '计划名称',

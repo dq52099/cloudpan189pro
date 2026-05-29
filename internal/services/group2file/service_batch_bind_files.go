@@ -8,6 +8,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var errInvalidGroupID = errors.New("groupId 必须大于 0")
@@ -24,37 +25,39 @@ func (s *service) BatchBindFiles(ctx context.Context, groupId int64, fileIds []i
 		return err
 	}
 
-	if err := s.getDB(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := ensureUserGroupExists(tx, groupId); err != nil {
-			return err
-		}
-
-		if len(uniqueFileIDs) > 0 {
-			if err := ensureVirtualFilesExist(tx, uniqueFileIDs); err != nil {
+	if err := s.withWriteLock(ctx, func(db *gorm.DB) error {
+		return db.Transaction(func(tx *gorm.DB) error {
+			if err := lockUserGroupForBinding(tx, groupId); err != nil {
 				return err
 			}
-		}
 
-		// 删除所有旧绑定
-		if err := tx.Where("group_id = ?", groupId).Delete(new(models.Group2File)).Error; err != nil {
-			return err
-		}
+			if len(uniqueFileIDs) > 0 {
+				if err := ensureVirtualFilesExist(tx, uniqueFileIDs); err != nil {
+					return err
+				}
+			}
 
-		if len(uniqueFileIDs) == 0 {
-			// 空 fileIds 是显式清空语义，旧绑定删除后无需创建新绑定。
-			return nil
-		}
+			// 删除所有旧绑定
+			if err := tx.Where("group_id = ?", groupId).Delete(new(models.Group2File)).Error; err != nil {
+				return err
+			}
 
-		// 添加新的分组
-		items := make([]models.Group2File, 0, len(uniqueFileIDs))
-		for _, fileId := range uniqueFileIDs {
-			items = append(items, models.Group2File{
-				GroupId: groupId,
-				FileId:  fileId,
-			})
-		}
+			if len(uniqueFileIDs) == 0 {
+				// 空 fileIds 是显式清空语义，旧绑定删除后无需创建新绑定。
+				return nil
+			}
 
-		return tx.Create(&items).Error
+			// 添加新的分组
+			items := make([]models.Group2File, 0, len(uniqueFileIDs))
+			for _, fileId := range uniqueFileIDs {
+				items = append(items, models.Group2File{
+					GroupId: groupId,
+					FileId:  fileId,
+				})
+			}
+
+			return tx.Create(&items).Error
+		})
 	}); err != nil {
 		ctx.Error("批量绑定文件权限失败", zap.Error(err), zap.Int64("groupId", groupId), zap.Int64s("fileIds", fileIds))
 
@@ -66,13 +69,28 @@ func (s *service) BatchBindFiles(ctx context.Context, groupId int64, fileIds []i
 	return nil
 }
 
-func ensureUserGroupExists(tx *gorm.DB, groupID int64) error {
-	var count int64
-	if err := tx.Model(new(models.UserGroup)).Where("id = ?", groupID).Count(&count).Error; err != nil {
+func lockUserGroupForBinding(tx *gorm.DB, groupID int64) error {
+	var group models.UserGroup
+
+	query := tx.Model(new(models.UserGroup)).Select("id")
+	if tx.Dialector != nil {
+		dialector := tx.Dialector
+		if dialector.Name() != "sqlite" && dialector.Name() != "sqlite3" {
+			query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+	} else {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+
+	if err := query.Take(&group, "id = ?", groupID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return pkgErrors.Wrap(gorm.ErrRecordNotFound, "用户组不存在")
+		}
+
 		return err
 	}
 
-	if count != 1 {
+	if group.ID == 0 {
 		return pkgErrors.Wrap(gorm.ErrRecordNotFound, "用户组不存在")
 	}
 

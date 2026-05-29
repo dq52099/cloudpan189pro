@@ -1,10 +1,11 @@
 package group2file
 
 import (
-	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	"sync"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/bootstrap"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
+	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"gorm.io/gorm"
 )
 
@@ -18,15 +19,44 @@ type Service interface {
 }
 
 type service struct {
-	svc bootstrap.ServiceContext
+	svc           bootstrap.ServiceContext
+	dbLock        sync.Mutex
+	usesLocalLock bool
 }
 
 func NewService(svc bootstrap.ServiceContext) Service {
 	return &service{
-		svc: svc,
+		svc:           svc,
+		usesLocalLock: group2FileDBNeedsLocalLock(svc),
 	}
 }
 
 func (s *service) getDB(ctx context.Context) *gorm.DB {
 	return s.svc.GetDB(ctx).Model(new(models.Group2File))
+}
+
+func group2FileDBNeedsLocalLock(svc bootstrap.ServiceContext) bool {
+	db := svc.GetDBWithoutContext()
+	if db == nil || db.Dialector == nil {
+		return true
+	}
+
+	dialector := db.Dialector
+	switch dialector.Name() {
+	case "sqlite", "sqlite3":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *service) withWriteLock(ctx context.Context, fn func(db *gorm.DB) error) error {
+	if !s.usesLocalLock {
+		return fn(s.getDB(ctx))
+	}
+
+	s.dbLock.Lock()
+	defer s.dbLock.Unlock()
+
+	return fn(s.getDB(ctx))
 }

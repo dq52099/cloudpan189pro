@@ -15,7 +15,7 @@
       </div>
       <div class="header-right">
         <n-space>
-          <n-button type="primary" @click="handleSelectQrcodeLogin">
+          <n-button type="primary" :disabled="hasTokenModalOpen" @click="handleSelectQrcodeLogin">
             <template #icon>
               <n-icon>
                 <QrCodeOutline />
@@ -23,7 +23,7 @@
             </template>
             扫码添加
           </n-button>
-          <n-button @click="handleSelectPasswordLogin">
+          <n-button :disabled="hasTokenModalOpen" @click="handleSelectPasswordLogin">
             <template #icon>
               <n-icon>
                 <KeyOutline />
@@ -105,7 +105,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, h } from 'vue'
+import { computed, ref, reactive, onMounted, onUnmounted, h } from 'vue'
 import {
   NDataTable,
   NInput,
@@ -159,6 +159,14 @@ const editForm = reactive({
   name: '',
 })
 let editSessionVersion = 0
+const hasTokenModalOpen = computed(
+  () =>
+    showQrcodeModal.value ||
+    showPasswordModal.value ||
+    showUpdateQrcodeModal.value ||
+    showUpdatePasswordModal.value ||
+    showEditModal.value
+)
 const editRules = {
   name: [
     { required: true, message: '请输入令牌名称', trigger: 'blur' },
@@ -431,11 +439,19 @@ const handleReset = () => {
 
 // 选择扫码登录
 const handleSelectQrcodeLogin = () => {
+  if (hasTokenModalOpen.value) {
+    return
+  }
+
   showQrcodeModal.value = true
 }
 
 // 选择密码登录
 const handleSelectPasswordLogin = () => {
+  if (hasTokenModalOpen.value) {
+    return
+  }
+
   showPasswordModal.value = true
 }
 
@@ -447,7 +463,7 @@ const handleAddSuccess = () => {
 
 // 更新令牌
 const handleUpdate = (token: Models.CloudToken) => {
-  if (isDeleteTokenPending(token.id)) {
+  if (hasTokenModalOpen.value || isDeleteTokenPending(token.id)) {
     return
   }
 
@@ -471,7 +487,7 @@ const handleUpdateSuccess = () => {
 
 // 编辑令牌
 const handleEdit = (token: Models.CloudToken) => {
-  if (isDeleteTokenPending(token.id)) {
+  if (hasTokenModalOpen.value || isDeleteTokenPending(token.id)) {
     return
   }
 
