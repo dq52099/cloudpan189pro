@@ -73,6 +73,11 @@ func newServiceContext(c *configs.RuntimeConfig) (ServiceContext, error) {
 		err    error
 	)
 
+	// 初始化日志
+	if logger, err = initLogger(c); err != nil {
+		return nil, err
+	}
+
 	// 连接 db
 	if db, err = connectDB(c.Config); err != nil {
 		return nil, err
@@ -83,12 +88,7 @@ func newServiceContext(c *configs.RuntimeConfig) (ServiceContext, error) {
 		return nil, err
 	}
 
-	if err = migrateSQLiteDataIfNeeded(c.Config, ShouldMigrateData, MigrateFromSQLite); err != nil {
-		return nil, err
-	}
-
-	// 初始化日志
-	if logger, err = initLogger(c); err != nil {
+	if err = migrateSQLiteDataIfNeeded(c.Config, logger, ShouldMigrateData, MigrateFromSQLite); err != nil {
 		return nil, err
 	}
 
@@ -136,6 +136,7 @@ func newServiceContext(c *configs.RuntimeConfig) (ServiceContext, error) {
 
 func migrateSQLiteDataIfNeeded(
 	cfg *configs.Config,
+	logger *zap.Logger,
 	shouldMigrate func(*configs.Config) bool,
 	migrate func(*configs.Config) error,
 ) error {
@@ -143,13 +144,25 @@ func migrateSQLiteDataIfNeeded(
 		return nil
 	}
 
-	fmt.Println("检测到 SQLite 数据，正在迁移到 PostgreSQL...")
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
+	migrationLogger := logger.Named("data_migration")
+	oldMigrationLogger := dataMigrationLogger
+	dataMigrationLogger = migrationLogger
+
+	defer func() {
+		dataMigrationLogger = oldMigrationLogger
+	}()
+
+	migrationLogger.Info("检测到 SQLite 数据，正在迁移到 PostgreSQL")
 
 	if err := migrate(cfg); err != nil {
 		return fmt.Errorf("数据迁移失败: %w", err)
 	}
 
-	fmt.Println("数据迁移完成!")
+	migrationLogger.Info("数据迁移完成")
 
 	return nil
 }

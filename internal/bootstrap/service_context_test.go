@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/configs"
+	"go.uber.org/zap"
 )
 
 func TestMigrateSQLiteDataIfNeededSkipsWhenDisabled(t *testing.T) {
@@ -13,6 +14,7 @@ func TestMigrateSQLiteDataIfNeededSkipsWhenDisabled(t *testing.T) {
 
 	err := migrateSQLiteDataIfNeeded(
 		new(configs.Config),
+		zap.NewNop(),
 		func(*configs.Config) bool { return false },
 		func(*configs.Config) error {
 			called = true
@@ -34,6 +36,7 @@ func TestMigrateSQLiteDataIfNeededReturnsMigrationError(t *testing.T) {
 
 	err := migrateSQLiteDataIfNeeded(
 		new(configs.Config),
+		zap.NewNop(),
 		func(*configs.Config) bool { return true },
 		func(*configs.Config) error { return migrateErr },
 	)
@@ -51,6 +54,7 @@ func TestMigrateSQLiteDataIfNeededAllowsSuccessfulMigration(t *testing.T) {
 
 	err := migrateSQLiteDataIfNeeded(
 		new(configs.Config),
+		zap.NewNop(),
 		func(*configs.Config) bool { return true },
 		func(*configs.Config) error {
 			called = true

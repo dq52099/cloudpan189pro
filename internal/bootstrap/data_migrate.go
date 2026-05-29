@@ -11,6 +11,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/configs"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	"go.uber.org/zap"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -19,6 +20,8 @@ import (
 var errMissingSourceTable = errors.New("source table is missing")
 
 const dataMigrationBatchSize = 1000
+
+var dataMigrationLogger = zap.NewNop()
 
 type dataMigrationStep struct {
 	name      string
@@ -86,9 +89,9 @@ func MigrateFromSQLite(cfg *configs.Config) error {
 
 	var userCount int64
 	if err := sqliteDB.Model(&models.User{}).Count(&userCount).Error; err != nil {
-		fmt.Printf("检查用户数量失败: %v\n", err)
+		dataMigrationLogger.Warn("检查用户数量失败", zap.Error(err))
 	} else {
-		fmt.Printf("检测到 SQLite 用户数: %d\n", userCount)
+		dataMigrationLogger.Info("检测到 SQLite 用户数", zap.Int64("user_count", userCount))
 	}
 
 	return runDataMigrationSteps(pgDB, dataMigrationSteps(sqliteDB, userCount))
@@ -675,7 +678,7 @@ func migrateVirtualFiles(src, dst *gorm.DB) error {
 func runMigrationStep(name string, run func() error) error {
 	if err := run(); err != nil {
 		if errors.Is(err, errMissingSourceTable) {
-			fmt.Printf("%s数据表不存在，跳过\n", name)
+			dataMigrationLogger.Info("数据表不存在，跳过迁移", zap.String("name", name))
 
 			return nil
 		}
@@ -683,7 +686,7 @@ func runMigrationStep(name string, run func() error) error {
 		return fmt.Errorf("迁移%s数据失败: %w", name, err)
 	}
 
-	fmt.Printf("%s数据迁移完成\n", name)
+	dataMigrationLogger.Info("数据迁移完成", zap.String("name", name))
 
 	return nil
 }
