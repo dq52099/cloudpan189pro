@@ -30,6 +30,14 @@ func (s *service) Delete(ctx context.Context, req *DeleteRequest) (err error) {
 		query := tx.Model(new(models.CloudToken)).Where("id = ?", req.ID)
 		if !req.IsAdmin {
 			query = query.Where("user_id = ?", req.UserID)
+
+			if err := ensureCloudTokenDeleteTargetExists(ctx, query, req.ID, req.UserID); err != nil {
+				return err
+			}
+
+			if err := ensureNoOtherUserCloudTokenReferences(ctx, tx, req.ID, req.UserID); err != nil {
+				return err
+			}
 		}
 
 		result := query.Delete(new(models.CloudToken))
@@ -52,6 +60,60 @@ func (s *service) Delete(ctx context.Context, req *DeleteRequest) (err error) {
 		return nil
 	}); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func ensureCloudTokenDeleteTargetExists(ctx context.Context, query *gorm.DB, tokenID, userID int64) error {
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		ctx.Error("检查云盘令牌删除目标失败", zap.Error(err), zap.Int64("id", tokenID), zap.Int64("user_id", userID))
+
+		return errors.Wrap(err, "检查云盘令牌删除目标失败")
+	}
+
+	if count == 0 {
+		ctx.Error("删除云盘令牌失败，无权限或不存在", zap.Int64("id", tokenID), zap.Int64("user_id", userID))
+
+		return errors.Wrap(gorm.ErrRecordNotFound, "令牌不存在或无权限删除")
+	}
+
+	return nil
+}
+
+func ensureNoOtherUserCloudTokenReferences(ctx context.Context, tx *gorm.DB, tokenID, userID int64) error {
+	checks := []struct {
+		name  string
+		query *gorm.DB
+	}{
+		{
+			name:  "挂载点",
+			query: tx.Model(new(models.MountPoint)).Where("token_id = ? AND creator_user_id <> ?", tokenID, userID),
+		},
+		{
+			name:  "用户挂载点令牌绑定",
+			query: tx.Model(new(models.UserMountPointToken)).Where("token_id = ? AND user_id <> ?", tokenID, userID),
+		},
+		{
+			name:  "自动转存计划",
+			query: tx.Model(new(models.AutoIngestPlan)).Where("token_id = ? AND user_id <> ?", tokenID, userID),
+		},
+	}
+
+	for _, check := range checks {
+		var count int64
+		if err := check.query.Count(&count).Error; err != nil {
+			ctx.Error("检查云盘令牌外部引用失败", zap.Error(err), zap.Int64("id", tokenID), zap.String("ref", check.name))
+
+			return errors.Wrap(err, "检查云盘令牌引用失败")
+		}
+
+		if count > 0 {
+			ctx.Warn("拒绝删除被其他用户资源引用的云盘令牌", zap.Int64("id", tokenID), zap.Int64("user_id", userID), zap.String("ref", check.name), zap.Int64("count", count))
+
+			return ErrTokenReferencedByOtherUser
+		}
 	}
 
 	return nil

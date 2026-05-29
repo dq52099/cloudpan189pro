@@ -645,6 +645,97 @@ func TestDeleteOwnerTokenClearsReferences(t *testing.T) {
 	}
 }
 
+func TestDeleteOwnerTokenRejectsOtherUserReferences(t *testing.T) {
+	tDB := setupCloudTokenTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	token := createCloudToken(t, tDB.db, 10, "shared-token")
+
+	ownMountPoint := &models.MountPoint{
+		FileId:        1001,
+		OsType:        "folder",
+		TokenId:       token.ID,
+		CreatorUserID: 10,
+		Name:          "own-mount",
+	}
+	if err := tDB.db.Create(ownMountPoint).Error; err != nil {
+		t.Fatalf("create own mount point: %v", err)
+	}
+
+	otherMountPoint := &models.MountPoint{
+		FileId:        1002,
+		OsType:        "folder",
+		TokenId:       token.ID,
+		CreatorUserID: 20,
+		Name:          "other-mount",
+	}
+	if err := tDB.db.Create(otherMountPoint).Error; err != nil {
+		t.Fatalf("create other mount point: %v", err)
+	}
+
+	binding := &models.UserMountPointToken{
+		UserID:       20,
+		MountPointID: otherMountPoint.ID,
+		TokenID:      token.ID,
+	}
+	if err := tDB.db.Create(binding).Error; err != nil {
+		t.Fatalf("create other token binding: %v", err)
+	}
+
+	plan := createAutoIngestPlanWithToken(t, tDB.db, 20, token.ID, "other-plan")
+
+	err := svc.Delete(ctx, &DeleteRequest{ID: token.ID, UserID: 10})
+	if !errors.Is(err, ErrTokenReferencedByOtherUser) {
+		t.Fatalf("expected other user reference error, got %v", err)
+	}
+
+	var tokenCount int64
+	if err := tDB.db.Model(&models.CloudToken{}).Where("id = ?", token.ID).Count(&tokenCount).Error; err != nil {
+		t.Fatalf("count token: %v", err)
+	}
+
+	if tokenCount != 1 {
+		t.Fatalf("expected token to remain, got count %d", tokenCount)
+	}
+
+	var updatedOwnMountPoint models.MountPoint
+	if err := tDB.db.First(&updatedOwnMountPoint, ownMountPoint.ID).Error; err != nil {
+		t.Fatalf("query own mount point: %v", err)
+	}
+
+	if updatedOwnMountPoint.TokenId != token.ID {
+		t.Fatalf("expected own mount point token unchanged, got %d", updatedOwnMountPoint.TokenId)
+	}
+
+	var updatedOtherMountPoint models.MountPoint
+	if err := tDB.db.First(&updatedOtherMountPoint, otherMountPoint.ID).Error; err != nil {
+		t.Fatalf("query other mount point: %v", err)
+	}
+
+	if updatedOtherMountPoint.TokenId != token.ID {
+		t.Fatalf("expected other mount point token unchanged, got %d", updatedOtherMountPoint.TokenId)
+	}
+
+	var bindingCount int64
+	if err := tDB.db.Model(&models.UserMountPointToken{}).Where("token_id = ?", token.ID).Count(&bindingCount).Error; err != nil {
+		t.Fatalf("count token binding: %v", err)
+	}
+
+	if bindingCount != 1 {
+		t.Fatalf("expected token binding to remain, got count %d", bindingCount)
+	}
+
+	var updatedPlan models.AutoIngestPlan
+	if err := tDB.db.First(&updatedPlan, plan.ID).Error; err != nil {
+		t.Fatalf("query auto ingest plan: %v", err)
+	}
+
+	if updatedPlan.TokenId != token.ID {
+		t.Fatalf("expected auto ingest plan token unchanged, got %d", updatedPlan.TokenId)
+	}
+}
+
 func TestDeleteOtherUserTokenKeepsReferences(t *testing.T) {
 	tDB := setupCloudTokenTestDB(t)
 	svc := NewService(tDB)

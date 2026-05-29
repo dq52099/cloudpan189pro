@@ -75,6 +75,12 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 				return
 			}
 
+			if errors.Is(err, cloudtoken.ErrTokenReferencedByOtherUser) {
+				ctx.Fail(codeMountPointUsed.WithError(err))
+
+				return
+			}
+
 			ctx.Fail(codeDeleteFailed.WithError(err))
 
 			return
