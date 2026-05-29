@@ -162,8 +162,10 @@ func (h *handler) BatchAdd() httpcontext.HandlerFunc {
 			}
 
 			taskReq := &topic.FileScanFileRequest{
-				FileId: ref.fileID,
-				Deep:   true,
+				FileId:           ref.fileID,
+				Deep:             true,
+				ExpectedUserID:   userID,
+				TriggeredByAdmin: isAdmin,
 			}
 
 			body, err := json.Marshal(taskReq)

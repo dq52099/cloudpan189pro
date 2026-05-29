@@ -1,6 +1,7 @@
 package file
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -56,9 +57,15 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 		}
 
 		if err := h.ensureScanTaskMountPointOwner(ctx.GetContext(), req, topFile); err != nil {
-			logger.Warn("刷新任务归属校验失败，跳过扫描", zap.Int64("file_id", req.FileId), zap.Error(err))
+			if errors.Is(err, errScanTaskOwnerChanged) || errors.Is(err, gorm.ErrRecordNotFound) {
+				logger.Warn("刷新任务归属校验失败，跳过扫描", zap.Int64("file_id", req.FileId), zap.Error(err))
 
-			return nil
+				return nil
+			}
+
+			logger.Error("刷新任务归属校验失败", zap.Int64("file_id", req.FileId), zap.Error(err))
+
+			return err
 		}
 
 		// 对同一挂载点（顶层文件）加内存锁，避免手动刷新 + 定时刷新并发导致

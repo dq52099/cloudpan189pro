@@ -14,7 +14,9 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/taskcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/datatypes"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	autoingestplanSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestplan"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/autoingest"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
@@ -97,6 +99,20 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 			return nil
 		}
 
+		if plan.SourceType != autoingest.SourceTypeSubscribe {
+			logger.Error("计划类型错误", zap.String("source_type", plan.SourceType.String()))
+
+			return errors.New("计划类型错误")
+		}
+
+		if resetOffset, resetApplied, err := h.resetRefreshSubscribeRetryState(ctx, req); err != nil {
+			logger.Error("重置自动入库重试状态失败", zap.Error(err), zap.Int64("plan_id", req.PlanId))
+
+			return err
+		} else if resetApplied {
+			plan.Offset = resetOffset
+		}
+
 		concurrentCount := plan.ConcurrentCount
 		if concurrentCount <= 0 {
 			concurrentCount = 4
@@ -116,12 +132,6 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 		}
 
 		nextOffset := plan.Offset
-
-		if plan.SourceType != autoingest.SourceTypeSubscribe {
-			logger.Error("计划类型错误", zap.String("source_type", plan.SourceType.String()))
-
-			return errors.New("计划类型错误")
-		}
 
 		addition := new(models.AutoIngestPlanSubscribeAddition)
 		if err := plan.Addition.Unmarshal(addition); err != nil {
@@ -566,4 +576,28 @@ func validateRefreshSubscribeOwnerSnapshot(logger *zap.Logger, req *topic.AutoIn
 	)
 
 	return false
+}
+
+func (h *handler) resetRefreshSubscribeRetryState(ctx *taskcontext.Context, req *topic.AutoIngestRefreshSubscribeRequest) (int64, bool, error) {
+	if req.RetryReset == nil {
+		return 0, false, nil
+	}
+
+	fields := []utils.Field{utils.WithField("offset", req.RetryReset.Offset)}
+	if req.RetryReset.ResetCounters {
+		fields = append(fields,
+			utils.WithField("add_count", int64(0)),
+			utils.WithField("failed_count", int64(0)),
+		)
+	}
+
+	if err := h.autoIngestPlanService.UpdateByOwner(ctx.GetContext(), &autoingestplanSvi.UpdateRequest{
+		ID:      req.PlanId,
+		UserID:  req.ExpectedUserID,
+		IsAdmin: req.TriggeredByAdmin,
+	}, fields...); err != nil {
+		return 0, false, err
+	}
+
+	return req.RetryReset.Offset, true, nil
 }

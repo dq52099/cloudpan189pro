@@ -7,23 +7,13 @@ import (
 
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
-	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
-	autoingestplanSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestplan"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
-	"go.uber.org/zap"
 )
-
-type autoIngestRetrySnapshot struct {
-	offset      int64
-	addCount    int64
-	failedCount int64
-}
 
 type autoIngestRetryErrorPhase string
 
 const (
-	autoIngestRetryPhaseReset   autoIngestRetryErrorPhase = "reset"
 	autoIngestRetryPhaseEnqueue autoIngestRetryErrorPhase = "enqueue"
 )
 
@@ -40,62 +30,20 @@ func (e *autoIngestRetryError) Unwrap() error {
 	return e.err
 }
 
-func snapshotAutoIngestRetryState(plan *models.AutoIngestPlan) autoIngestRetrySnapshot {
-	return autoIngestRetrySnapshot{
-		offset:      plan.Offset,
-		addCount:    plan.AddCount,
-		failedCount: plan.FailedCount,
-	}
-}
-
 func failAutoIngestRetryError(ctx *httpcontext.Context, err error) {
 	var retryErr *autoIngestRetryError
-	if errors.As(err, &retryErr) && retryErr.phase == autoIngestRetryPhaseReset {
-		ctx.Fail(codePlanUpdateFailed.WithError(err))
+	if errors.As(err, &retryErr) && retryErr.phase == autoIngestRetryPhaseEnqueue {
+		ctx.Fail(codePlanRefreshFailed.WithError(err))
 
 		return
 	}
 
-	ctx.Fail(codePlanRefreshFailed.WithError(err))
+	ctx.Fail(codePlanUpdateFailed.WithError(err))
 }
 
-func (h *handler) resetAutoIngestRetryState(ctx *httpcontext.Context, planID int64, offset int64, resetCounters bool) error {
-	if !resetCounters {
-		return h.planService.UpdateByOwner(ctx.GetContext(), retryUpdateRequest(ctx, planID), utils.WithField("offset", offset))
-	}
-
-	return h.planService.UpdateByOwner(ctx.GetContext(), retryUpdateRequest(ctx, planID),
-		utils.WithField("offset", offset),
-		utils.WithField("add_count", int64(0)),
-		utils.WithField("failed_count", int64(0)),
-	)
-}
-
-func (h *handler) restoreAutoIngestRetryState(ctx *httpcontext.Context, planID int64, snapshot autoIngestRetrySnapshot) {
-	if err := h.planService.UpdateByOwner(ctx.GetContext(), retryUpdateRequest(ctx, planID),
-		utils.WithField("offset", snapshot.offset),
-		utils.WithField("add_count", snapshot.addCount),
-		utils.WithField("failed_count", snapshot.failedCount),
-	); err != nil {
-		ctx.GetContext().Error("恢复自动入库重试状态失败",
-			zap.Int64("plan_id", planID),
-			zap.Int64("offset", snapshot.offset),
-			zap.Int64("add_count", snapshot.addCount),
-			zap.Int64("failed_count", snapshot.failedCount),
-			zap.Error(err))
-	}
-}
-
-func retryUpdateRequest(ctx *httpcontext.Context, planID int64) *autoingestplanSvi.UpdateRequest {
-	return &autoingestplanSvi.UpdateRequest{
-		ID:      planID,
-		UserID:  ctx.GetInt64(consts.CtxKeyUserId),
-		IsAdmin: ctx.GetBool(consts.CtxKeyIsAdmin),
-	}
-}
-
-func (h *handler) enqueueAutoIngestRetryTask(ctx *httpcontext.Context, planID int64, isRetry bool) error {
+func (h *handler) enqueueAutoIngestRetryTask(ctx *httpcontext.Context, planID int64, isRetry bool, retryReset *topic.AutoIngestRetryStateReset) error {
 	taskReq := newAutoIngestRefreshTask(ctx, planID, isRetry)
+	taskReq.RetryReset = retryReset
 
 	body, err := json.Marshal(taskReq)
 	if err != nil {
@@ -123,14 +71,10 @@ func (h *handler) dispatchRetryWithRollback(ctx *httpcontext.Context, plan *mode
 		return fmt.Errorf("自动挂载计划不存在")
 	}
 
-	snapshot := snapshotAutoIngestRetryState(plan)
-	if err := h.resetAutoIngestRetryState(ctx, plan.ID, offset, resetCounters); err != nil {
-		return &autoIngestRetryError{phase: autoIngestRetryPhaseReset, err: err}
-	}
-
-	if err := h.enqueueAutoIngestRetryTask(ctx, plan.ID, isRetry); err != nil {
-		h.restoreAutoIngestRetryState(ctx, plan.ID, snapshot)
-
+	if err := h.enqueueAutoIngestRetryTask(ctx, plan.ID, isRetry, &topic.AutoIngestRetryStateReset{
+		Offset:        offset,
+		ResetCounters: resetCounters,
+	}); err != nil {
 		return &autoIngestRetryError{phase: autoIngestRetryPhaseEnqueue, err: err}
 	}
 

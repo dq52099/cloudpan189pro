@@ -3,7 +3,6 @@ package autoingest
 import (
 	stdctx "context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/taskengine"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	autoingestlogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestlog"
 	autoingestplanSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestplan"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/autoingest"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
@@ -187,6 +187,14 @@ func (m *mockPlanAccessTaskEngine) PushMessage(ctx stdctx.Context, taskTopic tas
 	m.payloads = append(m.payloads, payload)
 
 	return m.pushErr
+}
+
+type mockPlanAccessLogService struct {
+	autoingestlogSvi.Service
+}
+
+func (m *mockPlanAccessLogService) Create(ctx appContext.Context, planID int64, level autoingest.LogLevel, content string) (int64, error) {
+	return 1, nil
 }
 
 func newPlanAccessRouter(handler httpcontext.HandlerFunc) *gin.Engine {
@@ -673,10 +681,10 @@ func TestRefreshAndRetryFailedRejectNegativePlanIDBeforeQuerying(t *testing.T) {
 	}
 }
 
-func TestRetryPlanRestoresStateWhenQueueingFails(t *testing.T) {
+func TestRetryPlanDoesNotResetStateBeforeQueueing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	taskEngine := &mockPlanAccessTaskEngine{pushErr: errors.New("queue down")}
+	taskEngine := &mockPlanAccessTaskEngine{}
 	planService := &mockPlanAccessService{
 		plans: map[int64]*models.AutoIngestPlan{
 			11: {
@@ -697,8 +705,8 @@ func TestRetryPlanRestoresStateWhenQueueingFails(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)
 
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
 	}
 
 	if len(planService.offsetIDs) != 0 {
@@ -709,39 +717,33 @@ func TestRetryPlanRestoresStateWhenQueueingFails(t *testing.T) {
 		t.Fatalf("expected retry plan not to use separate counter reset, got %v", planService.resetCounterIDs)
 	}
 
-	if got, want := planService.updatedIDs, []int64{11, 11}; !int64SlicesEqual(got, want) {
-		t.Fatalf("expected reset and rollback updates %v, got %v", want, got)
+	if len(planService.updatedIDs) != 0 || len(planService.updateRequests) != 0 || len(planService.updatedFields) != 0 {
+		t.Fatalf("expected retry plan not to update state before queueing, ids=%v reqs=%d fields=%d",
+			planService.updatedIDs, len(planService.updateRequests), len(planService.updatedFields))
 	}
 
-	if len(planService.updatedFields) != 2 {
-		t.Fatalf("expected reset and rollback fields, got %d", len(planService.updatedFields))
+	if len(taskEngine.payloads) != 1 {
+		t.Fatalf("expected one queued retry task, got %d", len(taskEngine.payloads))
 	}
 
-	if len(planService.updateRequests) != 2 {
-		t.Fatalf("expected owner-scoped reset and rollback updates, got %d", len(planService.updateRequests))
+	var taskReq topic.AutoIngestRefreshSubscribeRequest
+	if err := json.Unmarshal(taskEngine.payloads[0], &taskReq); err != nil {
+		t.Fatal(err)
 	}
 
-	for _, updateReq := range planService.updateRequests {
-		if updateReq.ID != 11 || updateReq.UserID != 100 || updateReq.IsAdmin {
-			t.Fatalf("unexpected retry update request: %+v", updateReq)
-		}
+	if taskReq.PlanId != 11 || !taskReq.IsRetry || taskReq.ExpectedUserID != 100 || taskReq.TriggeredByAdmin {
+		t.Fatalf("unexpected retry task payload: %+v", taskReq)
 	}
 
-	resetFields := fieldsToMap(planService.updatedFields[0])
-	if resetFields["offset"] != int64(1) || resetFields["add_count"] != int64(0) || resetFields["failed_count"] != int64(0) {
-		t.Fatalf("unexpected reset fields: %+v", resetFields)
-	}
-
-	rollbackFields := fieldsToMap(planService.updatedFields[1])
-	if rollbackFields["offset"] != int64(88) || rollbackFields["add_count"] != int64(7) || rollbackFields["failed_count"] != int64(3) {
-		t.Fatalf("unexpected rollback fields: %+v", rollbackFields)
+	if taskReq.RetryReset == nil || taskReq.RetryReset.Offset != 1 || !taskReq.RetryReset.ResetCounters {
+		t.Fatalf("unexpected retry reset payload: %+v", taskReq.RetryReset)
 	}
 }
 
-func TestRetryFailedRestoresOffsetWhenQueueingFails(t *testing.T) {
+func TestRetryFailedDoesNotResetStateBeforeQueueing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	taskEngine := &mockPlanAccessTaskEngine{pushErr: errors.New("queue down")}
+	taskEngine := &mockPlanAccessTaskEngine{}
 	planService := &mockPlanAccessService{
 		plans: map[int64]*models.AutoIngestPlan{
 			11: {
@@ -755,15 +757,15 @@ func TestRetryFailedRestoresOffsetWhenQueueingFails(t *testing.T) {
 		},
 	}
 
-	router := newPlanAccessRouter(NewHandler(taskEngine, planService, nil, nil).RetryFailed())
+	router := newPlanAccessRouter(NewHandler(taskEngine, planService, &mockPlanAccessLogService{}, nil).RetryFailed())
 	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/action", strings.NewReader(`{"planId":11}`))
 	req.Header.Set("Content-Type", "application/json")
 
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)
 
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
 	}
 
 	if len(planService.offsetIDs) != 0 {
@@ -774,27 +776,9 @@ func TestRetryFailedRestoresOffsetWhenQueueingFails(t *testing.T) {
 		t.Fatalf("expected retry failed not to reset counters, got %v", planService.resetCounterIDs)
 	}
 
-	if got, want := planService.updatedIDs, []int64{11, 11}; !int64SlicesEqual(got, want) {
-		t.Fatalf("expected reset and rollback updates %v, got %v", want, got)
-	}
-
-	if len(planService.updateRequests) != 2 {
-		t.Fatalf("expected owner-scoped reset and rollback updates, got %d", len(planService.updateRequests))
-	}
-
-	for _, updateReq := range planService.updateRequests {
-		if updateReq.ID != 11 || updateReq.UserID != 100 || updateReq.IsAdmin {
-			t.Fatalf("unexpected retry update request: %+v", updateReq)
-		}
-	}
-
-	if len(planService.updatedFields) != 2 {
-		t.Fatalf("expected reset and rollback fields, got %d", len(planService.updatedFields))
-	}
-
-	resetFields := fieldsToMap(planService.updatedFields[0])
-	if resetFields["offset"] != int64(0) {
-		t.Fatalf("unexpected reset fields: %+v", resetFields)
+	if len(planService.updatedIDs) != 0 || len(planService.updateRequests) != 0 || len(planService.updatedFields) != 0 {
+		t.Fatalf("expected retry failed not to update state before queueing, ids=%v reqs=%d fields=%d",
+			planService.updatedIDs, len(planService.updateRequests), len(planService.updatedFields))
 	}
 
 	if len(taskEngine.payloads) != 1 {
@@ -810,8 +794,7 @@ func TestRetryFailedRestoresOffsetWhenQueueingFails(t *testing.T) {
 		t.Fatalf("unexpected retry failed task payload: %+v", taskReq)
 	}
 
-	fields := fieldsToMap(planService.updatedFields[1])
-	if fields["offset"] != int64(66) || fields["add_count"] != int64(4) || fields["failed_count"] != int64(1) {
-		t.Fatalf("unexpected rollback fields: %+v", fields)
+	if taskReq.RetryReset == nil || taskReq.RetryReset.Offset != 0 || taskReq.RetryReset.ResetCounters {
+		t.Fatalf("unexpected retry failed reset payload: %+v", taskReq.RetryReset)
 	}
 }

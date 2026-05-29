@@ -514,6 +514,67 @@ func TestScanFileSkipsWhenMountPointOwnerChanged(t *testing.T) {
 	}
 }
 
+func TestScanFileReturnsMountPointOwnerLookupError(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := filetasklog.NewService(tDB)
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		childrenByParent: map[int64][]*models.VirtualFile{},
+		deleteErrByID:    map[int64]error{},
+		filesByID: map[int64]*models.VirtualFile{
+			10: {ID: 10, TopId: 10, IsTop: true, Name: "top", IsDir: true, OsType: models.OsTypeFolder},
+		},
+	}
+	lookupErr := errors.New("db unavailable")
+	mountPointService := &mockBatchModifyTokenMountPointService{
+		queryErrByID: map[int64]error{
+			10: lookupErr,
+		},
+	}
+
+	oldMediaConfig := shared.MediaConfig
+	shared.MediaConfig = nil
+
+	defer func() {
+		shared.MediaConfig = oldMediaConfig
+	}()
+
+	handler := NewHandler(
+		zap.NewNop(),
+		virtualFileService,
+		nil,
+		nil,
+		mountPointService,
+		logService,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	req := topic.FileScanFileRequest{
+		FileId:         10,
+		ExpectedUserID: 100,
+	}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.ScanFile())
+	if err := processor.Process(stdctx.Background(), payload); !errors.Is(err, lookupErr) {
+		t.Fatalf("expected owner lookup error %v, got %v", lookupErr, err)
+	}
+
+	var logCount int64
+	if err := tDB.db.Model(&models.FileTaskLog{}).Count(&logCount).Error; err != nil {
+		t.Fatalf("count task logs: %v", err)
+	}
+
+	if logCount != 0 {
+		t.Fatalf("expected owner lookup failure before task log creation, got %d", logCount)
+	}
+}
+
 func TestHandleBatchDeleteRejectsEmptyIDList(t *testing.T) {
 	handler := NewHandler(
 		zap.NewNop(),

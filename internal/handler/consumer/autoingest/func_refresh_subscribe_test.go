@@ -151,6 +151,8 @@ type mockRefreshSubscribePlanService struct {
 	updatedOffset int64
 	addDelta      int64
 	failedDelta   int64
+	updateReqs    []*autoingestplan.UpdateRequest
+	updatedFields [][]utils.Field
 }
 
 func (m *mockRefreshSubscribePlanService) Query(ctx context.Context, id int64) (*models.AutoIngestPlan, error) {
@@ -159,6 +161,17 @@ func (m *mockRefreshSubscribePlanService) Query(ctx context.Context, id int64) (
 
 func (m *mockRefreshSubscribePlanService) UpdateOffset(ctx context.Context, id int64, offset int64) error {
 	m.updatedOffset = offset
+
+	return nil
+}
+
+func (m *mockRefreshSubscribePlanService) UpdateByOwner(ctx context.Context, req *autoingestplan.UpdateRequest, fields ...utils.Field) error {
+	if req != nil {
+		copied := *req
+		m.updateReqs = append(m.updateReqs, &copied)
+	}
+
+	m.updatedFields = append(m.updatedFields, append([]utils.Field(nil), fields...))
 
 	return nil
 }
@@ -423,6 +436,15 @@ func runRefreshSubscribeHandlerWithRequest(
 	return processor.Process(stdctx.Background(), payload)
 }
 
+func refreshSubscribeFieldsToMap(fields []utils.Field) map[string]any {
+	result := make(map[string]any, len(fields))
+	for _, field := range fields {
+		result[field.Key] = field.Value
+	}
+
+	return result
+}
+
 func TestRefreshSubscribeSkipsManualTaskWhenOwnerChanged(t *testing.T) {
 	planService := &mockRefreshSubscribePlanService{
 		plan:          newRefreshSubscribePlan(100, autoingest.OnConflictRename),
@@ -466,6 +488,119 @@ func TestRefreshSubscribeSkipsManualTaskWhenOwnerChanged(t *testing.T) {
 
 	if storageService.Count() != 0 {
 		t.Fatalf("expected owner mismatch task not to create storage, got %d", storageService.Count())
+	}
+}
+
+func TestRefreshSubscribeSkipsRetryResetWhenOwnerChanged(t *testing.T) {
+	planService := &mockRefreshSubscribePlanService{
+		plan:          newRefreshSubscribePlan(100, autoingest.OnConflictRename),
+		updatedOffset: -1,
+	}
+	planService.plan.UserID = 8
+
+	cloudService := &mockRefreshSubscribeCloudBridgeService{}
+	logService := &mockRefreshSubscribeLogService{}
+	storageService := &mockRefreshSubscribeStorageFacadeService{}
+	virtualService := &mockRefreshSubscribeVirtualFileService{}
+	taskEngine := &mockRefreshSubscribeTaskEngine{}
+	handler := NewHandler(
+		taskEngine,
+		cloudService,
+		planService,
+		logService,
+		storageService,
+		virtualService,
+	)
+
+	err := runRefreshSubscribeHandlerWithRequest(t, handler, topic.AutoIngestRefreshSubscribeRequest{
+		PlanId:         planService.plan.ID,
+		ExpectedUserID: 7,
+		RetryReset: &topic.AutoIngestRetryStateReset{
+			Offset:        1,
+			ResetCounters: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("refresh subscribe: %v", err)
+	}
+
+	if len(planService.updateReqs) != 0 || len(planService.updatedFields) != 0 {
+		t.Fatalf("expected owner mismatch task not to reset retry state, reqs=%d fields=%d", len(planService.updateReqs), len(planService.updatedFields))
+	}
+
+	if planService.updatedOffset != -1 || planService.addDelta != 0 || planService.failedDelta != 0 {
+		t.Fatalf("expected owner mismatch task not to update runtime state, offset=%d add=%d failed=%d",
+			planService.updatedOffset, planService.addDelta, planService.failedDelta)
+	}
+}
+
+func TestRefreshSubscribeAppliesRetryResetBeforeScanning(t *testing.T) {
+	planService := &mockRefreshSubscribePlanService{
+		plan:          newRefreshSubscribePlan(200, autoingest.OnConflictRename),
+		updatedOffset: -1,
+	}
+	cloudService := &mockRefreshSubscribeCloudBridgeService{
+		items: []*cloudbridge.ShareResourceInfo{{
+			Name:      "movie",
+			ID:        "cloud-1",
+			ShareId:   88,
+			ShareTime: time.Unix(150, 0),
+			IsTop:     1,
+		}},
+	}
+	logService := &mockRefreshSubscribeLogService{}
+	storageService := &mockRefreshSubscribeStorageFacadeService{}
+	virtualService := &mockRefreshSubscribeVirtualFileService{}
+	taskEngine := &mockRefreshSubscribeTaskEngine{}
+	handler := NewHandler(
+		taskEngine,
+		cloudService,
+		planService,
+		logService,
+		storageService,
+		virtualService,
+	)
+
+	err := runRefreshSubscribeHandlerWithRequest(t, handler, topic.AutoIngestRefreshSubscribeRequest{
+		PlanId:         planService.plan.ID,
+		ExpectedUserID: 7,
+		RetryReset: &topic.AutoIngestRetryStateReset{
+			Offset:        1,
+			ResetCounters: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("refresh subscribe: %v", err)
+	}
+
+	if len(planService.updateReqs) != 1 {
+		t.Fatalf("expected one owner-scoped retry reset, got %d", len(planService.updateReqs))
+	}
+
+	updateReq := planService.updateReqs[0]
+	if updateReq.ID != planService.plan.ID || updateReq.UserID != 7 || updateReq.IsAdmin {
+		t.Fatalf("unexpected retry reset request: %+v", updateReq)
+	}
+
+	if len(planService.updatedFields) != 1 {
+		t.Fatalf("expected one retry reset field set, got %d", len(planService.updatedFields))
+	}
+
+	resetFields := refreshSubscribeFieldsToMap(planService.updatedFields[0])
+	if resetFields["offset"] != int64(1) || resetFields["add_count"] != int64(0) || resetFields["failed_count"] != int64(0) {
+		t.Fatalf("unexpected retry reset fields: %+v", resetFields)
+	}
+
+	if planService.updatedOffset != 150 {
+		t.Fatalf("expected offset to advance from reset offset to 150, got %d", planService.updatedOffset)
+	}
+
+	if planService.addDelta != 1 || planService.failedDelta != 0 {
+		t.Fatalf("expected one item added after reset, add=%d failed=%d", planService.addDelta, planService.failedDelta)
+	}
+
+	if storageService.Count() != 1 {
+		t.Fatalf("expected item after reset to be created, got %d", storageService.Count())
 	}
 }
 

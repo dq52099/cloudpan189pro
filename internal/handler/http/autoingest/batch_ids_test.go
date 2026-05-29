@@ -985,34 +985,37 @@ func TestBatchRetryCountsMissingPlansAsFailed(t *testing.T) {
 		t.Fatalf("expected batch retry not to use separate counter resets, got %v", planService.resetIDs)
 	}
 
-	gotUpdatedIDs := append([]int64(nil), planService.updatedIDs...)
-	sort.Slice(gotUpdatedIDs, func(i, j int) bool { return gotUpdatedIDs[i] < gotUpdatedIDs[j] })
-
-	if want := []int64{11, 22}; !int64SlicesEqual(gotUpdatedIDs, want) {
-		t.Fatalf("expected retry reset updates %v, got %v", want, gotUpdatedIDs)
+	if len(planService.updatedIDs) != 0 || len(planService.updateReqs) != 0 || len(planService.updatedFields) != 0 {
+		t.Fatalf("expected batch retry not to update state before queueing, ids=%v reqs=%d fields=%d",
+			planService.updatedIDs, len(planService.updateReqs), len(planService.updatedFields))
 	}
 
 	if len(taskEngine.payloads) != 2 {
 		t.Fatalf("expected 2 queued retry tasks, got %d", len(taskEngine.payloads))
 	}
 
-	if len(planService.updateReqs) != 2 {
-		t.Fatalf("expected owner-scoped retry updates, got %d", len(planService.updateReqs))
-	}
-
-	gotUpdateReqIDs := make([]int64, 0, len(planService.updateReqs))
-	for _, updateReq := range planService.updateReqs {
-		if updateReq.UserID != 100 || updateReq.IsAdmin {
-			t.Fatalf("unexpected retry update request: %+v", updateReq)
+	queuedIDs := make([]int64, 0, len(taskEngine.payloads))
+	for _, payload := range taskEngine.payloads {
+		var taskReq topic.AutoIngestRefreshSubscribeRequest
+		if err := json.Unmarshal(payload, &taskReq); err != nil {
+			t.Fatal(err)
 		}
 
-		gotUpdateReqIDs = append(gotUpdateReqIDs, updateReq.ID)
+		if !taskReq.IsRetry || taskReq.ExpectedUserID != 100 || taskReq.TriggeredByAdmin {
+			t.Fatalf("unexpected retry task owner snapshot: %+v", taskReq)
+		}
+
+		if taskReq.RetryReset == nil || taskReq.RetryReset.Offset != 1 || !taskReq.RetryReset.ResetCounters {
+			t.Fatalf("unexpected retry reset payload: %+v", taskReq.RetryReset)
+		}
+
+		queuedIDs = append(queuedIDs, taskReq.PlanId)
 	}
 
-	sort.Slice(gotUpdateReqIDs, func(i, j int) bool { return gotUpdateReqIDs[i] < gotUpdateReqIDs[j] })
+	sort.Slice(queuedIDs, func(i, j int) bool { return queuedIDs[i] < queuedIDs[j] })
 
-	if want := []int64{11, 22}; !int64SlicesEqual(gotUpdateReqIDs, want) {
-		t.Fatalf("expected retry update requests %v, got %v", want, gotUpdateReqIDs)
+	if want := []int64{11, 22}; !int64SlicesEqual(queuedIDs, want) {
+		t.Fatalf("expected retry queued IDs %v, got %v", want, queuedIDs)
 	}
 
 	var response struct {
@@ -1027,7 +1030,7 @@ func TestBatchRetryCountsMissingPlansAsFailed(t *testing.T) {
 	}
 }
 
-func TestBatchRetryRestoresStateWhenQueueingFails(t *testing.T) {
+func TestBatchRetryDoesNotResetStateWhenQueueingFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	taskEngine := &mockBatchAutoIngestTaskEngine{pushErr: errors.New("queue down")}
@@ -1071,32 +1074,9 @@ func TestBatchRetryRestoresStateWhenQueueingFails(t *testing.T) {
 		t.Fatalf("expected batch retry not to use separate counter reset, got %v", planService.resetIDs)
 	}
 
-	if got, want := planService.updatedIDs, []int64{11, 11}; !int64SlicesEqual(got, want) {
-		t.Fatalf("expected reset and rollback updates %v, got %v", want, got)
-	}
-
-	if len(planService.updatedFields) != 2 {
-		t.Fatalf("expected reset and rollback fields, got %d", len(planService.updatedFields))
-	}
-
-	if len(planService.updateReqs) != 2 {
-		t.Fatalf("expected owner-scoped reset and rollback updates, got %d", len(planService.updateReqs))
-	}
-
-	for _, updateReq := range planService.updateReqs {
-		if updateReq.ID != 11 || updateReq.UserID != 100 || updateReq.IsAdmin {
-			t.Fatalf("unexpected retry update request: %+v", updateReq)
-		}
-	}
-
-	resetFields := fieldsToMap(planService.updatedFields[0])
-	if resetFields["offset"] != int64(1) || resetFields["add_count"] != int64(0) || resetFields["failed_count"] != int64(0) {
-		t.Fatalf("unexpected reset fields: %+v", resetFields)
-	}
-
-	rollbackFields := fieldsToMap(planService.updatedFields[1])
-	if rollbackFields["offset"] != int64(44) || rollbackFields["add_count"] != int64(5) || rollbackFields["failed_count"] != int64(2) {
-		t.Fatalf("unexpected rollback fields: %+v", rollbackFields)
+	if len(planService.updatedIDs) != 0 || len(planService.updateReqs) != 0 || len(planService.updatedFields) != 0 {
+		t.Fatalf("expected batch retry not to update state before queueing, ids=%v reqs=%d fields=%d",
+			planService.updatedIDs, len(planService.updateReqs), len(planService.updatedFields))
 	}
 
 	var response struct {
@@ -1149,21 +1129,26 @@ func TestBatchRetrySkipsOtherUsersPlans(t *testing.T) {
 		t.Fatalf("expected batch retry not to use separate counter reset, got %v", planService.resetIDs)
 	}
 
-	if got, want := planService.updatedIDs, []int64{11}; !int64SlicesEqual(got, want) {
-		t.Fatalf("expected reset update IDs %v, got %v", want, got)
-	}
-
-	if len(planService.updateReqs) != 1 {
-		t.Fatalf("expected one owner-scoped retry update, got %d", len(planService.updateReqs))
-	}
-
-	updateReq := planService.updateReqs[0]
-	if updateReq.ID != 11 || updateReq.UserID != 100 || updateReq.IsAdmin {
-		t.Fatalf("unexpected retry update request: %+v", updateReq)
+	if len(planService.updatedIDs) != 0 || len(planService.updateReqs) != 0 || len(planService.updatedFields) != 0 {
+		t.Fatalf("expected batch retry not to update state before queueing, ids=%v reqs=%d fields=%d",
+			planService.updatedIDs, len(planService.updateReqs), len(planService.updatedFields))
 	}
 
 	if len(taskEngine.payloads) != 1 {
 		t.Fatalf("expected 1 queued retry task, got %d", len(taskEngine.payloads))
+	}
+
+	var taskReq topic.AutoIngestRefreshSubscribeRequest
+	if err := json.Unmarshal(taskEngine.payloads[0], &taskReq); err != nil {
+		t.Fatal(err)
+	}
+
+	if taskReq.PlanId != 11 || !taskReq.IsRetry || taskReq.ExpectedUserID != 100 || taskReq.TriggeredByAdmin {
+		t.Fatalf("unexpected retry task payload: %+v", taskReq)
+	}
+
+	if taskReq.RetryReset == nil || taskReq.RetryReset.Offset != 1 || !taskReq.RetryReset.ResetCounters {
+		t.Fatalf("unexpected retry reset payload: %+v", taskReq.RetryReset)
 	}
 
 	var response struct {

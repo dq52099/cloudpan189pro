@@ -131,8 +131,10 @@ func (h *handler) Add() httpcontext.HandlerFunc {
 		}
 
 		taskReq := &topic.FileScanFileRequest{
-			FileId: id,
-			Deep:   true,
+			FileId:           id,
+			Deep:             true,
+			ExpectedUserID:   userID,
+			TriggeredByAdmin: isAdmin,
 		}
 
 		resp := &addResponse{

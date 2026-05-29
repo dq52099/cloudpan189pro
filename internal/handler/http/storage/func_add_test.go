@@ -138,6 +138,10 @@ func TestAddQueuesInitialScanTask(t *testing.T) {
 		t.Fatalf("expected deep scan for file 11, got %+v", taskReq)
 	}
 
+	if taskReq.ExpectedUserID != 100 || taskReq.TriggeredByAdmin {
+		t.Fatalf("expected queued scan user snapshot user=100 admin=false, got %+v", taskReq)
+	}
+
 	if taskEngine.paths[0] != "/subscribed" {
 		t.Fatalf("expected queued full path /subscribed, got %v", taskEngine.paths[0])
 	}

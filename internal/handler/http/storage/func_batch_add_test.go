@@ -16,6 +16,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/storagefacade"
+	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
 )
 
@@ -227,6 +228,23 @@ func TestBatchAddReportsScanDispatchSuccess(t *testing.T) {
 
 	if result.ScanError != "" {
 		t.Fatalf("expected empty scan error, got %q", result.ScanError)
+	}
+
+	if len(taskEngine.payloads) != 1 {
+		t.Fatalf("expected one queued scan task, got %d", len(taskEngine.payloads))
+	}
+
+	var taskReq topic.FileScanFileRequest
+	if err := json.Unmarshal(taskEngine.payloads[0], &taskReq); err != nil {
+		t.Fatal(err)
+	}
+
+	if taskReq.FileId != 11 || !taskReq.Deep {
+		t.Fatalf("expected deep scan for file 11, got %+v", taskReq)
+	}
+
+	if taskReq.ExpectedUserID != 100 || taskReq.TriggeredByAdmin {
+		t.Fatalf("expected queued scan user snapshot user=100 admin=false, got %+v", taskReq)
 	}
 }
 

@@ -28,10 +28,16 @@ func (r FileClearFileRequest) Topic() taskengine.Topic {
 }
 
 type AutoIngestRefreshSubscribeRequest struct {
-	PlanId           int64 `json:"planId"`
-	IsRetry          bool  `json:"isRetry"`                    // 是否是重试操作
-	ExpectedUserID   int64 `json:"expectedUserId,omitempty"`   // HTTP 触发时的计划归属快照，0 表示系统任务或旧任务
-	TriggeredByAdmin bool  `json:"triggeredByAdmin,omitempty"` // 是否由管理员手动触发
+	PlanId           int64                      `json:"planId"`
+	IsRetry          bool                       `json:"isRetry"`                    // 是否是重试操作
+	ExpectedUserID   int64                      `json:"expectedUserId,omitempty"`   // HTTP 触发时的计划归属快照，0 表示系统任务或旧任务
+	TriggeredByAdmin bool                       `json:"triggeredByAdmin,omitempty"` // 是否由管理员手动触发
+	RetryReset       *AutoIngestRetryStateReset `json:"retryReset,omitempty"`
+}
+
+type AutoIngestRetryStateReset struct {
+	Offset        int64 `json:"offset"`
+	ResetCounters bool  `json:"resetCounters,omitempty"`
 }
 
 func (r AutoIngestRefreshSubscribeRequest) Topic() taskengine.Topic {
