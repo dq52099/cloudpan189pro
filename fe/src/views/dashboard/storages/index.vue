@@ -1406,7 +1406,7 @@ const selectAllPages = async () => {
     }
 
     console.error('获取全量数据失败:', error)
-    message.error('获取全量数据失败')
+    message.error(getErrorMessage(error, '获取全量数据失败'))
   } finally {
     if (isPageMounted && requestId === selectAllPagesRequestId) {
       isSelectingAllPages.value = false

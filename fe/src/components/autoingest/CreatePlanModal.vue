@@ -242,7 +242,7 @@ import {
   type CreateSubscribePlanRequest,
   type CreateSubscribePlanResponse,
 } from '@/api/autoingest'
-import { type ApiResponse } from '@/utils/api'
+import { getErrorMessage, type ApiResponse } from '@/utils/api'
 import {
   normalizeCreateSubscribePlanResponse,
   normalizeGetSubscribeUserResponse,
@@ -485,7 +485,7 @@ const handleParseSubscribe = () => {
       }
 
       console.error('解析订阅号失败:', err)
-      message.error('解析失败')
+      message.error(getErrorMessage(err, '解析失败'))
     })
     .finally(() => {
       if (isCurrentParseRequest(currentRequestId, currentOperation)) {
@@ -598,7 +598,7 @@ const handleSubmit = () => {
           }
 
           console.error('创建入库计划失败:', err)
-          message.error('创建失败')
+          message.error(getErrorMessage(err, '创建失败'))
         })
         .finally(() => {
           if (isCurrentSubmitRequest(currentRequestId, currentOperation)) {

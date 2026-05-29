@@ -129,7 +129,7 @@ import {
   AUTO_REFRESH_DAYS_MAX,
 } from '@/constants/autoIngest'
 import { updateAutoIngestPlan, type UpdatePlanRequest } from '@/api/autoingest'
-import { type ApiResponse } from '@/utils/api'
+import { getErrorMessage, type ApiResponse } from '@/utils/api'
 
 type CloudTokenOption = { label: string; value: number }
 
@@ -364,7 +364,7 @@ const handleSubmit = () => {
         }
 
         console.error('修改失败', err)
-        message.error('修改失败')
+        message.error(getErrorMessage(err, '修改失败'))
       })
       .finally(() => {
         if (isCurrentSubmitRequest(currentRequestId, currentOperation)) {
