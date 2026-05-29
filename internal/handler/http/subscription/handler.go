@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -32,6 +33,7 @@ const (
 	defaultPanSearchURL          = "https://so.252035.xyz/api/search"
 	defaultSubscriptionMountPath = "/热门订阅"
 	maxPanSearchResponseSize     = 5 << 20
+	subscriptionConfigName       = "subscription_config"
 )
 
 type Handler struct {
@@ -45,7 +47,8 @@ type Handler struct {
 	openaiSvc            interface {
 		GenerateUpgradeKeyword(title, category string) (string, error)
 	}
-	tmdbAPIKey string
+	tmdbAPIKey           string
+	subscriptionConfigMu sync.Mutex
 }
 
 func NewHandler(db *gorm.DB, tmdbSvc tmdb.Service, doubanSvc douban.Service, storageSvc storagefacade.Service, cloudBridgeSvc cloudbridge.Service, logger *zap.Logger, openaiSvc interface {
@@ -67,7 +70,7 @@ func NewHandler(db *gorm.DB, tmdbSvc tmdb.Service, doubanSvc douban.Service, sto
 	}
 
 	var setting Setting
-	if err := db.Where("name = ?", "subscription_config").First(&setting).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+	if err := db.Where("name = ?", subscriptionConfigName).First(&setting).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		logger.Warn("读取订阅配置失败，将使用默认配置", zap.Error(err))
 	} else if setting.Value.TMDBAPIKey != "" {
 		if tmdbSvc != nil {
@@ -570,7 +573,7 @@ func (h *Handler) GetConfig() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
 		var setting Setting
 
-		result := h.db.Where("name = ?", "subscription_config").First(&setting)
+		result := h.db.Where("name = ?", subscriptionConfigName).First(&setting)
 		if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			c.Fail(invalidParams(result.Error))
 
@@ -619,7 +622,7 @@ func (h *Handler) defaultSubscriptionConfig() SubscriptionConfig {
 
 func (h *Handler) loadSubscriptionConfigValue() (models.SubscriptionConfig, error) {
 	var setting Setting
-	if err := h.db.Where("name = ?", "subscription_config").First(&setting).Error; err != nil {
+	if err := h.db.Where("name = ?", subscriptionConfigName).First(&setting).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return models.SubscriptionConfig{}, nil
 		}
@@ -692,73 +695,123 @@ func (h *Handler) UpdateConfig() httpcontext.HandlerFunc {
 			return
 		}
 
-		var setting Setting
-
-		result := h.db.Where("name = ?", "subscription_config").First(&setting)
-		if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			c.Fail(invalidParams(result.Error))
+		config, err := h.updateSubscriptionConfig(c.Request.Context(), &req)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				c.Fail(notFound("订阅配置不存在").WithError(err))
+			} else {
+				c.Fail(invalidParams(err))
+			}
 
 			return
-		}
-
-		config := setting.Value
-		if setting.ID == 0 {
-			defaultConfig := h.defaultSubscriptionConfig()
-			config = models.SubscriptionConfig{
-				EnableTMDB:       defaultConfig.EnableTMDB,
-				EnableDouban:     defaultConfig.EnableDouban,
-				PanSearchURL:     defaultConfig.PanSearchURL,
-				CronExpression:   defaultConfig.CronExpression,
-				DefaultMountPath: defaultConfig.DefaultMountPath,
-				AutoMount:        defaultConfig.AutoMount,
-				TMDBAPIKey:       defaultConfig.TMDBAPIKey,
-				OpenAIAPIKey:     defaultConfig.OpenAIAPIKey,
-				OpenAIBaseURL:    defaultConfig.OpenAIBaseURL,
-				OpenAIModel:      defaultConfig.OpenAIModel,
-			}
-		}
-
-		applySubscriptionConfigUpdate(&config, &req)
-
-		setting.Name = "subscription_config"
-		setting.Value = config
-
-		if setting.ID == 0 {
-			result = h.db.Clauses(clause.OnConflict{
-				Columns:   []clause.Column{{Name: "name"}},
-				DoUpdates: clause.AssignmentColumns([]string{"value"}),
-			}).Create(&setting)
-		} else {
-			result = h.db.Model(&Setting{}).
-				Where("id = ?", setting.ID).
-				Update("value", setting.Value)
-		}
-
-		if result.Error != nil {
-			c.Fail(invalidParams(result.Error))
-
-			return
-		}
-
-		if setting.ID != 0 && result.RowsAffected == 0 {
-			if err := h.checkSubscriptionSettingUpdateResult(result, setting.ID); err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					c.Fail(notFound("订阅配置不存在").WithError(err))
-				} else {
-					c.Fail(invalidParams(err))
-				}
-
-				return
-			}
-		}
-
-		if h.tmdb != nil && req.TMDBAPIKey != nil {
-			h.tmdb.SetAPIKey(config.TMDBAPIKey)
-			h.tmdbAPIKey = config.TMDBAPIKey
-			h.logger.Info("Updated TMDB API Key from subscription config")
 		}
 
 		c.Success(config)
+	}
+}
+
+func (h *Handler) updateSubscriptionConfig(ctx context.Context, req *UpdateConfigReq) (models.SubscriptionConfig, error) {
+	var updatedConfig models.SubscriptionConfig
+
+	err := h.withSubscriptionConfigWriteLock(func() error {
+		if err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := h.ensureSubscriptionConfigSetting(tx); err != nil {
+				return err
+			}
+
+			setting, err := lockSubscriptionConfigSetting(tx)
+			if err != nil {
+				return err
+			}
+
+			config := setting.Value
+			applySubscriptionConfigUpdate(&config, req)
+
+			result := tx.Model(&Setting{}).
+				Where("id = ?", setting.ID).
+				Update("value", config)
+			if err := h.checkSubscriptionSettingUpdateResultInDB(tx, result, setting.ID); err != nil {
+				return err
+			}
+
+			updatedConfig = config
+
+			return nil
+		}); err != nil {
+			return err
+		}
+
+		if h.tmdb != nil && req.TMDBAPIKey != nil {
+			h.tmdb.SetAPIKey(updatedConfig.TMDBAPIKey)
+			h.tmdbAPIKey = updatedConfig.TMDBAPIKey
+			h.logger.Info("Updated TMDB API Key from subscription config")
+		}
+
+		return nil
+	})
+
+	return updatedConfig, err
+}
+
+func (h *Handler) ensureSubscriptionConfigSetting(tx *gorm.DB) error {
+	return tx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "name"}},
+		DoNothing: true,
+	}).Create(&Setting{
+		Name:  subscriptionConfigName,
+		Value: h.defaultSubscriptionConfigValue(),
+	}).Error
+}
+
+func (h *Handler) defaultSubscriptionConfigValue() models.SubscriptionConfig {
+	defaultConfig := h.defaultSubscriptionConfig()
+
+	return models.SubscriptionConfig{
+		EnableTMDB:       defaultConfig.EnableTMDB,
+		EnableDouban:     defaultConfig.EnableDouban,
+		PanSearchURL:     defaultConfig.PanSearchURL,
+		CronExpression:   defaultConfig.CronExpression,
+		DefaultMountPath: defaultConfig.DefaultMountPath,
+		AutoMount:        defaultConfig.AutoMount,
+		TMDBAPIKey:       defaultConfig.TMDBAPIKey,
+		OpenAIAPIKey:     defaultConfig.OpenAIAPIKey,
+		OpenAIBaseURL:    defaultConfig.OpenAIBaseURL,
+		OpenAIModel:      defaultConfig.OpenAIModel,
+	}
+}
+
+func lockSubscriptionConfigSetting(tx *gorm.DB) (*Setting, error) {
+	var setting Setting
+
+	query := tx.Where("name = ?", subscriptionConfigName)
+	if subscriptionConfigSupportsRowLock(tx) {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+
+	if err := query.First(&setting).Error; err != nil {
+		return nil, err
+	}
+
+	return &setting, nil
+}
+
+func (h *Handler) withSubscriptionConfigWriteLock(fn func() error) error {
+	h.subscriptionConfigMu.Lock()
+	defer h.subscriptionConfigMu.Unlock()
+
+	return fn()
+}
+
+func subscriptionConfigSupportsRowLock(db *gorm.DB) bool {
+	if db == nil || db.Dialector == nil {
+		return true
+	}
+
+	switch db.Name() {
+	case "sqlite", "sqlite3":
+		return false
+	default:
+		return true
 	}
 }
 
@@ -805,6 +858,10 @@ func applySubscriptionConfigUpdate(config *models.SubscriptionConfig, req *Updat
 }
 
 func (h *Handler) checkSubscriptionSettingUpdateResult(result *gorm.DB, id int64) error {
+	return h.checkSubscriptionSettingUpdateResultInDB(h.db, result, id)
+}
+
+func (h *Handler) checkSubscriptionSettingUpdateResultInDB(db *gorm.DB, result *gorm.DB, id int64) error {
 	if result.Error != nil {
 		return result.Error
 	}
@@ -814,7 +871,7 @@ func (h *Handler) checkSubscriptionSettingUpdateResult(result *gorm.DB, id int64
 	}
 
 	var count int64
-	if err := h.db.Model(&Setting{}).Where("id = ?", id).Count(&count).Error; err != nil {
+	if err := db.Model(&Setting{}).Where("id = ?", id).Count(&count).Error; err != nil {
 		return err
 	}
 

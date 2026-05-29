@@ -836,7 +836,53 @@ func (s *service) CreateSubscription(sub *models.Subscription) error {
 	sub.CreatedAt = time.Now()
 	sub.UpdatedAt = time.Now()
 
-	return s.db.Create(sub).Error
+	keywords := sub.Keywords
+	listType := sub.ListType
+	mountPath := sub.MountPath
+	enable := sub.Enable
+	enableAutoUpgrade := sub.EnableAutoUpgrade
+	matchCount := sub.MatchCount
+	successCount := sub.SuccessCount
+	lastRunAt := sub.LastRunAt
+	lastMatchAt := sub.LastMatchAt
+	updatedAt := sub.UpdatedAt
+
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(sub).Error; err != nil {
+			return err
+		}
+
+		result := tx.Model(&models.Subscription{}).
+			Where("id = ?", sub.ID).
+			Updates(map[string]interface{}{
+				"keywords":            keywords,
+				"list_type":           listType,
+				"mount_path":          mountPath,
+				"enable":              enable,
+				"enable_auto_upgrade": enableAutoUpgrade,
+				"match_count":         matchCount,
+				"success_count":       successCount,
+				"last_run_at":         lastRunAt,
+				"last_match_at":       lastMatchAt,
+				"updated_at":          updatedAt,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+
+		sub.Keywords = keywords
+		sub.ListType = listType
+		sub.MountPath = mountPath
+		sub.Enable = enable
+		sub.EnableAutoUpgrade = enableAutoUpgrade
+		sub.MatchCount = matchCount
+		sub.SuccessCount = successCount
+		sub.LastRunAt = lastRunAt
+		sub.LastMatchAt = lastMatchAt
+		sub.UpdatedAt = updatedAt
+
+		return nil
+	})
 }
 
 func (s *service) updateSubscriptionRunProgress(sub *models.Subscription) error {

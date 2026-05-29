@@ -235,6 +235,50 @@ func TestUpdateSubscriptionPersistsZeroValues(t *testing.T) {
 	}
 }
 
+func TestCreateSubscriptionPersistsDisabledState(t *testing.T) {
+	db, err := setupTestDB()
+	if err != nil {
+		t.Fatalf("Failed to setup test DB: %v", err)
+	}
+
+	svc := NewService(db, zap.NewNop(), &SubscriptionConfig{})
+	sub := &models.Subscription{
+		Name:              "关闭的订阅",
+		Source:            "tmdb",
+		Category:          "movie",
+		Keywords:          "",
+		ListType:          "",
+		MountPath:         "",
+		Enable:            false,
+		EnableAutoUpgrade: false,
+	}
+
+	if err := svc.CreateSubscription(sub); err != nil {
+		t.Fatalf("Failed to create subscription: %v", err)
+	}
+
+	if sub.Enable {
+		t.Fatal("expected returned subscription to stay disabled")
+	}
+
+	if sub.EnableAutoUpgrade {
+		t.Fatal("expected returned subscription auto upgrade to stay disabled")
+	}
+
+	var created models.Subscription
+	if err := db.First(&created, sub.ID).Error; err != nil {
+		t.Fatalf("Failed to query created subscription: %v", err)
+	}
+
+	if created.Enable {
+		t.Fatal("expected created subscription to stay disabled")
+	}
+
+	if created.EnableAutoUpgrade {
+		t.Fatal("expected auto upgrade to stay disabled")
+	}
+}
+
 func TestUpdateSubscriptionRunProgressReturnsNotFoundWhenMissing(t *testing.T) {
 	db, err := setupTestDB()
 	if err != nil {

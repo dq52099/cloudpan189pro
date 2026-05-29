@@ -8,8 +8,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -78,6 +81,28 @@ func setupSubscriptionHandlerTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
 	}
+
+	if err := db.AutoMigrate(&Setting{}, &models.MountPoint{}); err != nil {
+		t.Fatalf("migrate test db: %v", err)
+	}
+
+	return db
+}
+
+func setupSubscriptionHandlerFileTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "subscription-handler.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open test db: %v", err)
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sql db: %v", err)
+	}
+
+	sqlDB.SetMaxOpenConns(5)
 
 	if err := db.AutoMigrate(&Setting{}, &models.MountPoint{}); err != nil {
 		t.Fatalf("migrate test db: %v", err)
@@ -502,6 +527,154 @@ func TestUpdateConfigPartialUpdatePreservesExistingValues(t *testing.T) {
 	}
 }
 
+func TestUpdateConfigConcurrentPartialUpdatesPreserveFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupSubscriptionHandlerFileTestDB(t)
+
+	existing := &Setting{
+		Name: subscriptionConfigName,
+		Value: models.SubscriptionConfig{
+			EnableTMDB:       true,
+			EnableDouban:     true,
+			PanSearchURL:     "https://old.example.com/api/search",
+			CronExpression:   "0 1 * * *",
+			DefaultMountPath: "/old",
+			AutoMount:        true,
+		},
+	}
+	if err := db.Create(existing).Error; err != nil {
+		t.Fatalf("create setting: %v", err)
+	}
+
+	handler := NewHandler(db, nil, nil, nil, nil, zap.NewNop(), nil)
+
+	const updateCallbackName = "subscription_test_pause_first_config_update"
+
+	const queryCallbackName = "subscription_test_detect_unlocked_config_read"
+
+	firstUpdateReached := make(chan struct{})
+	releaseFirstUpdate := make(chan struct{})
+	staleReadDuringUpdate := make(chan struct{})
+
+	var firstUpdatePaused atomic.Bool
+
+	var firstUpdateReleased atomic.Bool
+
+	var staleReadDetected atomic.Bool
+
+	defer func() {
+		if firstUpdateReleased.CompareAndSwap(false, true) {
+			close(releaseFirstUpdate)
+		}
+	}()
+
+	if err := db.Callback().Update().Before("gorm:update").Register(updateCallbackName, func(tx *gorm.DB) {
+		if !isSubscriptionSettingTestStatement(tx) {
+			return
+		}
+
+		if !firstUpdatePaused.CompareAndSwap(false, true) {
+			return
+		}
+
+		close(firstUpdateReached)
+		<-releaseFirstUpdate
+	}); err != nil {
+		t.Fatalf("register update callback: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = db.Callback().Update().Remove(updateCallbackName)
+	})
+
+	if err := db.Callback().Query().Before("gorm:query").Register(queryCallbackName, func(tx *gorm.DB) {
+		if !isSubscriptionSettingTestStatement(tx) {
+			return
+		}
+
+		if firstUpdatePaused.Load() && !firstUpdateReleased.Load() && staleReadDetected.CompareAndSwap(false, true) {
+			close(staleReadDuringUpdate)
+		}
+	}); err != nil {
+		t.Fatalf("register query callback: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = db.Callback().Query().Remove(queryCallbackName)
+	})
+
+	router := gin.New()
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/config", wrapper.Wrap(handler.UpdateConfig()))
+
+	postConfig := func(body string) subscriptionConfigTestResponse {
+		req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/config", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, req)
+
+		return subscriptionConfigTestResponse{code: recorder.Code, body: recorder.Body.String()}
+	}
+
+	firstDone := make(chan subscriptionConfigTestResponse, 1)
+	go func() {
+		firstDone <- postConfig(`{"panSearchURL":"https://new.example.com/api/search"}`)
+	}()
+
+	select {
+	case <-firstUpdateReached:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected first update to reach update callback")
+	}
+
+	secondDone := make(chan subscriptionConfigTestResponse, 1)
+	go func() {
+		secondDone <- postConfig(`{"cronExpression":"0 3 * * *"}`)
+	}()
+
+	select {
+	case <-staleReadDuringUpdate:
+		t.Fatal("second partial update read subscription config while the first update was not committed")
+	case result := <-secondDone:
+		t.Fatalf("expected second partial update to wait for the first one, got early response %d body=%s", result.code, result.body)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	if firstUpdateReleased.CompareAndSwap(false, true) {
+		close(releaseFirstUpdate)
+	}
+
+	firstResult := waitSubscriptionConfigTestResponse(t, firstDone, "first update")
+
+	secondResult := waitSubscriptionConfigTestResponse(t, secondDone, "second update")
+	if firstResult.code != http.StatusOK {
+		t.Fatalf("expected first update ok, got %d body=%s", firstResult.code, firstResult.body)
+	}
+
+	if secondResult.code != http.StatusOK {
+		t.Fatalf("expected second update ok, got %d body=%s", secondResult.code, secondResult.body)
+	}
+
+	var updated Setting
+	if err := db.Where("name = ?", subscriptionConfigName).First(&updated).Error; err != nil {
+		t.Fatalf("query updated setting: %v", err)
+	}
+
+	if updated.Value.PanSearchURL != "https://new.example.com/api/search" {
+		t.Fatalf("expected first partial update to persist, got %q", updated.Value.PanSearchURL)
+	}
+
+	if updated.Value.CronExpression != "0 3 * * *" {
+		t.Fatalf("expected second partial update to persist, got %q", updated.Value.CronExpression)
+	}
+
+	if !updated.Value.EnableTMDB || !updated.Value.EnableDouban || !updated.Value.AutoMount || updated.Value.DefaultMountPath != "/old" {
+		t.Fatalf("expected untouched fields preserved, got %+v", updated.Value)
+	}
+}
+
 func TestCheckSubscriptionSettingUpdateResultAllowsExistingNoop(t *testing.T) {
 	db := setupSubscriptionHandlerTestDB(t)
 	handler := NewHandler(db, nil, nil, nil, nil, zap.NewNop(), nil)
@@ -530,6 +703,40 @@ func TestCheckSubscriptionSettingUpdateResultReturnsNotFoundWhenMissing(t *testi
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("expected record not found, got %v", err)
 	}
+}
+
+type subscriptionConfigTestResponse struct {
+	code int
+	body string
+}
+
+func waitSubscriptionConfigTestResponse(
+	t *testing.T,
+	ch <-chan subscriptionConfigTestResponse,
+	name string,
+) subscriptionConfigTestResponse {
+	t.Helper()
+
+	select {
+	case result := <-ch:
+		return result
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for %s", name)
+	}
+
+	return subscriptionConfigTestResponse{}
+}
+
+func isSubscriptionSettingTestStatement(tx *gorm.DB) bool {
+	if tx == nil || tx.Statement == nil {
+		return false
+	}
+
+	if tx.Statement.Table == "system_settings" {
+		return true
+	}
+
+	return tx.Statement.Schema != nil && tx.Statement.Schema.Table == "system_settings"
 }
 
 func TestMountSubscriptionPassesCurrentUserIDToStorageFacade(t *testing.T) {

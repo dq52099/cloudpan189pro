@@ -127,13 +127,54 @@ func (s *service) CompleteIfProgressDone(ctx context.Context, key LogKey, opts .
 		return failedResult.Error
 	}
 
+	if failedResult.RowsAffected > 0 {
+		return nil
+	}
+
 	if err := s.ensureTaskLogExists(ctx, id); err != nil {
 		ctx.Error("自动失败文件任务日志失败", zap.Error(err), zap.Int64("task_id", id))
 
 		return err
 	}
 
-	return nil
+	isDone, err := s.isProgressDone(ctx, id)
+	if err != nil {
+		ctx.Error("检查文件任务日志进度失败", zap.Error(err), zap.Int64("task_id", id))
+
+		return err
+	}
+
+	if !isDone {
+		return nil
+	}
+
+	ctx.Warn("文件任务日志状态或进度未满足自动完成条件", zap.Error(errFileTaskLogProgressNotDone), zap.Int64("task_id", id))
+
+	return errFileTaskLogProgressNotDone
+}
+
+func (s *service) isProgressDone(ctx context.Context, id int64) (bool, error) {
+	var log models.FileTaskLog
+
+	err := s.getDB(ctx).
+		Session(&gorm.Session{NewDB: true}).
+		Select("status", "completed", "failed", "total").
+		Where("id = ?", id).
+		Take(&log).
+		Error
+	if err != nil {
+		return false, err
+	}
+
+	if log.Total <= 0 {
+		return false, nil
+	}
+
+	if log.Status == models.StatusCompleted || log.Status == models.StatusFailed {
+		return false, nil
+	}
+
+	return log.Completed >= log.Total || (log.Failed > 0 && log.Completed+log.Failed >= log.Total), nil
 }
 
 func (s *service) ensureTaskLogExists(ctx context.Context, id int64) error {

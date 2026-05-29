@@ -341,6 +341,67 @@ func TestCompleteIfProgressDoneNoopsWhenProgressIncomplete(t *testing.T) {
 	}
 }
 
+func TestCompleteIfProgressDoneReturnsErrorWhenStatusDoesNotMatch(t *testing.T) {
+	tDB := setupFileTaskLogTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	tracker, err := svc.Create(ctx, "batch", "batch delete")
+	if err != nil {
+		t.Fatalf("create task log: %v", err)
+	}
+
+	if err := svc.FlushCount(ctx, tracker, WithCompletedCounter(2), WithTotalCounter(2)); err != nil {
+		t.Fatalf("flush count: %v", err)
+	}
+
+	err = svc.CompleteIfProgressDone(ctx, tracker)
+	if !errors.Is(err, errFileTaskLogProgressNotDone) {
+		t.Fatalf("expected progress not done error, got %v", err)
+	}
+
+	var log models.FileTaskLog
+	if err := tDB.db.First(&log, tracker.GetID()).Error; err != nil {
+		t.Fatalf("query task log: %v", err)
+	}
+
+	if log.Status != models.StatusPending {
+		t.Fatalf("expected status pending, got %q", log.Status)
+	}
+}
+
+func TestCompleteIfProgressDoneNoopsWhenFailedProgressIncomplete(t *testing.T) {
+	tDB := setupFileTaskLogTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	tracker, err := svc.Create(ctx, "batch", "batch delete")
+	if err != nil {
+		t.Fatalf("create task log: %v", err)
+	}
+
+	if err := svc.Running(ctx, tracker); err != nil {
+		t.Fatalf("running task log: %v", err)
+	}
+
+	if err := svc.FlushCount(ctx, tracker, WithFailedCounter(1), WithTotalCounter(2)); err != nil {
+		t.Fatalf("flush count: %v", err)
+	}
+
+	if err := svc.CompleteIfProgressDone(ctx, tracker); err != nil {
+		t.Fatalf("expected incomplete failed progress to be a no-op, got %v", err)
+	}
+
+	var log models.FileTaskLog
+	if err := tDB.db.First(&log, tracker.GetID()).Error; err != nil {
+		t.Fatalf("query task log: %v", err)
+	}
+
+	if log.Status != models.StatusRunning {
+		t.Fatalf("expected status running, got %q", log.Status)
+	}
+}
+
 func TestCompleteIfProgressDoneMarksCompleted(t *testing.T) {
 	tDB := setupFileTaskLogTestDB(t)
 	svc := NewService(tDB)
