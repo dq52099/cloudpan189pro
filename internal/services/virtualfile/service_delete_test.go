@@ -154,6 +154,10 @@ func newVirtualFileForCreate(name string, rev string) *models.VirtualFile {
 	}
 }
 
+func ptrInt64(v int64) *int64 {
+	return &v
+}
+
 func TestCreateRenamesWhenSanitizedNameAlreadyExists(t *testing.T) {
 	tDB := setupVirtualFileTestDB(t)
 	svc := NewService(tDB)
@@ -579,6 +583,10 @@ func TestListVirtualFileRejectsInvalidIDFilters(t *testing.T) {
 		name string
 		req  *ListRequest
 	}{
+		{name: "parent id zero", req: &ListRequest{ParentId: ptrInt64(0)}},
+		{name: "parent id negative", req: &ListRequest{ParentId: ptrInt64(-1)}},
+		{name: "top id zero", req: &ListRequest{TopId: ptrInt64(0)}},
+		{name: "top id negative", req: &ListRequest{TopId: ptrInt64(-1)}},
 		{name: "exclude ids", req: &ListRequest{ExcludeIdList: []int64{1, 0}}},
 		{name: "top ids", req: &ListRequest{TopIdList: []int64{1, -1}}},
 	}

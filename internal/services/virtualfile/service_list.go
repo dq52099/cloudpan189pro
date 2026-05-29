@@ -32,8 +32,8 @@ var allowedVirtualFileSortColumns = map[string]struct{}{
 }
 
 type ListRequest struct {
-	ParentId *int64 `form:"parentId" binding:"omitempty"`
-	TopId    *int64 `form:"topId" binding:"omitempty"`
+	ParentId *int64 `form:"parentId" binding:"omitempty,min=1"`
+	TopId    *int64 `form:"topId" binding:"omitempty,min=1"`
 	LinkId   int64  `form:"-"`
 	IsFolder *int8  `form:"-"`
 	IsTop    *int8  `form:"-"`
@@ -126,6 +126,10 @@ func (s *service) getListQuery(ctx context.Context, req *ListRequest) (*gorm.DB,
 	query := s.getDB(ctx)
 
 	if req.ParentId != nil {
+		if *req.ParentId <= 0 {
+			return nil, errInvalidVirtualFileID
+		}
+
 		query = query.Where("parent_id = ?", *req.ParentId)
 	}
 
@@ -146,6 +150,10 @@ func (s *service) getListQuery(ctx context.Context, req *ListRequest) (*gorm.DB,
 	}
 
 	if req.TopId != nil {
+		if *req.TopId <= 0 {
+			return nil, errInvalidVirtualFileID
+		}
+
 		query = query.Where("top_id = ?", *req.TopId)
 	}
 
