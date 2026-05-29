@@ -80,6 +80,7 @@ import { AddUserModal, ResetPasswordModal, BindGroupModal } from '@/components/u
 import { getListItems, getListTotal } from '@/utils/pagination'
 import { normalizeDashboardUsers } from '@/utils/responseGuards'
 import { formatDateTime } from '@/utils/time'
+import { getErrorMessage } from '@/utils/api'
 
 // 表格数据
 const tableData = ref<Models.UserInfo[]>([])
@@ -178,12 +179,15 @@ const fetchUserList = () => {
         } else {
           paginationReactive.itemCount = total
         }
+      } else {
+        message.error(response.msg || '获取用户列表失败')
       }
     })
     .catch((error) => {
       if (currentRequestId !== userListRequestId) return
 
       console.error('获取用户列表失败:', error)
+      message.error(getErrorMessage(error, '获取用户列表失败'))
     })
     .finally(() => {
       if (currentRequestId !== userListRequestId) return

@@ -133,6 +133,7 @@ import { QrcodeLoginModal, PasswordLoginModal } from '@/components/cloudtoken'
 import { getListItems, getListTotal } from '@/utils/pagination'
 import { normalizeDashboardCloudTokens } from '@/utils/responseGuards'
 import { formatRemainingTime, formatDateTime } from '@/utils/time'
+import { getErrorMessage } from '@/utils/api'
 
 // 表格数据
 const tableData = ref<Models.CloudToken[]>([])
@@ -406,6 +407,8 @@ const fetchTokenList = () => {
         } else {
           paginationReactive.itemCount = total
         }
+      } else {
+        message.error(response.msg || '获取令牌列表失败')
       }
     })
     .catch((error) => {
@@ -414,6 +417,7 @@ const fetchTokenList = () => {
       }
 
       console.error('获取令牌列表失败:', error)
+      message.error(getErrorMessage(error, '获取令牌列表失败'))
     })
     .finally(() => {
       if (requestId !== tokenListRequestId) {
