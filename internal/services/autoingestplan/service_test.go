@@ -443,6 +443,83 @@ func TestServiceUpdateReturnsNotFoundWhenPlanMissing(t *testing.T) {
 	}
 }
 
+func TestServiceUpdateByOwnerRejectsOwnerMismatch(t *testing.T) {
+	tDB := setupTestDB(t)
+	svc := NewService(tDB)
+
+	ctx := context.NewContext(stdctx.Background())
+
+	plan := &models.AutoIngestPlan{
+		Name:       "Owner Plan",
+		Enabled:    true,
+		SourceType: autoingest.SourceTypeSubscribe,
+		Offset:     1,
+		ParentPath: "/test",
+		UserID:     20,
+	}
+	if _, err := svc.Create(ctx, plan); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	err := svc.UpdateByOwner(ctx, &UpdateRequest{ID: plan.ID, UserID: 10}, utils.Field{Key: "name", Value: "hijacked"})
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected record not found, got %v", err)
+	}
+
+	retrieved, err := svc.Query(ctx, plan.ID)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if retrieved.Name != "Owner Plan" {
+		t.Fatalf("expected plan name unchanged, got %q", retrieved.Name)
+	}
+}
+
+func TestServiceUpdateByOwnerAllowsAdmin(t *testing.T) {
+	tDB := setupTestDB(t)
+	svc := NewService(tDB)
+
+	ctx := context.NewContext(stdctx.Background())
+
+	plan := &models.AutoIngestPlan{
+		Name:       "Admin Update",
+		Enabled:    true,
+		SourceType: autoingest.SourceTypeSubscribe,
+		Offset:     1,
+		ParentPath: "/test",
+		UserID:     20,
+	}
+	if _, err := svc.Create(ctx, plan); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	if err := svc.UpdateByOwner(ctx, &UpdateRequest{ID: plan.ID, IsAdmin: true}, utils.Field{Key: "name", Value: "admin-updated"}); err != nil {
+		t.Fatalf("UpdateByOwner as admin failed: %v", err)
+	}
+
+	retrieved, err := svc.Query(ctx, plan.ID)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if retrieved.Name != "admin-updated" {
+		t.Fatalf("expected admin update to persist, got %q", retrieved.Name)
+	}
+}
+
+func TestServiceUpdateByOwnerRejectsMissingUserID(t *testing.T) {
+	tDB := setupTestDB(t)
+	svc := NewService(tDB)
+
+	ctx := context.NewContext(stdctx.Background())
+
+	err := svc.UpdateByOwner(ctx, &UpdateRequest{ID: 1}, utils.Field{Key: "name", Value: "missing-user"})
+	if !errors.Is(err, errInvalidAutoIngestPlanUserID) {
+		t.Fatalf("expected invalid auto ingest plan user id, got %v", err)
+	}
+}
+
 func TestServiceUpdateRejectsInvalidID(t *testing.T) {
 	tDB := setupTestDB(t)
 	svc := NewService(tDB)

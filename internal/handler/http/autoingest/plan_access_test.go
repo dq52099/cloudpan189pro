@@ -31,6 +31,7 @@ type mockPlanAccessService struct {
 	disabledIDs     []int64
 	updatedIDs      []int64
 	updatedFields   [][]utils.Field
+	updateRequests  []*autoingestplanSvi.UpdateRequest
 	offsetIDs       []int64
 	resetCounterIDs []int64
 	deleteRequests  []*autoingestplanSvi.DeleteRequest
@@ -77,6 +78,28 @@ func (m *mockPlanAccessService) Update(ctx appContext.Context, id int64, fields 
 	}
 
 	m.updatedIDs = append(m.updatedIDs, id)
+	m.updatedFields = append(m.updatedFields, append([]utils.Field(nil), fields...))
+
+	return nil
+}
+
+func (m *mockPlanAccessService) UpdateByOwner(ctx appContext.Context, req *autoingestplanSvi.UpdateRequest, fields ...utils.Field) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if req != nil {
+		copied := *req
+		m.updateRequests = append(m.updateRequests, &copied)
+	}
+
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+
+	if req != nil {
+		m.updatedIDs = append(m.updatedIDs, req.ID)
+	}
+
 	m.updatedFields = append(m.updatedFields, append([]utils.Field(nil), fields...))
 
 	return nil
@@ -283,6 +306,36 @@ func TestUpdatePlanReturnsNotFoundWhenUpdateSeesMissingPlan(t *testing.T) {
 	router.ServeHTTP(recorder, req)
 
 	assertPlanNotFoundResponse(t, recorder)
+}
+
+func TestUpdatePlanPassesOwnerToServiceUpdate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	planService := &mockPlanAccessService{
+		plans: map[int64]*models.AutoIngestPlan{
+			11: {ID: 11, UserID: 100, SourceType: autoingest.SourceTypeSubscribe},
+		},
+	}
+
+	router := newPlanAccessRouter(NewHandler(nil, planService, nil, nil).UpdatePlan())
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/action", strings.NewReader(`{"id":11,"name":"new-name"}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if len(planService.updateRequests) != 1 {
+		t.Fatalf("expected one update request, got %d", len(planService.updateRequests))
+	}
+
+	updateReq := planService.updateRequests[0]
+	if updateReq.ID != 11 || updateReq.UserID != 100 || updateReq.IsAdmin {
+		t.Fatalf("unexpected update request: %+v", updateReq)
+	}
 }
 
 func TestPlanActionsReturnNotFoundWhenQueryMissing(t *testing.T) {
