@@ -270,6 +270,7 @@ const AUTO_REFRESH_INTERVAL = 5000
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 let isComponentMounted = false
 let engineStatusRequestId = 0
+let engineStatusRequestInFlight = false
 let hasEngineStatsContractWarning = false
 
 const defaultTaskStats = (): Models.TaskStats => ({
@@ -327,14 +328,21 @@ const warnInvalidEngineStatsOnce = (data: TaskEngineListResponse) => {
 }
 
 // 获取任务引擎状态
-const fetchEngineStatus = () => {
+const fetchEngineStatus = (silent = false) => {
   if (!isComponentMounted) {
     return
   }
 
-  const requestId = ++engineStatusRequestId
+  if (silent && engineStatusRequestInFlight) {
+    return
+  }
 
-  state.loading = true
+  const requestId = ++engineStatusRequestId
+  engineStatusRequestInFlight = true
+
+  if (!silent) {
+    state.loading = true
+  }
 
   getTaskEngineList()
     .then((response) => {
@@ -362,6 +370,7 @@ const fetchEngineStatus = () => {
     .finally(() => {
       if (isComponentMounted && requestId === engineStatusRequestId) {
         state.loading = false
+        engineStatusRequestInFlight = false
       }
     })
 }
@@ -447,7 +456,7 @@ const startAutoRefresh = () => {
   }
 
   refreshTimer = setInterval(() => {
-    fetchEngineStatus()
+    fetchEngineStatus(true)
   }, AUTO_REFRESH_INTERVAL)
 }
 
@@ -470,6 +479,7 @@ onMounted(() => {
 onUnmounted(() => {
   isComponentMounted = false
   engineStatusRequestId += 1
+  engineStatusRequestInFlight = false
   stopAutoRefresh()
 })
 </script>
