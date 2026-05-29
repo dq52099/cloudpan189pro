@@ -8,7 +8,6 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/autoingest"
-	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -75,9 +74,7 @@ func (h *handler) Refresh() httpcontext.HandlerFunc {
 
 		_ = plan.Addition.Unmarshal(&addition)
 
-		taskReq := &topic.AutoIngestRefreshSubscribeRequest{
-			PlanId: plan.ID,
-		}
+		taskReq := newAutoIngestRefreshTask(ctx, plan.ID, false)
 
 		body, jerr := json.Marshal(taskReq)
 		if jerr != nil {

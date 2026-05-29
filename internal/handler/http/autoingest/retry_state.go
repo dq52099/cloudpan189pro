@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	autoingestplanSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestplan"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
 )
@@ -59,10 +61,10 @@ func failAutoIngestRetryError(ctx *httpcontext.Context, err error) {
 
 func (h *handler) resetAutoIngestRetryState(ctx *httpcontext.Context, planID int64, offset int64, resetCounters bool) error {
 	if !resetCounters {
-		return h.planService.UpdateOffset(ctx.GetContext(), planID, offset)
+		return h.planService.UpdateByOwner(ctx.GetContext(), retryUpdateRequest(ctx, planID), utils.WithField("offset", offset))
 	}
 
-	return h.planService.Update(ctx.GetContext(), planID,
+	return h.planService.UpdateByOwner(ctx.GetContext(), retryUpdateRequest(ctx, planID),
 		utils.WithField("offset", offset),
 		utils.WithField("add_count", int64(0)),
 		utils.WithField("failed_count", int64(0)),
@@ -70,7 +72,7 @@ func (h *handler) resetAutoIngestRetryState(ctx *httpcontext.Context, planID int
 }
 
 func (h *handler) restoreAutoIngestRetryState(ctx *httpcontext.Context, planID int64, snapshot autoIngestRetrySnapshot) {
-	if err := h.planService.Update(ctx.GetContext(), planID,
+	if err := h.planService.UpdateByOwner(ctx.GetContext(), retryUpdateRequest(ctx, planID),
 		utils.WithField("offset", snapshot.offset),
 		utils.WithField("add_count", snapshot.addCount),
 		utils.WithField("failed_count", snapshot.failedCount),
@@ -84,11 +86,16 @@ func (h *handler) restoreAutoIngestRetryState(ctx *httpcontext.Context, planID i
 	}
 }
 
-func (h *handler) enqueueAutoIngestRetryTask(ctx *httpcontext.Context, planID int64, isRetry bool) error {
-	taskReq := &topic.AutoIngestRefreshSubscribeRequest{
-		PlanId:  planID,
-		IsRetry: isRetry,
+func retryUpdateRequest(ctx *httpcontext.Context, planID int64) *autoingestplanSvi.UpdateRequest {
+	return &autoingestplanSvi.UpdateRequest{
+		ID:      planID,
+		UserID:  ctx.GetInt64(consts.CtxKeyUserId),
+		IsAdmin: ctx.GetBool(consts.CtxKeyIsAdmin),
 	}
+}
+
+func (h *handler) enqueueAutoIngestRetryTask(ctx *httpcontext.Context, planID int64, isRetry bool) error {
+	taskReq := newAutoIngestRefreshTask(ctx, planID, isRetry)
 
 	body, err := json.Marshal(taskReq)
 	if err != nil {
@@ -100,6 +107,15 @@ func (h *handler) enqueueAutoIngestRetryTask(ctx *httpcontext.Context, planID in
 	}
 
 	return nil
+}
+
+func newAutoIngestRefreshTask(ctx *httpcontext.Context, planID int64, isRetry bool) *topic.AutoIngestRefreshSubscribeRequest {
+	return &topic.AutoIngestRefreshSubscribeRequest{
+		PlanId:           planID,
+		IsRetry:          isRetry,
+		ExpectedUserID:   ctx.GetInt64(consts.CtxKeyUserId),
+		TriggeredByAdmin: ctx.GetBool(consts.CtxKeyIsAdmin),
+	}
 }
 
 func (h *handler) dispatchRetryWithRollback(ctx *httpcontext.Context, plan *models.AutoIngestPlan, offset int64, isRetry bool, resetCounters bool) error {

@@ -19,6 +19,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	autoingestplanSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestplan"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/autoingest"
+	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -593,6 +594,41 @@ func TestRefreshPlanRejectsOtherUsersPlanBeforeQueueing(t *testing.T) {
 	}
 }
 
+func TestRefreshPlanQueuesOwnerSnapshot(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockPlanAccessTaskEngine{}
+	planService := &mockPlanAccessService{
+		plans: map[int64]*models.AutoIngestPlan{
+			11: {ID: 11, UserID: 100, SourceType: autoingest.SourceTypeSubscribe},
+		},
+	}
+
+	router := newPlanAccessRouter(NewHandler(taskEngine, planService, nil, nil).Refresh())
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/action", strings.NewReader(`{"planId":11}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if len(taskEngine.payloads) != 1 {
+		t.Fatalf("expected one queued task, got %d", len(taskEngine.payloads))
+	}
+
+	var taskReq topic.AutoIngestRefreshSubscribeRequest
+	if err := json.Unmarshal(taskEngine.payloads[0], &taskReq); err != nil {
+		t.Fatal(err)
+	}
+
+	if taskReq.PlanId != 11 || taskReq.IsRetry || taskReq.ExpectedUserID != 100 || taskReq.TriggeredByAdmin {
+		t.Fatalf("unexpected refresh task payload: %+v", taskReq)
+	}
+}
+
 func TestRefreshAndRetryFailedRejectNegativePlanIDBeforeQuerying(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -681,6 +717,16 @@ func TestRetryPlanRestoresStateWhenQueueingFails(t *testing.T) {
 		t.Fatalf("expected reset and rollback fields, got %d", len(planService.updatedFields))
 	}
 
+	if len(planService.updateRequests) != 2 {
+		t.Fatalf("expected owner-scoped reset and rollback updates, got %d", len(planService.updateRequests))
+	}
+
+	for _, updateReq := range planService.updateRequests {
+		if updateReq.ID != 11 || updateReq.UserID != 100 || updateReq.IsAdmin {
+			t.Fatalf("unexpected retry update request: %+v", updateReq)
+		}
+	}
+
 	resetFields := fieldsToMap(planService.updatedFields[0])
 	if resetFields["offset"] != int64(1) || resetFields["add_count"] != int64(0) || resetFields["failed_count"] != int64(0) {
 		t.Fatalf("unexpected reset fields: %+v", resetFields)
@@ -720,19 +766,51 @@ func TestRetryFailedRestoresOffsetWhenQueueingFails(t *testing.T) {
 		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
 	}
 
-	if got, want := planService.offsetIDs, []int64{11}; !int64SlicesEqual(got, want) {
-		t.Fatalf("expected retry offset reset %v, got %v", want, got)
+	if len(planService.offsetIDs) != 0 {
+		t.Fatalf("expected retry failed not to use separate offset update, got %v", planService.offsetIDs)
 	}
 
 	if len(planService.resetCounterIDs) != 0 {
 		t.Fatalf("expected retry failed not to reset counters, got %v", planService.resetCounterIDs)
 	}
 
-	if got, want := planService.updatedIDs, []int64{11}; !int64SlicesEqual(got, want) {
-		t.Fatalf("expected rollback update %v, got %v", want, got)
+	if got, want := planService.updatedIDs, []int64{11, 11}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected reset and rollback updates %v, got %v", want, got)
 	}
 
-	fields := fieldsToMap(planService.updatedFields[0])
+	if len(planService.updateRequests) != 2 {
+		t.Fatalf("expected owner-scoped reset and rollback updates, got %d", len(planService.updateRequests))
+	}
+
+	for _, updateReq := range planService.updateRequests {
+		if updateReq.ID != 11 || updateReq.UserID != 100 || updateReq.IsAdmin {
+			t.Fatalf("unexpected retry update request: %+v", updateReq)
+		}
+	}
+
+	if len(planService.updatedFields) != 2 {
+		t.Fatalf("expected reset and rollback fields, got %d", len(planService.updatedFields))
+	}
+
+	resetFields := fieldsToMap(planService.updatedFields[0])
+	if resetFields["offset"] != int64(0) {
+		t.Fatalf("unexpected reset fields: %+v", resetFields)
+	}
+
+	if len(taskEngine.payloads) != 1 {
+		t.Fatalf("expected one queued retry task, got %d", len(taskEngine.payloads))
+	}
+
+	var taskReq topic.AutoIngestRefreshSubscribeRequest
+	if err := json.Unmarshal(taskEngine.payloads[0], &taskReq); err != nil {
+		t.Fatal(err)
+	}
+
+	if taskReq.PlanId != 11 || taskReq.IsRetry || taskReq.ExpectedUserID != 100 || taskReq.TriggeredByAdmin {
+		t.Fatalf("unexpected retry failed task payload: %+v", taskReq)
+	}
+
+	fields := fieldsToMap(planService.updatedFields[1])
 	if fields["offset"] != int64(66) || fields["add_count"] != int64(4) || fields["failed_count"] != int64(1) {
 		t.Fatalf("unexpected rollback fields: %+v", fields)
 	}

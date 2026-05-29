@@ -238,7 +238,21 @@ export function useSubscribeResource(
   const checkedRowKeys = computed(() => resourceState.selected.map((r) => r.id))
 
   const handleCheckedRowKeysChange = (keys: Array<string | number>) => {
-    resourceState.selected = resourceState.list.filter((item) => keys.includes(item.id))
+    const checkedIDs = new Set(keys)
+    const currentPageIDs = new Set(resourceState.list.map((item) => item.id))
+    const selectedByID = new Map(
+      resourceState.selected
+        .filter((item) => !currentPageIDs.has(item.id))
+        .map((item) => [item.id, item])
+    )
+
+    for (const item of resourceState.list) {
+      if (checkedIDs.has(item.id)) {
+        selectedByID.set(item.id, item)
+      }
+    }
+
+    resourceState.selected = Array.from(selectedByID.values())
   }
 
   return {

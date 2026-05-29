@@ -26,6 +26,9 @@ type Service interface {
 	// DeleteErrorLogsByPlanId 删除指定计划的所有错误日志
 	DeleteErrorLogsByPlanId(ctx appContext.Context, planId int64) (int64, error)
 
+	// DeleteErrorLogsByPlanIds 删除指定计划列表的所有错误日志
+	DeleteErrorLogsByPlanIds(ctx appContext.Context, planIds []int64) (int64, error)
+
 	// DeleteAllErrorLogs 删除所有计划的错误日志
 	DeleteAllErrorLogs(ctx appContext.Context) (int64, error)
 

@@ -48,8 +48,26 @@ func (s *service) DeleteErrorLogsByPlanId(ctx appContext.Context, planId int64) 
 		return 0, errInvalidAutoIngestLogPlanID
 	}
 
+	return s.deleteErrorLogsByPlanIDs(ctx, []int64{planId})
+}
+
+// DeleteErrorLogsByPlanIds 删除指定计划列表的所有错误日志。
+func (s *service) DeleteErrorLogsByPlanIds(ctx appContext.Context, planIds []int64) (int64, error) {
+	if len(planIds) == 0 {
+		return 0, nil
+	}
+
+	normalizedPlanIds, err := normalizeAutoIngestLogIDs(planIds, errInvalidAutoIngestLogPlanID)
+	if err != nil {
+		return 0, err
+	}
+
+	return s.deleteErrorLogsByPlanIDs(ctx, normalizedPlanIds)
+}
+
+func (s *service) deleteErrorLogsByPlanIDs(ctx appContext.Context, planIds []int64) (int64, error) {
 	result := s.getDB(ctx).
-		Where("plan_id = ? AND level = ?", planId, autoingest.LogLevelError).
+		Where("plan_id IN ? AND level = ?", planIds, autoingest.LogLevelError).
 		Delete(&models.AutoIngestLog{})
 
 	return result.RowsAffected, result.Error

@@ -765,6 +765,14 @@ const isBatchDispatchResponse = (result: unknown): result is BatchDispatchRespon
   )
 }
 
+const formatPageRefreshInterval = (interval: number) => {
+  if (interval < 60) {
+    return `${interval} 秒`
+  }
+
+  return `${Math.floor(interval / 60)} 分钟`
+}
+
 const showBatchDispatchResult = (label: string, result: BatchDispatchResponse | undefined) => {
   if (!isBatchDispatchResponse(result)) {
     message.error('响应数据格式异常')
@@ -773,6 +781,12 @@ const showBatchDispatchResult = (label: string, result: BatchDispatchResponse | 
   }
 
   const { total, success, failed } = result
+  if (success + failed !== total) {
+    message.error('响应统计异常')
+
+    return false
+  }
+
   const detail = `${label}已提交：总计 ${total} 个，成功 ${success} 个，失败 ${failed} 个`
 
   if (failed > 0 && success > 0) {
@@ -1031,7 +1045,7 @@ const handlePageRefreshIntervalChange = (interval: number) => {
 
   if (pageAutoRefreshStore.autoRefreshEnabled) {
     startAutoRefresh()
-    message.success(`刷新间隔已更改为 ${Math.floor(interval / 60)} 分钟`)
+    message.success(`刷新间隔已更改为 ${formatPageRefreshInterval(interval)}`)
   }
 }
 

@@ -403,6 +403,16 @@ func runRefreshSubscribeHandlerWithTaskEngine(
 	)
 	req := topic.AutoIngestRefreshSubscribeRequest{PlanId: planService.plan.ID}
 
+	return runRefreshSubscribeHandlerWithRequest(t, handler, req)
+}
+
+func runRefreshSubscribeHandlerWithRequest(
+	t *testing.T,
+	handler Handler,
+	req topic.AutoIngestRefreshSubscribeRequest,
+) error {
+	t.Helper()
+
 	payload, err := json.Marshal(req)
 	if err != nil {
 		t.Fatalf("marshal refresh request: %v", err)
@@ -411,6 +421,52 @@ func runRefreshSubscribeHandlerWithTaskEngine(
 	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.RefreshSubscribe())
 
 	return processor.Process(stdctx.Background(), payload)
+}
+
+func TestRefreshSubscribeSkipsManualTaskWhenOwnerChanged(t *testing.T) {
+	planService := &mockRefreshSubscribePlanService{
+		plan:          newRefreshSubscribePlan(100, autoingest.OnConflictRename),
+		updatedOffset: -1,
+	}
+	planService.plan.UserID = 8
+
+	cloudService := &mockRefreshSubscribeCloudBridgeService{}
+	logService := &mockRefreshSubscribeLogService{}
+	storageService := &mockRefreshSubscribeStorageFacadeService{}
+	virtualService := &mockRefreshSubscribeVirtualFileService{}
+	taskEngine := &mockRefreshSubscribeTaskEngine{}
+	handler := NewHandler(
+		taskEngine,
+		cloudService,
+		planService,
+		logService,
+		storageService,
+		virtualService,
+	)
+
+	err := runRefreshSubscribeHandlerWithRequest(t, handler, topic.AutoIngestRefreshSubscribeRequest{
+		PlanId:         planService.plan.ID,
+		ExpectedUserID: 7,
+	})
+	if err != nil {
+		t.Fatalf("refresh subscribe: %v", err)
+	}
+
+	if planService.updatedOffset != -1 {
+		t.Fatalf("expected owner mismatch task not to update offset, got %d", planService.updatedOffset)
+	}
+
+	if planService.addDelta != 0 || planService.failedDelta != 0 {
+		t.Fatalf("expected owner mismatch task not to update counters, add=%d failed=%d", planService.addDelta, planService.failedDelta)
+	}
+
+	if len(cloudService.pageCalls) != 0 {
+		t.Fatalf("expected owner mismatch task not to call cloud bridge, got %v", cloudService.pageCalls)
+	}
+
+	if storageService.Count() != 0 {
+		t.Fatalf("expected owner mismatch task not to create storage, got %d", storageService.Count())
+	}
 }
 
 func TestRefreshSubscribeDoesNotAdvanceOffsetWhenScanEnqueueFails(t *testing.T) {

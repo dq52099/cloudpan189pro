@@ -4,7 +4,12 @@ import (
 	"errors"
 	"io"
 
+	"github.com/samber/lo"
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	autoingestplanSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestplan"
+	"gorm.io/gorm"
 )
 
 type deleteErrorLogsRequest struct {
@@ -44,9 +49,26 @@ func (h *handler) DeleteErrorLogs() httpcontext.HandlerFunc {
 				return
 			}
 
+			plan, queryErr := h.planService.Query(ctx.GetContext(), *req.PlanId)
+			if queryErr != nil {
+				if errors.Is(queryErr, gorm.ErrRecordNotFound) {
+					ctx.Fail(codePlanNotFound.WithError(queryErr))
+
+					return
+				}
+
+				ctx.Fail(codePlanQueryFailed.WithError(queryErr))
+
+				return
+			}
+
+			if !ensurePlanAccess(ctx, plan) {
+				return
+			}
+
 			count, err = h.logService.DeleteErrorLogsByPlanId(ctx.GetContext(), *req.PlanId)
 		} else {
-			count, err = h.logService.DeleteAllErrorLogs(ctx.GetContext())
+			count, err = h.deleteVisibleErrorLogs(ctx)
 		}
 
 		if err != nil {
@@ -57,4 +79,23 @@ func (h *handler) DeleteErrorLogs() httpcontext.HandlerFunc {
 
 		ctx.Success(count)
 	}
+}
+
+func (h *handler) deleteVisibleErrorLogs(ctx *httpcontext.Context) (int64, error) {
+	if ctx.GetBool(consts.CtxKeyIsAdmin) {
+		return h.logService.DeleteAllErrorLogs(ctx.GetContext())
+	}
+
+	plans, err := h.planService.List(ctx.GetContext(), &autoingestplanSvi.ListRequest{
+		NoPaginate: true,
+		UserID:     ctx.GetInt64(consts.CtxKeyUserId),
+		IsAdmin:    false,
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	return h.logService.DeleteErrorLogsByPlanIds(ctx.GetContext(), lo.Map(plans, func(plan *models.AutoIngestPlan, _ int) int64 {
+		return plan.ID
+	}))
 }

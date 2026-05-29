@@ -93,6 +93,10 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 			return err
 		}
 
+		if !validateRefreshSubscribeOwnerSnapshot(logger, req, plan) {
+			return nil
+		}
+
 		concurrentCount := plan.ConcurrentCount
 		if concurrentCount <= 0 {
 			concurrentCount = 4
@@ -544,4 +548,22 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 
 		return nil
 	}
+}
+
+func validateRefreshSubscribeOwnerSnapshot(logger *zap.Logger, req *topic.AutoIngestRefreshSubscribeRequest, plan *models.AutoIngestPlan) bool {
+	if req.ExpectedUserID <= 0 || req.TriggeredByAdmin {
+		return true
+	}
+
+	if plan.UserID == req.ExpectedUserID {
+		return true
+	}
+
+	logger.Warn("自动入库任务归属已变化，跳过手动触发任务",
+		zap.Int64("plan_id", req.PlanId),
+		zap.Int64("expected_user_id", req.ExpectedUserID),
+		zap.Int64("current_user_id", plan.UserID),
+	)
+
+	return false
 }

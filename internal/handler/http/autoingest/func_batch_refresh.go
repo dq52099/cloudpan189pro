@@ -6,7 +6,6 @@ import (
 
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/autoingest"
-	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 )
 
 // BatchRefreshRequest 批量刷新请求
@@ -79,10 +78,7 @@ func (h *handler) BatchRefresh() httpcontext.HandlerFunc {
 				defer wg.Done()
 				defer func() { <-sem }()
 
-				taskReq := &topic.AutoIngestRefreshSubscribeRequest{
-					PlanId:  planId,
-					IsRetry: false,
-				}
+				taskReq := newAutoIngestRefreshTask(ctx, planId, false)
 
 				body, err := json.Marshal(taskReq)
 				if err != nil {

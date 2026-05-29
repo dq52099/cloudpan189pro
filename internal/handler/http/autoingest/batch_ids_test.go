@@ -32,6 +32,7 @@ type mockBatchAutoIngestPlanService struct {
 	disabledIDs   []int64
 	enableReqs    []*autoingestplanSvi.UpdateRequest
 	disableReqs   []*autoingestplanSvi.UpdateRequest
+	updateReqs    []*autoingestplanSvi.UpdateRequest
 	updatedIDs    []int64
 	updatedFields [][]utils.Field
 	deletedReqs   []*autoingestplanSvi.DeleteRequest
@@ -109,6 +110,24 @@ func (m *mockBatchAutoIngestPlanService) Update(ctx appContext.Context, id int64
 	defer m.mu.Unlock()
 
 	m.updatedIDs = append(m.updatedIDs, id)
+	m.updatedFields = append(m.updatedFields, append([]utils.Field(nil), fields...))
+
+	return nil
+}
+
+func (m *mockBatchAutoIngestPlanService) UpdateByOwner(ctx appContext.Context, req *autoingestplanSvi.UpdateRequest, fields ...utils.Field) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if req != nil {
+		m.updateReqs = append(m.updateReqs, &autoingestplanSvi.UpdateRequest{
+			ID:      req.ID,
+			UserID:  req.UserID,
+			IsAdmin: req.IsAdmin,
+		})
+		m.updatedIDs = append(m.updatedIDs, req.ID)
+	}
+
 	m.updatedFields = append(m.updatedFields, append([]utils.Field(nil), fields...))
 
 	return nil
@@ -809,6 +828,10 @@ func TestBatchRefreshDeduplicatesIDsBeforeListAndQueueing(t *testing.T) {
 			t.Fatalf("unexpected retry task: %+v", taskReq)
 		}
 
+		if taskReq.ExpectedUserID != 100 || taskReq.TriggeredByAdmin {
+			t.Fatalf("unexpected refresh task owner snapshot: %+v", taskReq)
+		}
+
 		queuedIDs = append(queuedIDs, taskReq.PlanId)
 	}
 
@@ -871,6 +894,10 @@ func TestBatchRefreshSkipsOtherUsersPlans(t *testing.T) {
 
 	if taskReq.PlanId != 11 {
 		t.Fatalf("expected plan 11 queued, got %+v", taskReq)
+	}
+
+	if taskReq.ExpectedUserID != 100 || taskReq.TriggeredByAdmin {
+		t.Fatalf("unexpected refresh task owner snapshot: %+v", taskReq)
 	}
 
 	var response struct {
@@ -969,6 +996,25 @@ func TestBatchRetryCountsMissingPlansAsFailed(t *testing.T) {
 		t.Fatalf("expected 2 queued retry tasks, got %d", len(taskEngine.payloads))
 	}
 
+	if len(planService.updateReqs) != 2 {
+		t.Fatalf("expected owner-scoped retry updates, got %d", len(planService.updateReqs))
+	}
+
+	gotUpdateReqIDs := make([]int64, 0, len(planService.updateReqs))
+	for _, updateReq := range planService.updateReqs {
+		if updateReq.UserID != 100 || updateReq.IsAdmin {
+			t.Fatalf("unexpected retry update request: %+v", updateReq)
+		}
+
+		gotUpdateReqIDs = append(gotUpdateReqIDs, updateReq.ID)
+	}
+
+	sort.Slice(gotUpdateReqIDs, func(i, j int) bool { return gotUpdateReqIDs[i] < gotUpdateReqIDs[j] })
+
+	if want := []int64{11, 22}; !int64SlicesEqual(gotUpdateReqIDs, want) {
+		t.Fatalf("expected retry update requests %v, got %v", want, gotUpdateReqIDs)
+	}
+
 	var response struct {
 		Data map[string]int `json:"data"`
 	}
@@ -1033,6 +1079,16 @@ func TestBatchRetryRestoresStateWhenQueueingFails(t *testing.T) {
 		t.Fatalf("expected reset and rollback fields, got %d", len(planService.updatedFields))
 	}
 
+	if len(planService.updateReqs) != 2 {
+		t.Fatalf("expected owner-scoped reset and rollback updates, got %d", len(planService.updateReqs))
+	}
+
+	for _, updateReq := range planService.updateReqs {
+		if updateReq.ID != 11 || updateReq.UserID != 100 || updateReq.IsAdmin {
+			t.Fatalf("unexpected retry update request: %+v", updateReq)
+		}
+	}
+
 	resetFields := fieldsToMap(planService.updatedFields[0])
 	if resetFields["offset"] != int64(1) || resetFields["add_count"] != int64(0) || resetFields["failed_count"] != int64(0) {
 		t.Fatalf("unexpected reset fields: %+v", resetFields)
@@ -1095,6 +1151,15 @@ func TestBatchRetrySkipsOtherUsersPlans(t *testing.T) {
 
 	if got, want := planService.updatedIDs, []int64{11}; !int64SlicesEqual(got, want) {
 		t.Fatalf("expected reset update IDs %v, got %v", want, got)
+	}
+
+	if len(planService.updateReqs) != 1 {
+		t.Fatalf("expected one owner-scoped retry update, got %d", len(planService.updateReqs))
+	}
+
+	updateReq := planService.updateReqs[0]
+	if updateReq.ID != 11 || updateReq.UserID != 100 || updateReq.IsAdmin {
+		t.Fatalf("unexpected retry update request: %+v", updateReq)
 	}
 
 	if len(taskEngine.payloads) != 1 {

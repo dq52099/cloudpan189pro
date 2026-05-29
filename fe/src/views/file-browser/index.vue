@@ -352,7 +352,7 @@ const loadPath = (path: string) => {
 }
 
 const handleFileClick = (file: FileChild) => {
-  navigateToPath(file.href)
+  navigateToPath(file.href.replace('/api/file/open', ''))
 }
 
 const navigateToPath = (path: string) => {

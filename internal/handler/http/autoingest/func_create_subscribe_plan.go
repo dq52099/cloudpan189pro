@@ -8,7 +8,6 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/autoingest"
-	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
 )
 
@@ -133,9 +132,7 @@ func (h *handler) CreateSubscribePlan() httpcontext.HandlerFunc {
 
 		resp := &createSubscribePlanResponse{ID: id}
 		if req.OneClickAddHistory {
-			taskReq := &topic.AutoIngestRefreshSubscribeRequest{
-				PlanId: id,
-			}
+			taskReq := newAutoIngestRefreshTask(ctx, id, false)
 
 			taskBody, jerr := json.Marshal(taskReq)
 			if jerr != nil {

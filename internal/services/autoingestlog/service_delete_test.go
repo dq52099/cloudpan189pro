@@ -229,6 +229,37 @@ func TestDeleteByPlanIdsDeduplicatesIDs(t *testing.T) {
 	}
 }
 
+func TestDeleteErrorLogsByPlanIdsDeletesOnlyErrorLogs(t *testing.T) {
+	tDB := setupAutoIngestLogTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	errorLog := createAutoIngestLog(t, tDB.db, 10, autoingest.LogLevelError)
+	infoLog := createAutoIngestLog(t, tDB.db, 10, autoingest.LogLevelInfo)
+	otherError := createAutoIngestLog(t, tDB.db, 20, autoingest.LogLevelError)
+
+	deleted, err := svc.DeleteErrorLogsByPlanIds(ctx, []int64{10, 10})
+	if err != nil {
+		t.Fatalf("delete error logs by plan ids: %v", err)
+	}
+
+	if deleted != 1 {
+		t.Fatalf("expected one deleted row, got %d", deleted)
+	}
+
+	if count := countAutoIngestLogs(t, tDB.db, "id = ?", errorLog.ID); count != 0 {
+		t.Fatalf("expected error log deleted, got count %d", count)
+	}
+
+	if count := countAutoIngestLogs(t, tDB.db, "id = ?", infoLog.ID); count != 1 {
+		t.Fatalf("expected info log to remain, got count %d", count)
+	}
+
+	if count := countAutoIngestLogs(t, tDB.db, "id = ?", otherError.ID); count != 1 {
+		t.Fatalf("expected other plan error log to remain, got count %d", count)
+	}
+}
+
 func TestResolveAutoIngestLogCutoffRejectsInvalidDuration(t *testing.T) {
 	tests := []string{"", "0s", "0h", "-1h", "bad"}
 
