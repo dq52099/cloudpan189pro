@@ -5,6 +5,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
+	"github.com/xxcheng123/cloudpan189-share/internal/bootstrap"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
@@ -116,6 +117,41 @@ func (s *service) Create(ctx context.Context, parentId int64, file *models.Virtu
 func (s *service) CreateTop(ctx context.Context, parentId int64, file *models.VirtualFile) (int64, error) {
 	ctx.Debug("创建挂载点", zap.Int64("parent_id", parentId), zap.String("file_name", file.Name))
 
+	if bootstrap.HasTransactionDB(ctx) {
+		return s.createTopInTransaction(ctx, parentId, file)
+	}
+
+	var (
+		id       int64
+		txCtx    context.Context
+		hasTxCtx bool
+	)
+
+	err := s.svc.GetDB(ctx).Transaction(func(tx *gorm.DB) error {
+		txCtx = bootstrap.WithTransactionDB(ctx, tx)
+		hasTxCtx = true
+
+		createdID, txErr := s.createTopInTransaction(txCtx, parentId, file)
+		if txErr != nil {
+			return txErr
+		}
+
+		id = createdID
+
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	if hasTxCtx {
+		bootstrap.RunAfterCommitHooks(txCtx)
+	}
+
+	return id, nil
+}
+
+func (s *service) createTopInTransaction(ctx context.Context, parentId int64, file *models.VirtualFile) (int64, error) {
 	id, err := s.Create(ctx, parentId, file)
 	if err != nil {
 		return 0, err

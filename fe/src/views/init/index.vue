@@ -79,6 +79,7 @@
             type="primary"
             size="large"
             :loading="loading"
+            :disabled="loading"
             :block="true"
             @click="handleInit"
           >
@@ -94,7 +95,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMessage, type FormInst } from 'naive-ui'
 import {
@@ -114,6 +115,8 @@ const themeStore = useThemeStore()
 const formRef = ref<FormInst>()
 const loading = ref(false)
 const autoGetUrlLoading = ref(false)
+let isMounted = true
+let initRequestSeq = 0
 
 const formData = reactive<InitSystemRequest>({
   title: '云盘分享系统',
@@ -173,6 +176,8 @@ const rules = {
   ],
 }
 
+const isCurrentInitRequest = (requestSeq: number) => isMounted && requestSeq === initRequestSeq
+
 // 自动获取baseURL
 const autoGetBaseURL = () => {
   autoGetUrlLoading.value = true
@@ -190,29 +195,58 @@ const autoGetBaseURL = () => {
 
 // 处理初始化
 const handleInit = async () => {
+  if (loading.value) {
+    return
+  }
+
+  const requestSeq = ++initRequestSeq
+  loading.value = true
+
   try {
     await formRef.value?.validate()
-    loading.value = true
+    if (!isCurrentInitRequest(requestSeq)) {
+      return
+    }
+
     const response = await initSystem(formData)
+    if (!isCurrentInitRequest(requestSeq)) {
+      return
+    }
+
     if (response.code === 200) {
       message.success('系统初始化成功')
       // 刷新系统信息
       await systemStore.refresh()
+      if (!isCurrentInitRequest(requestSeq)) {
+        return
+      }
+
       await router.push('/@login')
     } else {
       message.error(response.msg || '初始化失败')
     }
   } catch (error: unknown) {
+    if (!isCurrentInitRequest(requestSeq)) {
+      return
+    }
+
     console.error('初始化失败:', error)
     message.error('初始化失败，请检查配置信息')
   } finally {
-    loading.value = false
+    if (isCurrentInitRequest(requestSeq)) {
+      loading.value = false
+    }
   }
 }
 
 // 页面加载时自动获取baseURL
 onMounted(() => {
   autoGetBaseURL()
+})
+
+onBeforeUnmount(() => {
+  isMounted = false
+  initRequestSeq++
 })
 </script>
 

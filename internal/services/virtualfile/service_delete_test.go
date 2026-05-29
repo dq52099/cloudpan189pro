@@ -23,7 +23,7 @@ type virtualFileTestDB struct {
 }
 
 func (t *virtualFileTestDB) GetDB(ctx context.Context) *gorm.DB {
-	return t.db.WithContext(ctx)
+	return bootstrap.DBFromContext(ctx, t.db)
 }
 
 func (t *virtualFileTestDB) GetDBWithoutContext() *gorm.DB {
@@ -237,6 +237,67 @@ func TestBatchCreateDeduplicatesSanitizedNamesWithinBatch(t *testing.T) {
 
 	if count := countVirtualFiles(t, tDB.db, "parent_id = ? AND name IN ?", 1, []string{"movie_name.mkv", "movie_name.mkv(r2)"}); count != 2 {
 		t.Fatalf("expected both sanitized batch files persisted, got count %d", count)
+	}
+}
+
+func TestCreateTopSetsTopIdToCreatedID(t *testing.T) {
+	tDB := setupVirtualFileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	file := newVirtualFileForCreate("mount", "rev1")
+
+	id, err := svc.CreateTop(ctx, 0, file)
+	if err != nil {
+		t.Fatalf("create top virtual file: %v", err)
+	}
+
+	if id == 0 {
+		t.Fatal("expected created id to be set")
+	}
+
+	var persisted models.VirtualFile
+	if err = tDB.db.First(&persisted, id).Error; err != nil {
+		t.Fatalf("query created top virtual file: %v", err)
+	}
+
+	if persisted.TopId != id {
+		t.Fatalf("expected top_id to equal created id %d, got %d", id, persisted.TopId)
+	}
+}
+
+func TestCreateTopRollsBackWhenTopIdUpdateFails(t *testing.T) {
+	tDB := setupVirtualFileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	callbackName := "virtualfile:test_create_top_update_failure"
+	if err := tDB.db.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Schema != nil && tx.Statement.Schema.Table == (&models.VirtualFile{}).TableName() {
+			_ = tx.AddError(errors.New("forced top id update failure"))
+		}
+	}); err != nil {
+		t.Fatalf("register update callback: %v", err)
+	}
+	defer func() {
+		if removeErr := tDB.db.Callback().Update().Remove(callbackName); removeErr != nil {
+			t.Fatalf("remove update callback: %v", removeErr)
+		}
+	}()
+
+	file := newVirtualFileForCreate("rollback-mount", "rev1")
+
+	id, err := svc.CreateTop(ctx, 0, file)
+	if err == nil {
+		t.Fatal("expected create top to fail")
+	}
+
+	if id != 0 {
+		t.Fatalf("expected no id on failed create top, got %d", id)
+	}
+
+	if count := countVirtualFiles(t, tDB.db, "name = ?", "rollback-mount"); count != 0 {
+		t.Fatalf("expected created row to roll back, got count %d", count)
 	}
 }
 

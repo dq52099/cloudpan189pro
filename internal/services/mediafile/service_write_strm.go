@@ -68,14 +68,54 @@ func (s *service) WriteStrm(ctx context.Context, car media.WriterCar, fid int64,
 		return 0, err
 	}
 
-	// 写入文件（replace 策略或不存在文件时覆盖写入）
-	if err := os.WriteFile(fullPath, []byte(url), 0o644); err != nil {
-		ctx.Error("写入文件失败", zap.Error(err), zap.String("path", fullPath))
+	tmpFile, err := os.CreateTemp(dir, "."+filepath.Base(fullPath)+".*.tmp")
+	if err != nil {
+		ctx.Error("创建临时 STRM 文件失败", zap.Error(err), zap.String("dir", dir))
 
 		return 0, err
 	}
 
-	ctx.Debug("写入文件成功", zap.String("path", fullPath))
+	tmpPath := tmpFile.Name()
+	cleanupTmpFile := func() {
+		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			ctx.Warn("清理临时 STRM 文件失败", zap.String("path", tmpPath), zap.Error(removeErr))
+		}
+	}
+
+	if _, err = tmpFile.Write([]byte(url)); err != nil {
+		ctx.Error("写入临时 STRM 文件失败", zap.Error(err), zap.String("path", tmpPath))
+
+		if closeErr := tmpFile.Close(); closeErr != nil {
+			ctx.Warn("关闭临时 STRM 文件失败", zap.String("path", tmpPath), zap.Error(closeErr))
+		}
+
+		cleanupTmpFile()
+
+		return 0, err
+	}
+
+	if err = tmpFile.Chmod(0o644); err != nil {
+		ctx.Error("设置临时 STRM 文件权限失败", zap.Error(err), zap.String("path", tmpPath))
+
+		if closeErr := tmpFile.Close(); closeErr != nil {
+			ctx.Warn("关闭临时 STRM 文件失败", zap.String("path", tmpPath), zap.Error(closeErr))
+		}
+
+		cleanupTmpFile()
+
+		return 0, err
+	}
+
+	if err = tmpFile.Close(); err != nil {
+		ctx.Error("关闭临时 STRM 文件失败", zap.Error(err), zap.String("path", tmpPath))
+
+		cleanupTmpFile()
+
+		return 0, err
+	}
+
+	// 先写入同目录临时文件；DB 成功后再替换目标，避免 DB 唯一冲突时破坏既有 STRM。
+	ctx.Debug("写入临时文件成功", zap.String("path", tmpPath))
 
 	file := &models.MediaFile{
 		FID:       fid,
@@ -87,16 +127,89 @@ func (s *service) WriteStrm(ctx context.Context, car media.WriterCar, fid int64,
 		Hash: "-",
 	}
 
-	// 保存文件元数据；失败时回滚磁盘文件，避免孤儿
+	// 保存文件元数据；失败时只清理本次创建的临时文件，避免删除既有目标文件。
 	if err := s.getDB(ctx).Create(file).Error; err != nil {
-		ctx.Error("保存文件元数据失败，回滚磁盘文件", zap.Error(err), zap.String("path", fullPath))
+		ctx.Error("保存文件元数据失败，清理临时 STRM 文件", zap.Error(err), zap.String("path", tmpPath))
 
-		if removeErr := os.Remove(fullPath); removeErr != nil && !os.IsNotExist(removeErr) {
-			ctx.Warn("回滚 STRM 文件失败", zap.String("path", fullPath), zap.Error(removeErr))
+		cleanupTmpFile()
+
+		return 0, err
+	}
+
+	if err := replaceStrmFile(ctx, tmpPath, fullPath); err != nil {
+		ctx.Error("替换 STRM 文件失败，回滚文件元数据", zap.Error(err), zap.String("path", fullPath), zap.String("tmp_path", tmpPath))
+
+		cleanupTmpFile()
+
+		if deleteErr := s.getDB(ctx).Where("id = ?", file.ID).Delete(new(models.MediaFile)).Error; deleteErr != nil {
+			ctx.Warn("回滚 STRM 元数据失败", zap.Int64("id", file.ID), zap.Error(deleteErr))
 		}
 
 		return 0, err
 	}
 
+	ctx.Debug("写入文件成功", zap.String("path", fullPath))
+
 	return file.ID, nil
+}
+
+func replaceStrmFile(ctx context.Context, tmpPath string, fullPath string) error {
+	if err := os.Rename(tmpPath, fullPath); err == nil {
+		return nil
+	} else {
+		directRenameErr := err
+
+		if _, statErr := os.Stat(fullPath); statErr != nil {
+			if os.IsNotExist(statErr) {
+				return directRenameErr
+			}
+
+			return errors.Wrap(statErr, "检查目标 STRM 文件状态失败")
+		}
+
+		backupPath, err := createStrmBackupPath(filepath.Dir(fullPath), filepath.Base(fullPath))
+		if err != nil {
+			return errors.Wrap(err, "创建 STRM 备份路径失败")
+		}
+
+		if err = os.Rename(fullPath, backupPath); err != nil {
+			return errors.Wrapf(err, "备份目标 STRM 文件失败: %v", directRenameErr)
+		}
+
+		if err = os.Rename(tmpPath, fullPath); err != nil {
+			if restoreErr := os.Rename(backupPath, fullPath); restoreErr != nil {
+				return errors.Wrapf(err, "替换 STRM 文件失败，恢复旧文件也失败: %v", restoreErr)
+			}
+
+			return err
+		}
+
+		if err = os.Remove(backupPath); err != nil && !os.IsNotExist(err) {
+			ctx.Warn("清理 STRM 备份文件失败", zap.String("path", backupPath), zap.Error(err))
+		}
+
+		return nil
+	}
+}
+
+func createStrmBackupPath(dir string, base string) (string, error) {
+	backupFile, err := os.CreateTemp(dir, "."+base+".*.bak")
+	if err != nil {
+		return "", err
+	}
+
+	backupPath := backupFile.Name()
+	if err = backupFile.Close(); err != nil {
+		if removeErr := os.Remove(backupPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			return "", errors.Wrapf(err, "清理未关闭的 STRM 备份占位文件失败: %v", removeErr)
+		}
+
+		return "", err
+	}
+
+	if err = os.Remove(backupPath); err != nil {
+		return "", err
+	}
+
+	return backupPath, nil
 }
