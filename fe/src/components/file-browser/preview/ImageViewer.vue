@@ -100,6 +100,7 @@ import {
 } from '@vicons/ionicons5'
 import { createDownloadUrl, type FileChild } from '@/api/file'
 import { normalizeCreateDownloadUrlResponse } from '@/utils/responseGuards'
+import { getErrorMessage } from '@/utils/api'
 
 // Props
 const props = defineProps<{
@@ -382,7 +383,7 @@ const initSource = () => {
       console.error('createDownloadUrl error:', e)
       error.value = true
       loading.value = false
-      errorMessage.value = '获取图片链接失败'
+      errorMessage.value = getErrorMessage(e, '获取图片链接失败')
       message.error(errorMessage.value)
     })
     .finally(() => {

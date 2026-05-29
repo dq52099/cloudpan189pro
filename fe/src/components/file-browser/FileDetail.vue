@@ -113,6 +113,7 @@ import {
 import { type FileChild, createDownloadUrl } from '@/api/file'
 import { formatDateTime } from '@/utils/time'
 import { normalizeCreateDownloadUrlResponse } from '@/utils/responseGuards'
+import { getErrorMessage } from '@/utils/api'
 import VideoPlayer from './preview/VideoPlayer.vue'
 import ImageViewer from './preview/ImageViewer.vue'
 
@@ -294,7 +295,7 @@ const openWithPlayer = (player: string) => {
       }
 
       console.error('获取播放链接失败:', error)
-      message.error('获取播放链接失败')
+      message.error(getErrorMessage(error, '获取播放链接失败'))
     })
     .finally(() => {
       if (isActiveRequest(requestId, openPlayerRequestId.value, fileId)) {
@@ -406,7 +407,7 @@ const downloadFile = () => {
       }
 
       console.error('下载失败:', error)
-      message.error('下载失败')
+      message.error(getErrorMessage(error, '下载失败'))
     })
     .finally(() => {
       if (isActiveRequest(requestId, downloadRequestId.value, fileId)) {

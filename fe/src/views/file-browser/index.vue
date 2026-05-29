@@ -136,6 +136,7 @@ import {
 } from '@/api/file'
 import { FileList, FileDetail, SearchFilesDialog } from '@/components/file-browser'
 import { normalizeCreateDownloadUrlResponse } from '@/utils/responseGuards'
+import { getErrorMessage } from '@/utils/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -490,7 +491,7 @@ const downloadFile = (file: FileChild) => {
       if (!isComponentMounted || navigationRequestId !== fileOpenRequestId) return
 
       console.error('下载失败:', error)
-      message.error('下载失败')
+      message.error(getErrorMessage(error, '下载失败'))
     })
     .finally(() => {
       if (!isComponentMounted || navigationRequestId !== fileOpenRequestId) return

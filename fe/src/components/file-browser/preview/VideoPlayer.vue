@@ -10,6 +10,7 @@ import 'plyr/dist/plyr.css'
 import { useMessage } from 'naive-ui'
 import { createDownloadUrl, type FileChild } from '@/api/file'
 import { normalizeCreateDownloadUrlResponse } from '@/utils/responseGuards'
+import { getErrorMessage } from '@/utils/api'
 import type Plyr from 'plyr'
 import type Hls from 'hls.js'
 
@@ -80,7 +81,7 @@ const initSource = async () => {
 
     destroyPlayer()
     console.error('createDownloadUrl error:', e)
-    message.error('获取播放链接失败')
+    message.error(getErrorMessage(e, '获取播放链接失败'))
   }
 }
 
