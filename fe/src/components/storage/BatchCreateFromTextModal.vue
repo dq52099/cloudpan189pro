@@ -74,6 +74,7 @@ import {
 } from 'naive-ui'
 import { getCloudTokenList } from '@/api/cloudtoken'
 import { batchParseStorageText, type BatchParseItem } from '@/api/storage'
+import { getErrorMessage } from '@/utils/api'
 import { getListItems } from '@/utils/pagination'
 import { normalizeCloudTokens } from '@/utils/responseGuards'
 
@@ -197,7 +198,7 @@ const fetchCloudTokens = async (currentOperation = operationVersion) => {
       return
     }
 
-    message.error(err instanceof Error ? err.message : '获取云盘账号失败')
+    message.error(getErrorMessage(err, '获取云盘账号失败'))
   } finally {
     if (isCurrentOperation(currentOperation)) {
       state.loadingTokens = false
@@ -267,7 +268,7 @@ const handleNext = async () => {
         return
       }
 
-      message.error(err instanceof Error ? err.message : '解析失败')
+      message.error(getErrorMessage(err, '解析失败'))
     })
     .finally(() => {
       if (isCurrentOperation(currentOperation)) {

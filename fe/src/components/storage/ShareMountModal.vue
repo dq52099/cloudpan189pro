@@ -131,7 +131,7 @@ import {
 } from '@vicons/ionicons5'
 import { getShareInfo } from '@/api/storage/advance'
 import type { ShareInfo, GetShareInfoQuery } from '@/api/storage/advance'
-import type { ApiResponse } from '@/utils/api'
+import { getErrorMessage, type ApiResponse } from '@/utils/api'
 import { formatDateTime } from '@/utils/time'
 import { OS_TYPES } from '@/utils/osType'
 import { useMountPointBind } from '@/composables/useMountPointBind'
@@ -232,7 +232,7 @@ const handleGetShareInfo = () => {
       }
 
       console.error('获取分享信息失败:', error)
-      message.error('获取分享信息失败')
+      message.error(getErrorMessage(error, '获取分享信息失败'))
     })
     .finally(() => {
       if (isCurrentOperation(currentOperation)) {

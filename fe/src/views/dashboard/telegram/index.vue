@@ -227,7 +227,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, h } from 'vue'
-import { useMessage } from 'naive-ui'
+import { NButton, useMessage } from 'naive-ui'
 import { SearchOutline, RefreshOutline } from '@vicons/ionicons5'
 import {
   getTelegramSetting,
@@ -239,6 +239,7 @@ import {
   type TelegramSetting,
   type TelegramUser,
 } from '@/api/telegram'
+import { getErrorMessage } from '@/utils/api'
 import { normalizeTelegramSetting, normalizeTelegramUsers } from '@/utils/responseGuards'
 
 const message = useMessage()
@@ -350,8 +351,6 @@ const userColumns = [
   },
 ]
 
-import { NButton } from 'naive-ui'
-
 const isSameSetting = (a: TelegramSetting, b: TelegramSetting) => {
   return (
     a.enable === b.enable &&
@@ -388,12 +387,12 @@ const loadSetting = async () => {
     }
 
     message.error(res.msg || '加载设置失败')
-  } catch {
+  } catch (error) {
     if (!isPageMounted || requestId !== settingRequestId) {
       return
     }
 
-    message.error('加载设置失败')
+    message.error(getErrorMessage(error, '加载设置失败'))
   }
 }
 
@@ -420,12 +419,12 @@ const handleSave = async () => {
     } else {
       message.error(res.msg || '保存失败')
     }
-  } catch {
+  } catch (error) {
     if (!isPageMounted || requestId !== saveSettingRequestId) {
       return
     }
 
-    message.error('保存失败')
+    message.error(getErrorMessage(error, '保存失败'))
   } finally {
     if (isPageMounted && requestId === saveSettingRequestId) {
       saving.value = false
@@ -452,12 +451,12 @@ const handleTest = async () => {
     } else {
       message.error(res.msg || '连接测试失败')
     }
-  } catch {
+  } catch (error) {
     if (!isPageMounted || requestId !== testRequestId) {
       return
     }
 
-    message.error('连接测试失败')
+    message.error(getErrorMessage(error, '连接测试失败'))
   } finally {
     if (isPageMounted && requestId === testRequestId) {
       testing.value = false
@@ -489,12 +488,12 @@ const loadUsers = async () => {
     }
 
     message.error(res.msg || '加载用户列表失败')
-  } catch {
+  } catch (error) {
     if (!isPageMounted || requestId !== userListRequestId) {
       return
     }
 
-    message.error('加载用户列表失败')
+    message.error(getErrorMessage(error, '加载用户列表失败'))
   } finally {
     if (isPageMounted && requestId === userListRequestId) {
       loadingUsers.value = false
@@ -563,12 +562,12 @@ const handleSaveUser = async () => {
     } else {
       message.error(res.msg || '保存失败')
     }
-  } catch {
+  } catch (error) {
     if (!isPageMounted || !isCurrentUserModal(modalVersion)) {
       return
     }
 
-    message.error('保存失败')
+    message.error(getErrorMessage(error, '保存失败'))
   } finally {
     if (isPageMounted && isCurrentUserModal(modalVersion)) {
       savingUser.value = false
@@ -605,12 +604,12 @@ const handleSend = async () => {
     } else {
       message.error(res.msg || '发送失败')
     }
-  } catch {
+  } catch (error) {
     if (!isPageMounted || requestId !== sendRequestId) {
       return
     }
 
-    message.error('发送失败')
+    message.error(getErrorMessage(error, '发送失败'))
   } finally {
     if (isPageMounted && requestId === sendRequestId) {
       sending.value = false

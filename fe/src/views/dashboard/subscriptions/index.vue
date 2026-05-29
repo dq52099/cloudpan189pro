@@ -268,6 +268,7 @@ import {
   normalizeSearchResults,
   normalizeSubscriptionConfigResponse,
 } from '@/utils/responseGuards'
+import { getErrorMessage } from '@/utils/api'
 
 const message = useMessage()
 
@@ -364,9 +365,9 @@ const loadCategories = async () => {
     }
 
     message.error(res.msg || '加载分类失败')
-  } catch (err) {
-    console.error('加载分类失败', err)
-    message.error('加载分类失败')
+  } catch (error) {
+    console.error('加载分类失败', error)
+    message.error(getErrorMessage(error, '加载分类失败'))
   }
 
   return false
@@ -417,12 +418,12 @@ const loadHotData = async () => {
       message.error(res.msg || '加载数据失败')
       movies.value = []
     }
-  } catch {
+  } catch (error) {
     if (!isPageMounted || requestId !== hotDataRequestId) {
       return
     }
 
-    message.error('加载数据失败')
+    message.error(getErrorMessage(error, '加载数据失败'))
     movies.value = []
   } finally {
     if (isPageMounted && requestId === hotDataRequestId) {
@@ -466,9 +467,9 @@ const loadConfig = async () => {
     }
 
     message.error(res.msg || '加载配置失败')
-  } catch (err) {
-    console.error('加载配置失败', err)
-    message.error('加载配置失败')
+  } catch (error) {
+    console.error('加载配置失败', error)
+    message.error(getErrorMessage(error, '加载配置失败'))
   }
 
   return false
@@ -522,12 +523,12 @@ const handleSearch = async () => {
       message.error(res.msg || '搜索失败')
       searchResults.value = []
     }
-  } catch {
+  } catch (error) {
     if (!isPageMounted || requestId !== searchRequestId) {
       return
     }
 
-    message.error('搜索失败')
+    message.error(getErrorMessage(error, '搜索失败'))
     searchResults.value = []
   } finally {
     if (isPageMounted && requestId === searchRequestId) {
@@ -592,12 +593,12 @@ const handleAISearch = async () => {
       message.error(res.msg || 'AI搜索失败')
       searchResults.value = []
     }
-  } catch {
+  } catch (error) {
     if (!isPageMounted || requestId !== searchRequestId) {
       return
     }
 
-    message.error('AI搜索失败')
+    message.error(getErrorMessage(error, 'AI搜索失败'))
     searchResults.value = []
   } finally {
     if (isPageMounted && requestId === searchRequestId) {
@@ -681,12 +682,12 @@ const handleSaveConfig = async () => {
     } else {
       message.error(res.msg || '保存失败')
     }
-  } catch {
+  } catch (error) {
     if (!isPageMounted || requestId !== saveConfigRequestId) {
       return
     }
 
-    message.error('保存失败')
+    message.error(getErrorMessage(error, '保存失败'))
   } finally {
     if (isPageMounted && requestId === saveConfigRequestId) {
       savingConfig.value = false
@@ -739,7 +740,7 @@ const handleMount = async () => {
     } else {
       message.error(res.msg || '挂载失败')
     }
-  } catch {
+  } catch (error) {
     if (
       !isPageMounted ||
       requestId !== mountRequestId ||
@@ -749,7 +750,7 @@ const handleMount = async () => {
       return
     }
 
-    message.error('挂载失败')
+    message.error(getErrorMessage(error, '挂载失败'))
   } finally {
     if (
       isPageMounted &&

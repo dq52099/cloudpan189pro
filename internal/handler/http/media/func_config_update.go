@@ -2,6 +2,7 @@ package media
 
 import (
 	"errors"
+	"io"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/datatypes"
@@ -38,7 +39,7 @@ type configUpdateRequest struct {
 func (h *handler) ConfigUpdate() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
 		req := new(configUpdateRequest)
-		if err := ctx.ShouldBindJSON(req); err != nil {
+		if err := ctx.ShouldBindJSON(req); err != nil && !errors.Is(err, io.EOF) {
 			ctx.AbortWithInvalidParams(err)
 
 			return

@@ -89,6 +89,7 @@ import {
 } from 'naive-ui'
 import { SearchOutline } from '@vicons/ionicons5'
 import { searchFiles, type FileSearchItem } from '@/api/file'
+import { getErrorMessage } from '@/utils/api'
 import { formatFileSize } from '@/utils/format'
 import { getListItems, getListTotal } from '@/utils/pagination'
 import { normalizeFileSearchItems } from '@/utils/responseGuards'
@@ -295,7 +296,7 @@ const doSearch = () => {
       if (!isLatestSearch(currentDialogVersion, currentSearchRequestId)) return
 
       console.error('搜索失败: ', err)
-      message.error('搜索失败')
+      message.error(getErrorMessage(err, '搜索失败'))
     })
     .finally(() => {
       if (!isLatestSearch(currentDialogVersion, currentSearchRequestId)) return

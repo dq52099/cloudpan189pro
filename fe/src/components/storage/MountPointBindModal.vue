@@ -713,7 +713,7 @@ const handleConfirm = () => {
       }
 
       console.error('批量挂载失败:', error)
-      message.error('批量挂载失败')
+      message.error(getErrorMessage(error, '批量挂载失败'))
     })
     .finally(() => {
       if (isCurrentSubmitRequest(currentRequest)) {

@@ -264,7 +264,7 @@ import dayjs from 'dayjs'
 import { AUTO_INGEST_SOURCE_TYPE_OPTIONS } from '@/constants/autoIngest'
 import CreatePlanModal from '@/components/autoingest/CreatePlanModal.vue'
 import EditPlanModal from '@/components/autoingest/EditPlanModal.vue'
-import { type ApiResponse } from '@/utils/api'
+import { getErrorMessage, type ApiResponse } from '@/utils/api'
 import { getListItems, getListTotal } from '@/utils/pagination'
 import {
   normalizeAutoIngestPlans,
@@ -369,7 +369,7 @@ const loadCloudTokens = () => {
       }
 
       console.error('获取令牌列表失败:', err)
-      message.error('获取令牌列表失败')
+      message.error(getErrorMessage(err, '获取令牌列表失败'))
     })
 }
 
@@ -484,7 +484,7 @@ const handleBatchRetry = () => {
       }
 
       console.error('批量重试失败', err)
-      message.error('批量重试失败')
+      message.error(getErrorMessage(err, '批量重试失败'))
     })
     .finally(() => {
       if (isPageAlive) {
@@ -524,7 +524,7 @@ const handleBatchRefresh = () => {
       }
 
       console.error('批量扫描失败', err)
-      message.error('批量扫描失败')
+      message.error(getErrorMessage(err, '批量扫描失败'))
     })
     .finally(() => {
       if (isPageAlive) {
@@ -565,7 +565,7 @@ const handleBatchEnable = () => {
       }
 
       console.error('批量启用失败', err)
-      message.error('批量启用失败')
+      message.error(getErrorMessage(err, '批量启用失败'))
     })
     .finally(() => {
       if (isPageAlive) {
@@ -606,7 +606,7 @@ const handleBatchDisable = () => {
       }
 
       console.error('批量停用失败', err)
-      message.error('批量停用失败')
+      message.error(getErrorMessage(err, '批量停用失败'))
     })
     .finally(() => {
       if (isPageAlive) {
@@ -663,7 +663,7 @@ const handleBatchDelete = () => {
           }
 
           console.error('批量删除失败', err)
-          message.error('批量删除失败')
+          message.error(getErrorMessage(err, '批量删除失败'))
         })
         .finally(() => {
           if (isPageAlive) {
@@ -1003,7 +1003,7 @@ const fetchPlanList = () => {
       }
 
       console.error('获取计划列表失败:', err)
-      message.error('获取计划列表失败')
+      message.error(getErrorMessage(err, '获取计划列表失败'))
     })
     .finally(() => {
       if (!isActiveRequest(requestId, planListRequestId)) {
@@ -1040,7 +1040,7 @@ const onEnable = (row: Models.AutoIngestPlan) => {
       }
 
       console.error('启用失败', err)
-      message.error('启用失败')
+      message.error(getErrorMessage(err, '启用失败'))
     })
     .finally(() => {
       if (isPageAlive) {
@@ -1074,7 +1074,7 @@ const onDisable = (row: Models.AutoIngestPlan) => {
       }
 
       console.error('停用失败', err)
-      message.error('停用失败')
+      message.error(getErrorMessage(err, '停用失败'))
     })
     .finally(() => {
       if (isPageAlive) {
@@ -1108,7 +1108,7 @@ const onRefresh = (row: Models.AutoIngestPlan) => {
       }
 
       console.error('扫描下发失败', err)
-      message.error('扫描下发失败')
+      message.error(getErrorMessage(err, '扫描下发失败'))
     })
     .finally(() => {
       if (isPageAlive) {
@@ -1142,7 +1142,7 @@ const onRetry = (row: Models.AutoIngestPlan) => {
       }
 
       console.error('重试失败', err)
-      message.error('重试失败')
+      message.error(getErrorMessage(err, '重试失败'))
     })
     .finally(() => {
       if (isPageAlive) {
@@ -1178,7 +1178,7 @@ const onDelete = (row: Models.AutoIngestPlan) => {
       }
 
       console.error('删除失败', err)
-      message.error('删除失败')
+      message.error(getErrorMessage(err, '删除失败'))
     })
     .finally(() => {
       if (isPageAlive) {
@@ -1338,7 +1338,7 @@ const handleClearLogsSelect = (key: string | number) => {
           }
 
           console.error('清理失败', err)
-          message.error('清理失败')
+          message.error(getErrorMessage(err, '清理失败'))
         })
         .finally(() => {
           if (isPageAlive) {
@@ -1436,7 +1436,7 @@ const onRetryFailed = (planId?: number) => {
       }
 
       console.error('重试失败', err)
-      message.error('重试失败')
+      message.error(getErrorMessage(err, '重试失败'))
     })
     .finally(() => {
       if (isPageAlive) {
@@ -1489,7 +1489,7 @@ const fetchLogList = () => {
       }
 
       console.error('获取日志失败:', err)
-      message.error('获取日志失败')
+      message.error(getErrorMessage(err, '获取日志失败'))
     })
     .finally(() => {
       if (!isActiveRequest(requestId, logListRequestId)) {

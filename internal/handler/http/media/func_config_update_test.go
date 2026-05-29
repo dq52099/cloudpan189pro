@@ -75,6 +75,34 @@ func TestConfigUpdatePassesAutoRebuildCron(t *testing.T) {
 	}
 }
 
+func TestConfigUpdateAcceptsEmptyBodyAsNoop(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	service := &mockConfigUpdateMediaConfigService{}
+	router := gin.New()
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/config/update", wrapper.Wrap(NewHandler(service, nil, nil, nil, nil, nil, nil).ConfigUpdate()))
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/config/update",
+		nil,
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected success, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if len(service.fields) != 0 {
+		t.Fatalf("expected no update fields, got %#v", service.fields)
+	}
+}
+
 func TestConfigUpdateReturnsNotFoundWhenConfigMissing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
