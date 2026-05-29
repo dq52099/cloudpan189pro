@@ -73,6 +73,11 @@ func (h *handler) CreateSubscribePlan() httpcontext.HandlerFunc {
 			enable = *req.Enable
 		}
 
+		onConflict := autoingest.OnConflict(req.OnConflict)
+		if onConflict == "" {
+			onConflict = autoingest.OnConflictRename
+		}
+
 		if err := h.validateCloudTokenAccess(ctx, req.CloudToken); err != nil {
 			failCloudTokenAccessError(ctx, err, codeCreatePlanFailed)
 
@@ -116,7 +121,7 @@ func (h *handler) CreateSubscribePlan() httpcontext.HandlerFunc {
 			SourceType:         autoingest.SourceTypeSubscribe,
 			Offset:             offset,
 			ParentPath:         req.ParentPath,
-			OnConflict:         autoingest.OnConflict(req.OnConflict),
+			OnConflict:         onConflict,
 			AddCount:           0,
 			FailedCount:        0,
 			Addition:           addition.JSONMap(),

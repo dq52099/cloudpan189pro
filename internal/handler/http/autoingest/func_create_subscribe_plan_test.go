@@ -17,6 +17,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	autoingestplanSvi "github.com/xxcheng123/cloudpan189-share/internal/services/autoingestplan"
 	cloudbridgeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
+	"github.com/xxcheng123/cloudpan189-share/internal/types/autoingest"
 	"go.uber.org/zap"
 )
 
@@ -109,6 +110,47 @@ func TestCreateSubscribePlanReportsHistoryQueueFailure(t *testing.T) {
 
 	if !strings.Contains(response.Data.HistoryError, errCreateSubscribePlanQueueFailed.Error()) {
 		t.Fatalf("expected history error to contain queue failure, got %q", response.Data.HistoryError)
+	}
+}
+
+func TestCreateSubscribePlanDefaultsConflictPolicyToRename(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	planService := &mockCreateSubscribePlanService{id: 42}
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/create", wrapper.Wrap(NewHandler(
+		&mockCreateSubscribeTaskEngine{},
+		planService,
+		nil,
+		&mockCreateSubscribeCloudBridgeService{},
+	).CreateSubscribePlan()))
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/create",
+		strings.NewReader(`{"name":"计划","autoIngestInterval":30,"parentPath":"/Movies","upUserId":"up-user"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if planService.plan == nil {
+		t.Fatal("expected plan to be created")
+	}
+
+	if planService.plan.OnConflict != autoingest.OnConflictRename {
+		t.Fatalf("expected default conflict policy rename, got %q", planService.plan.OnConflict)
 	}
 }
 
