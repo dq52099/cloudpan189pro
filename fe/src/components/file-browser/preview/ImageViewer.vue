@@ -11,8 +11,10 @@
         <img
           ref="imageRef"
           v-if="imageUrl"
+          :key="imageUrl"
           :src="imageUrl"
           :alt="fileName"
+          :data-source-request-id="sourceRequestId"
           class="image-element"
           :style="imageStyle"
           @load="handleImageLoad"
@@ -133,7 +135,7 @@ const imageInfo = ref<{
   height: number
 } | null>(null)
 let isComponentMounted = false
-let sourceRequestId = 0
+const sourceRequestId = ref(0)
 
 // 计算属性
 const imageStyle = computed(() => ({
@@ -143,19 +145,53 @@ const imageStyle = computed(() => ({
 }))
 
 // 方法
-const handleImageLoad = () => {
+const isCurrentImageEvent = (event: Event) => {
+  if (!isComponentMounted || !imageUrl.value) {
+    return false
+  }
+
+  const target = event.currentTarget
+  if (!(target instanceof HTMLImageElement)) {
+    return false
+  }
+
+  return (
+    target.dataset.sourceRequestId === String(sourceRequestId.value) &&
+    (target.getAttribute('src') === imageUrl.value ||
+      target.currentSrc === imageUrl.value ||
+      target.src === imageUrl.value)
+  )
+}
+
+const resetImageState = (nextLoading: boolean) => {
+  loading.value = nextLoading
+  error.value = false
+  errorMessage.value = ''
+  imageInfo.value = null
+}
+
+const handleImageLoad = (event: Event) => {
+  if (!isCurrentImageEvent(event)) {
+    return
+  }
+
   loading.value = false
   error.value = false
 
-  if (imageRef.value) {
+  const image = event.currentTarget as HTMLImageElement
+  if (image) {
     imageInfo.value = {
-      width: imageRef.value.naturalWidth,
-      height: imageRef.value.naturalHeight,
+      width: image.naturalWidth,
+      height: image.naturalHeight,
     }
   }
 }
 
-const handleImageError = () => {
+const handleImageError = (event: Event) => {
+  if (!isCurrentImageEvent(event)) {
+    return
+  }
+
   // 忽略初始空 src 或切换过程中空链接导致的错误提示
   if (!imageUrl.value) {
     return
@@ -298,16 +334,15 @@ const handleKeydown = (event: KeyboardEvent) => {
 const initSource = () => {
   if (!props.file) return
   const fileId = props.file.id
-  const requestId = ++sourceRequestId
+  const requestId = ++sourceRequestId.value
 
-  loading.value = true
-  error.value = false
+  resetImageState(true)
   innerImageUrl.value = ''
   createDownloadUrl({ fileId })
     .then((res) => {
       if (
         !isComponentMounted ||
-        requestId !== sourceRequestId ||
+        requestId !== sourceRequestId.value ||
         !props.file ||
         props.file.id !== fileId
       ) {
@@ -337,7 +372,7 @@ const initSource = () => {
     .catch((e) => {
       if (
         !isComponentMounted ||
-        requestId !== sourceRequestId ||
+        requestId !== sourceRequestId.value ||
         !props.file ||
         props.file.id !== fileId
       ) {
@@ -367,7 +402,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   isComponentMounted = false
-  sourceRequestId += 1
+  sourceRequestId.value += 1
   document.removeEventListener('keydown', handleKeydown)
   document.removeEventListener('mousemove', handleMouseMove)
   document.removeEventListener('mouseup', handleMouseUp)
@@ -382,12 +417,26 @@ watch(
       resetZoom()
       initSource()
     } else {
-      sourceRequestId += 1
+      sourceRequestId.value += 1
       innerImageUrl.value = ''
       loading.value = false
       error.value = false
     }
   }
+)
+
+watch(
+  () => props.imageUrl,
+  (url) => {
+    if (props.file) {
+      return
+    }
+
+    sourceRequestId.value += 1
+    resetZoom()
+    resetImageState(!!url)
+  },
+  { immediate: true }
 )
 </script>
 
