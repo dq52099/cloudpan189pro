@@ -74,6 +74,7 @@ import { useMessage, type FormInst } from 'naive-ui'
 import { PersonOutline, LockClosedOutline } from '@vicons/ionicons5'
 import { type LoginRequest } from '@/api/auth'
 import { useSystemStore, useAuthStore, useThemeStore } from '@/stores'
+import { getErrorMessage } from '@/utils/api'
 
 const router = useRouter()
 const message = useMessage()
@@ -110,14 +111,6 @@ const rules = {
   ],
 }
 
-const getErrorMessage = (error: unknown) => {
-  if (error instanceof Error && error.message) {
-    return error.message
-  }
-
-  return '登录失败，请检查用户名和密码'
-}
-
 const isCurrentLoginRequest = (requestId: number) =>
   isComponentMounted && requestId === loginRequestId
 
@@ -137,7 +130,7 @@ const handleLogin = async () => {
     if (!isCurrentLoginRequest(requestId)) return
 
     console.error('登录失败:', error)
-    message.error(getErrorMessage(error))
+    message.error(getErrorMessage(error, '登录失败，请检查用户名和密码'))
   } finally {
     if (isCurrentLoginRequest(requestId)) {
       loading.value = false
