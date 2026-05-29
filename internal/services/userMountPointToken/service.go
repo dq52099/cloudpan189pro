@@ -11,6 +11,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Service interface {
@@ -54,14 +55,6 @@ func (s *service) BindToken(ctx context.Context, userID, mountPointID, tokenID i
 	err := s.svc.GetDB(ctx).Transaction(func(tx *gorm.DB) error {
 		bindingDB := tx.Model(new(models.UserMountPointToken))
 
-		if err := bindingDB.
-			Where("user_id = ? AND mount_point_id = ?", userID, mountPointID).
-			Delete(new(models.UserMountPointToken)).Error; err != nil {
-			ctx.Error("删除用户挂载点旧令牌绑定失败", zap.Error(err))
-
-			return err
-		}
-
 		var mountPoint models.MountPoint
 		if err := tx.Select("id").Take(&mountPoint, "id = ?", mountPointID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -74,6 +67,14 @@ func (s *service) BindToken(ctx context.Context, userID, mountPointID, tokenID i
 		}
 
 		if tokenID == 0 {
+			if err := bindingDB.
+				Where("user_id = ? AND mount_point_id = ?", userID, mountPointID).
+				Delete(new(models.UserMountPointToken)).Error; err != nil {
+				ctx.Error("删除用户挂载点旧令牌绑定失败", zap.Error(err))
+
+				return err
+			}
+
 			return nil
 		}
 
@@ -88,7 +89,13 @@ func (s *service) BindToken(ctx context.Context, userID, mountPointID, tokenID i
 			return err
 		}
 
-		if err := bindingDB.Create(&models.UserMountPointToken{
+		if err := bindingDB.Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "user_id"},
+				{Name: "mount_point_id"},
+			},
+			DoUpdates: clause.AssignmentColumns([]string{"token_id", "updated_at"}),
+		}).Create(&models.UserMountPointToken{
 			UserID:       userID,
 			MountPointID: mountPointID,
 			TokenID:      tokenID,

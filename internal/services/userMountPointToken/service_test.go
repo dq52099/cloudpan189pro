@@ -276,6 +276,67 @@ func TestBindTokenUpsertsExistingBinding(t *testing.T) {
 	}
 }
 
+func TestBindTokenUpsertsWhenBindingAppearsBeforeCreate(t *testing.T) {
+	tDB := setupUserMountPointTokenTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	createMountPoint(t, tDB.db, 10)
+	createCloudToken(t, tDB.db, 999)
+
+	insertedConflictingBinding := false
+
+	callbackName := "user_mount_point_token:test_conflicting_binding_before_create"
+
+	if err := tDB.db.Callback().Create().Before("gorm:create").Register(callbackName, func(tx *gorm.DB) {
+		if insertedConflictingBinding ||
+			tx.Statement.Schema == nil ||
+			tx.Statement.Schema.Table != (&models.UserMountPointToken{}).TableName() {
+			return
+		}
+
+		insertedConflictingBinding = true
+
+		if err := tx.Exec(
+			"INSERT INTO user_mount_point_tokens (user_id, mount_point_id, token_id, created_at, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+			int64(1),
+			int64(10),
+			int64(100),
+		).Error; err != nil {
+			t.Fatalf("insert conflicting binding: %v", err)
+		}
+	}); err != nil {
+		t.Fatalf("register create callback: %v", err)
+	}
+
+	defer func() {
+		if removeErr := tDB.db.Callback().Create().Remove(callbackName); removeErr != nil {
+			t.Fatalf("remove create callback: %v", removeErr)
+		}
+	}()
+
+	if err := svc.BindToken(ctx, 1, 10, 999); err != nil {
+		t.Fatalf("bind token with conflicting insert: %v", err)
+	}
+
+	if !insertedConflictingBinding {
+		t.Fatal("expected callback to insert conflicting binding")
+	}
+
+	if count := countBindings(t, tDB.db, "user_id = ? AND mount_point_id = ?", 1, 10); count != 1 {
+		t.Fatalf("expected one binding after upsert, got count %d", count)
+	}
+
+	tokenID, err := svc.GetTokenID(ctx, 1, 10)
+	if err != nil {
+		t.Fatalf("get token id: %v", err)
+	}
+
+	if tokenID != 999 {
+		t.Fatalf("expected upserted token id 999, got %d", tokenID)
+	}
+}
+
 func TestBindTokenReturnsRecordNotFoundWhenMountPointMissing(t *testing.T) {
 	tDB := setupUserMountPointTokenTestDB(t)
 	svc := NewService(tDB)
