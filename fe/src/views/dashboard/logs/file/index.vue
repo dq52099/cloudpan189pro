@@ -236,6 +236,7 @@ let refreshTimer: ReturnType<typeof setInterval> | null = null
 let isComponentMounted = false
 let listRequestId = 0
 let clearRequestId = 0
+let listRequestInFlight = false
 
 // 状态选项（使用常量定义）
 const statusOptions = TASK_STATUS_OPTIONS
@@ -320,7 +321,12 @@ const isLatestClearRequest = (requestId: number) => {
 }
 
 const fetchTaskLogList = (silent = false) => {
+  if (silent && listRequestInFlight) {
+    return
+  }
+
   const requestId = ++listRequestId
+  listRequestInFlight = true
 
   if (!silent && isComponentMounted) {
     state.loading = true
@@ -399,6 +405,7 @@ const fetchTaskLogList = (silent = false) => {
     .finally(() => {
       if (isLatestListRequest(requestId)) {
         state.loading = false
+        listRequestInFlight = false
       }
     })
 }
@@ -744,6 +751,7 @@ onUnmounted(() => {
   isComponentMounted = false
   listRequestId++
   clearRequestId++
+  listRequestInFlight = false
   state.clearDialogOpen = false
   stopAutoRefresh()
 })
