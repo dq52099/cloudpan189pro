@@ -12,7 +12,7 @@ import (
 )
 
 type deleteRequest struct {
-	ID int64 `json:"id" binding:"required" example:"1"` // 挂载点表主键
+	ID int64 `json:"id" binding:"required,min=1" example:"1"` // 挂载点表主键
 }
 
 // Delete 删除存储挂载

@@ -61,6 +61,53 @@ func TestRefreshRejectsMountPointOwnedByOtherUser(t *testing.T) {
 	}
 }
 
+func TestRefreshRejectsInvalidIDBeforeQuerying(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{},
+	}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/refresh", wrapper.Wrap(NewHandler(
+		taskEngine,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	).Refresh()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/refresh", strings.NewReader(`{"id":-1}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if len(mountPointService.queries) != 0 {
+		t.Fatalf("expected invalid request to stop before querying mount points, got %v", mountPointService.queries)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no refresh task for invalid request, got %d", len(taskEngine.payloads))
+	}
+}
+
 func TestRefreshAllowsMountPointOwner(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

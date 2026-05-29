@@ -9,8 +9,8 @@ import (
 )
 
 type refreshRequest struct {
-	ID   int64 `json:"id" binding:"required" example:"1001"` // 挂载点表主键
-	Deep bool  `json:"deep" example:"true"`                  // 深度刷新
+	ID   int64 `json:"id" binding:"required,min=1" example:"1001"` // 挂载点表主键
+	Deep bool  `json:"deep" example:"true"`                        // 深度刷新
 }
 
 // Refresh 刷新存储挂载

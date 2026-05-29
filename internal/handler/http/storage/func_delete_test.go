@@ -43,6 +43,7 @@ func (m *mockDeleteTaskEngine) PushMessage(ctx stdctx.Context, taskTopic taskeng
 type mockDeleteMountPointService struct {
 	mountPointSvi.Service
 	mountPoints  map[int64]*models.MountPoint
+	queries      []int64
 	deleteCalled bool
 }
 
@@ -56,6 +57,8 @@ func (m *mockDeleteMountPointService) Query(ctx appContext.Context, fileID int64
 }
 
 func (m *mockDeleteMountPointService) QueryByID(ctx appContext.Context, id int64) (*models.MountPoint, error) {
+	m.queries = append(m.queries, id)
+
 	if mountPoint, ok := m.mountPoints[id]; ok {
 		return mountPoint, nil
 	}
@@ -169,6 +172,33 @@ func TestDeleteQueuesTaskWithoutImmediateDataDeletion(t *testing.T) {
 
 	if taskEngine.paths[0] != "/movies" {
 		t.Fatalf("expected queued full path /movies, got %v", taskEngine.paths[0])
+	}
+}
+
+func TestDeleteRejectsInvalidIDBeforeQuerying(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockDeleteTaskEngine{}
+	virtualFileService := &mockDeleteVirtualFileService{}
+	mountPointService := &mockDeleteMountPointService{mountPoints: map[int64]*models.MountPoint{}}
+	router := newDeleteTestRouter(taskEngine, virtualFileService, mountPointService)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/delete", strings.NewReader(`{"id":-1}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if len(mountPointService.queries) != 0 {
+		t.Fatalf("expected invalid request to stop before querying mount points, got %v", mountPointService.queries)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no queued task for invalid request, got %d", len(taskEngine.payloads))
 	}
 }
 
