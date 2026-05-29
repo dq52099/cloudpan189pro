@@ -129,13 +129,13 @@ const setupPlayer = async (requestId: number) => {
           if (!isCurrentSource(requestId)) return
 
           console.error('buildPlyr error:', error)
-          message.error('视频播放器初始化失败')
+          message.error(getErrorMessage(error, '视频播放器初始化失败'))
         })
     })
     hls.value.on(HlsCtor.Events.ERROR, (_event, data) => {
       if (isCurrentSource(requestId) && data?.fatal) {
         destroyPlayer()
-        message.error('HLS 播放失败')
+        message.error(data?.details ? `HLS 播放失败：${data.details}` : 'HLS 播放失败')
       }
     })
   } else {

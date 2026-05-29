@@ -126,6 +126,7 @@ import {
 } from '@vicons/ionicons5'
 import { initSystem, type InitSystemRequest } from '@/api/setting'
 import { useSystemStore, useThemeStore } from '@/stores'
+import { getErrorMessage } from '@/utils/api'
 
 const router = useRouter()
 const message = useMessage()
@@ -207,7 +208,7 @@ const autoGetBaseURL = () => {
     message.success('已自动获取系统基础URL')
   } catch (error) {
     console.error('自动获取URL失败:', error)
-    message.error('自动获取URL失败')
+    message.error(getErrorMessage(error, '自动获取URL失败'))
   } finally {
     autoGetUrlLoading.value = false
   }
@@ -252,7 +253,7 @@ const handleInit = async () => {
     }
 
     console.error('初始化失败:', error)
-    message.error('初始化失败，请检查配置信息')
+    message.error(getErrorMessage(error, '初始化失败，请检查配置信息'))
   } finally {
     if (isCurrentInitRequest(requestSeq)) {
       loading.value = false

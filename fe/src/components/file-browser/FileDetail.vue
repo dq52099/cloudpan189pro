@@ -335,7 +335,7 @@ const copyLink = () => {
         if (fallbackCopyToClipboard(currentUrl)) {
           message.success('链接已复制到剪贴板')
         } else {
-          message.error('复制链接失败')
+          message.error(getErrorMessage(error, '复制链接失败'))
         }
       })
       .finally(() => {
@@ -348,7 +348,7 @@ const copyLink = () => {
     if (fallbackCopyToClipboard(currentUrl)) {
       message.success('链接已复制到剪贴板')
     } else {
-      message.error('复制链接失败')
+      message.error('复制链接失败，请检查浏览器剪贴板权限')
     }
     copyPending.value = false
   }
