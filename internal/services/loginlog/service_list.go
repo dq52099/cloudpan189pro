@@ -31,7 +31,7 @@ var allowedLoginLogSortColumns = map[string]struct{}{
 
 // ListRequest 登录日志列表查询请求
 type ListRequest struct {
-	UserId   int64           `form:"userId"  binding:"omitempty" example:"1"`
+	UserId   int64           `form:"userId"  binding:"omitempty,min=1" example:"1"`
 	Username string          `form:"username" binding:"omitempty"` // 模糊匹配
 	Addr     string          `form:"addr"    binding:"omitempty"`  // 模糊匹配
 	Method   loginlog.Method `form:"method"  binding:"omitempty"`
@@ -55,7 +55,10 @@ func (s *service) List(ctx context.Context, req *ListRequest) ([]*models.LoginLo
 		req = &ListRequest{}
 	}
 
-	query := s.getListQuery(ctx, req)
+	query, err := s.getListQuery(ctx, req)
+	if err != nil {
+		return nil, err
+	}
 
 	// 排序
 	if len(req.AscList) > 0 {
@@ -111,21 +114,28 @@ func normalizeLoginLogPagination(req *ListRequest) {
 func (s *service) Count(ctx context.Context, req *ListRequest) (int64, error) {
 	var count int64
 
-	err := s.getListQuery(ctx, req).Count(&count).Error
+	query, err := s.getListQuery(ctx, req)
+	if err != nil {
+		return 0, err
+	}
+
+	err = query.Count(&count).Error
 
 	return count, err
 }
 
 // getListQuery 构建列表查询
-func (s *service) getListQuery(ctx context.Context, req *ListRequest) *gorm.DB {
+func (s *service) getListQuery(ctx context.Context, req *ListRequest) (*gorm.DB, error) {
 	query := s.getDB(ctx)
 
 	if req == nil {
-		return query
+		return query, nil
 	}
 
 	if req.UserId > 0 {
 		query = query.Where("user_id = ?", req.UserId)
+	} else if req.UserId < 0 {
+		return nil, errInvalidLoginLogUserID
 	}
 
 	if req.Username != "" {
@@ -156,5 +166,5 @@ func (s *service) getListQuery(ctx context.Context, req *ListRequest) *gorm.DB {
 		query = query.Where("created_at <= ?", req.EndAt)
 	}
 
-	return query
+	return query, nil
 }

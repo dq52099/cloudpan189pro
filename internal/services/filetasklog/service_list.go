@@ -37,7 +37,7 @@ type ListRequest struct {
 	Type    string    `form:"type" binding:"omitempty"`
 	Status  string    `form:"status" binding:"omitempty"`
 	FileId  int64     `form:"fileId" binding:"omitempty"`
-	UserId  int64     `form:"userId" binding:"omitempty"`
+	UserId  int64     `form:"userId" binding:"omitempty,min=1"`
 	BeginAt time.Time `form:"beginAt" binding:"omitempty"`
 	EndAt   time.Time `form:"endAt" binding:"omitempty"`
 
@@ -162,6 +162,8 @@ func (s *service) getListQuery(ctx context.Context, req *ListRequest) (*gorm.DB,
 
 	if req.UserId > 0 {
 		query = query.Where("user_id = ?", req.UserId)
+	} else if req.UserId < 0 {
+		return nil, errInvalidFileTaskLogUserID
 	}
 
 	if !req.BeginAt.IsZero() {

@@ -196,6 +196,24 @@ func TestListRejectsInvalidSortFields(t *testing.T) {
 	}
 }
 
+func TestListRejectsInvalidUserID(t *testing.T) {
+	tDB := setupLoginLogTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	createLoginLog(t, tDB.db, 0)
+
+	req := &ListRequest{UserId: -1}
+
+	if _, err := svc.List(ctx, req); !errors.Is(err, errInvalidLoginLogUserID) {
+		t.Fatalf("expected invalid login log user id from list, got %v", err)
+	}
+
+	if _, err := svc.Count(ctx, req); !errors.Is(err, errInvalidLoginLogUserID) {
+		t.Fatalf("expected invalid login log user id from count, got %v", err)
+	}
+}
+
 func TestListAllowsWhitelistedSortFields(t *testing.T) {
 	tDB := setupLoginLogTestDB(t)
 	svc := NewService(tDB)

@@ -93,6 +93,19 @@ func TestListRejectsInvalidFileIdFilters(t *testing.T) {
 	}
 }
 
+func TestListRejectsInvalidUserID(t *testing.T) {
+	tDB := setupFileTaskLogTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	createFileTaskLogForList(t, svc, ctx, 0)
+
+	_, err := svc.List(ctx, &ListRequest{UserId: -1})
+	if !errors.Is(err, errInvalidFileTaskLogUserID) {
+		t.Fatalf("expected invalid file task log user id, got %v", err)
+	}
+}
+
 func TestListRejectsInvalidSortFields(t *testing.T) {
 	tDB := setupFileTaskLogTestDB(t)
 	svc := NewService(tDB)
