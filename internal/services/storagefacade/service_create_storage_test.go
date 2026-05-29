@@ -303,7 +303,7 @@ func TestCreateStorageAllowExistingReturnsExistingMountPointRoot(t *testing.T) {
 		CloudToken:    0,
 		FileId:        "cloud-id",
 		Addition:      datatypes.JSONMap{},
-		CreatorUserID: 200,
+		CreatorUserID: 100,
 		AllowExisting: true,
 	})
 	if err != nil {
@@ -321,6 +321,75 @@ func TestCreateStorageAllowExistingReturnsExistingMountPointRoot(t *testing.T) {
 
 	if mountPointCount != 1 {
 		t.Fatalf("expected existing mount point only, got %d", mountPointCount)
+	}
+}
+
+func TestCreateStorageAllowExistingRejectsExistingMountPointOwnedByOtherUser(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+	existingFile := createStorageFacadeVirtualDir(t, tDB.db, 0, "mounted-by-other")
+
+	mountPoint := &models.MountPoint{
+		FileId:        existingFile.ID,
+		Name:          "mounted-by-other",
+		FullPath:      "/mounted-by-other",
+		OsType:        models.OsTypeFolder,
+		TokenId:       0,
+		CreatorUserID: 100,
+	}
+	if err := tDB.db.Create(mountPoint).Error; err != nil {
+		t.Fatalf("create mount point: %v", err)
+	}
+
+	svc := NewService(tDB)
+
+	_, err := svc.CreateStorage(context.NewContext(stdctx.Background()), &CreateStorageRequest{
+		LocalPath:     "/mounted-by-other",
+		OsType:        models.OsTypeFolder,
+		CloudToken:    0,
+		FileId:        "cloud-id",
+		Addition:      datatypes.JSONMap{},
+		CreatorUserID: 200,
+		AllowExisting: true,
+	})
+	if !errors.Is(err, ErrExistingPathForbidden) {
+		t.Fatalf("expected ErrExistingPathForbidden, got %v", err)
+	}
+}
+
+func TestCreateStorageAllowExistingAllowsAdminToReuseExistingMountPoint(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+	existingFile := createStorageFacadeVirtualDir(t, tDB.db, 0, "admin-reuse")
+
+	mountPoint := &models.MountPoint{
+		FileId:        existingFile.ID,
+		Name:          "admin-reuse",
+		FullPath:      "/admin-reuse",
+		OsType:        models.OsTypeFolder,
+		TokenId:       0,
+		CreatorUserID: 100,
+	}
+	if err := tDB.db.Create(mountPoint).Error; err != nil {
+		t.Fatalf("create mount point: %v", err)
+	}
+
+	svc := NewService(tDB)
+
+	id, err := svc.CreateStorage(context.NewContext(stdctx.Background()), &CreateStorageRequest{
+		LocalPath:     "/admin-reuse",
+		OsType:        models.OsTypeFolder,
+		CloudToken:    0,
+		FileId:        "cloud-id",
+		Addition:      datatypes.JSONMap{},
+		CreatorUserID: 200,
+		IsAdmin:       true,
+		AllowExisting: true,
+	})
+	if err != nil {
+		t.Fatalf("create storage as admin: %v", err)
+	}
+
+	if id != existingFile.ID {
+		t.Fatalf("expected existing file id %d, got %d", existingFile.ID, id)
 	}
 }
 

@@ -30,10 +30,14 @@ import (
 type mockSubscriptionStorageFacade struct {
 	storagefacade.Service
 	req *storagefacade.CreateStorageRequest
+	err error
 }
 
 func (m *mockSubscriptionStorageFacade) CreateStorage(ctx appContext.Context, req *storagefacade.CreateStorageRequest) (int64, error) {
 	m.req = req
+	if m.err != nil {
+		return 0, m.err
+	}
 
 	return 12345, nil
 }
@@ -1050,6 +1054,47 @@ func TestMountSubscriptionRejectsExistingPathOwnedByOtherUser(t *testing.T) {
 
 	if storageSvc.req != nil {
 		t.Fatal("expected storage facade not to be called")
+	}
+
+	if !strings.Contains(recorder.Body.String(), "其他用户") {
+		t.Fatalf("expected ownership error, got body=%s", recorder.Body.String())
+	}
+}
+
+func TestMountSubscriptionMapsFacadeExistingPathForbiddenToForbidden(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupSubscriptionHandlerTestDB(t)
+	storageSvc := &mockSubscriptionStorageFacade{err: storagefacade.ErrExistingPathForbidden}
+	handler := NewHandler(db, nil, nil, storageSvc, &mockSubscriptionCloudBridge{}, zap.NewNop(), nil)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(consts.CtxKeyUserId, int64(77))
+		c.Set(consts.CtxKeyIsAdmin, false)
+		c.Next()
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/mount", wrapper.Wrap(handler.MountSubscription()))
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/mount",
+		strings.NewReader(`{"title":"测试资源","shareUrl":"https://cloud.189.cn/t/abc123","shareCode":"abc123","mountPath":"/热门订阅/测试资源"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected forbidden, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if storageSvc.req == nil {
+		t.Fatal("expected storage facade to be called")
 	}
 
 	if !strings.Contains(recorder.Body.String(), "其他用户") {

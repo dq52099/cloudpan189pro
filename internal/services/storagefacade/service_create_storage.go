@@ -38,6 +38,9 @@ type CreateStorageRequest struct {
 // ErrPathAlreadyExists 路径已存在且未开启 AllowExisting 时返回。
 var ErrPathAlreadyExists = errors.New("路径已被挂载，无法重复创建")
 
+// ErrExistingPathForbidden 路径已存在但不属于当前用户时返回。
+var ErrExistingPathForbidden = errors.New("路径已被其他用户挂载")
+
 var (
 	errRequestNil         = errors.New("请求对象为空")
 	errInvalidPath        = errors.New("路径不合法，需要 / 开头的路径")
@@ -113,6 +116,19 @@ func (s *service) createStorageInTransaction(ctx context.Context, req *CreateSto
 
 			return 0, ErrPathAlreadyExists
 		}
+
+		if req.CreatorUserID > 0 && !req.IsAdmin && mp.CreatorUserID != req.CreatorUserID {
+			ctx.Warn(
+				"挂载点路径已存在但不属于当前用户",
+				zap.String("path", req.LocalPath),
+				zap.Int64("exists_id", mp.ID),
+				zap.Int64("creator_user_id", mp.CreatorUserID),
+				zap.Int64("current_user_id", req.CreatorUserID),
+			)
+
+			return 0, ErrExistingPathForbidden
+		}
+
 		// 路径已存在，返回已存在的挂载点ID而不是报错
 		ctx.Info("挂载点路径已存在，返回已存在的记录", zap.String("path", req.LocalPath), zap.Int64("exists_id", mp.ID))
 

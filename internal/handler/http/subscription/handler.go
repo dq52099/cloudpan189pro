@@ -1263,6 +1263,13 @@ func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 		id, err := h.storageFacadeService.CreateStorage(ctx, storageReq)
 		if err != nil {
 			h.logger.Error("Failed to create storage", zap.Error(err), zap.String("path", mountPath))
+
+			if errors.Is(err, storagefacade.ErrExistingPathForbidden) {
+				c.Forbidden("路径已被其他用户挂载")
+
+				return
+			}
+
 			c.Fail(invalidParams(fmt.Errorf("创建挂载点失败: %v", err)))
 
 			return
