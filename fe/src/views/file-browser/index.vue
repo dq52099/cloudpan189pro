@@ -419,7 +419,7 @@ const handleBatchDelete = () => {
           if (!isComponentMounted) return
 
           console.error(err)
-          message.error('删除请求出错')
+          message.error(getErrorMessage(err, '删除请求出错'))
         })
         .finally(() => {
           if (isComponentMounted) {

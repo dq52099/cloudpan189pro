@@ -301,7 +301,7 @@ const handleToggleStatus = (user: Models.UserInfo) => {
       if (!usersPageAlive) return
 
       console.error(`${actionText}用户失败:`, error)
-      message.error(`${actionText}用户失败`)
+      message.error(getErrorMessage(error, `${actionText}用户失败`))
     })
     .finally(() => {
       if (usersPageAlive) {
