@@ -50,6 +50,7 @@ import {
   type FormInst,
 } from 'naive-ui'
 import { addUserGroup } from '@/api/usergroup'
+import { getErrorMessage } from '@/utils/api'
 
 interface Props {
   show: boolean
@@ -177,7 +178,7 @@ const handleSubmit = async () => {
     }
 
     console.error('添加用户组失败:', error)
-    message.error('添加用户组失败')
+    message.error(getErrorMessage(error, '添加用户组失败'))
   } finally {
     if (isCurrentOperation(currentOperation)) {
       loading.value = false

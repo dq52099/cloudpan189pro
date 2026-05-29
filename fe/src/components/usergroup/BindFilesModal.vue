@@ -131,6 +131,7 @@ import {
 import { SearchOutline } from '@vicons/ionicons5'
 import { getStorageSelectList, type StorageSelectItem } from '@/api/storage'
 import { batchBindFiles, getBindFiles } from '@/api/usergroup'
+import { getErrorMessage } from '@/utils/api'
 
 interface Props {
   show: boolean
@@ -402,7 +403,7 @@ const loadBindFiles = async (
     if (!isCurrentOperation(version, userGroupId)) return
 
     console.error('获取已绑定文件失败:', error)
-    message.error('获取已绑定存储失败')
+    message.error(getErrorMessage(error, '获取已绑定存储失败'))
   } finally {
     if (isCurrentOperation(version, userGroupId)) {
       loadingBindFiles.value = false
@@ -442,7 +443,7 @@ const fetchStorageList = async (
     if (!isCurrentStorageListRequest(version, userGroupId, currentRequestId)) return
 
     console.error('获取存储列表失败:', error)
-    message.error('获取存储列表失败')
+    message.error(getErrorMessage(error, '获取存储列表失败'))
   } finally {
     if (isCurrentStorageListRequest(version, userGroupId, currentRequestId)) {
       loading.value = false
@@ -539,7 +540,7 @@ const selectAllSearchResults = async () => {
     if (!isCurrentOperation(version, userGroupId)) return
 
     console.error('获取全部存储失败:', error)
-    message.error('获取全部存储失败')
+    message.error(getErrorMessage(error, '获取全部存储失败'))
   } finally {
     if (isCurrentOperation(version, userGroupId)) {
       selectingAll.value = false
@@ -617,7 +618,7 @@ const handleConfirm = async () => {
     if (!isCurrentOperation(version, userGroupId)) return
 
     console.error('存储绑定失败:', error)
-    message.error('存储绑定失败')
+    message.error(getErrorMessage(error, '存储绑定失败'))
   } finally {
     if (isCurrentOperation(version, userGroupId)) {
       submitting.value = false

@@ -70,6 +70,7 @@ import {
 import { PeopleOutline, TrashOutline, CreateOutline, LinkOutline } from '@vicons/ionicons5'
 import { getUserGroupList, deleteUserGroup } from '@/api/usergroup'
 import { AddUserGroupModal, ModifyUserGroupNameModal, BindFilesModal } from '@/components/usergroup'
+import { getErrorMessage } from '@/utils/api'
 import { getListItems, getListTotal } from '@/utils/pagination'
 import { normalizeDashboardUserGroups } from '@/utils/responseGuards'
 import { formatDateTime } from '@/utils/time'
@@ -175,7 +176,7 @@ const fetchUserGroupList = () => {
       if (currentRequestId !== userGroupListRequestId) return
 
       console.error('获取用户组列表失败:', error)
-      message.error('获取用户组列表失败')
+      message.error(getErrorMessage(error, '获取用户组列表失败'))
     })
     .finally(() => {
       if (isComponentUnmounted) return
@@ -235,7 +236,7 @@ const handleDeleteUserGroup = (userGroupId: number) => {
       if (isComponentUnmounted) return
 
       console.error('删除用户组失败:', error)
-      message.error('删除用户组失败')
+      message.error(getErrorMessage(error, '删除用户组失败'))
     })
     .finally(() => {
       deleteUserGroupPromiseMap.delete(userGroupId)

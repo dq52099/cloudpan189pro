@@ -61,6 +61,7 @@ import {
 } from 'naive-ui'
 import { bindUserGroup, type BindGroupRequest } from '@/api/user'
 import { getUserGroupList, type UserGroupInfo } from '@/api/usergroup'
+import { getErrorMessage } from '@/utils/api'
 import { getListItems } from '@/utils/pagination'
 import { normalizeUserGroups } from '@/utils/responseGuards'
 
@@ -119,15 +120,6 @@ const invalidatePendingWork = () => {
   operationVersion++
 }
 
-const getErrorMessage = (error: unknown) => {
-  if (typeof error !== 'object' || error === null) {
-    return undefined
-  }
-
-  const response = (error as { response?: { data?: { msg?: unknown } } }).response
-  return typeof response?.data?.msg === 'string' ? response.data.msg : undefined
-}
-
 const fetchUserGroups = (currentOperation = operationVersion) => {
   if (!isComponentMounted) {
     return
@@ -179,7 +171,7 @@ const fetchUserGroups = (currentOperation = operationVersion) => {
       }
 
       console.error('获取用户组列表失败:', error)
-      message.error('获取用户组列表失败')
+      message.error(getErrorMessage(error, '获取用户组列表失败'))
     })
     .finally(() => {
       if (isCurrentOperation(currentOperation)) {
@@ -266,7 +258,7 @@ const handleConfirm = async () => {
     }
 
     console.error('绑定用户组失败:', error)
-    message.error(getErrorMessage(error) || '绑定用户组失败，请稍后重试')
+    message.error(getErrorMessage(error, '绑定用户组失败，请稍后重试'))
   } finally {
     if (isCurrentOperation(currentOperation)) {
       loading.value = false

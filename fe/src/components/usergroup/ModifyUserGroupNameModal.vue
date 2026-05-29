@@ -50,6 +50,7 @@ import {
   type FormInst,
 } from 'naive-ui'
 import { modifyUserGroupName } from '@/api/usergroup'
+import { getErrorMessage } from '@/utils/api'
 
 interface Props {
   show: boolean
@@ -182,7 +183,7 @@ const handleSubmit = async () => {
     }
 
     console.error('修改用户组名称失败:', error)
-    message.error('修改用户组名称失败')
+    message.error(getErrorMessage(error, '修改用户组名称失败'))
   } finally {
     if (isCurrentOperation(currentOperation)) {
       loading.value = false

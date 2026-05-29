@@ -1,7 +1,7 @@
 import { reactive, computed, type Ref } from 'vue'
 import { getSubscribeUser, getSubscribeUserAll } from '@/api/storage/advance'
 import type { ShareResourceInfo, GetSubscribeUserResponse } from '@/api/storage/advance'
-import type { ApiResponse } from '@/utils/api'
+import { getErrorMessage, type ApiResponse } from '@/utils/api'
 import {
   normalizeGetSubscribeUserAllResponse,
   normalizeGetSubscribeUserResponse,
@@ -139,7 +139,7 @@ export function useSubscribeResource(
       }
 
       console.error('获取资源列表失败:', error)
-      message.error('获取资源列表失败')
+      message.error(getErrorMessage(error, '获取资源列表失败'))
       return false
     } finally {
       if (isActive() && currentRequest === resourceListRequestVersion) {
@@ -226,7 +226,7 @@ export function useSubscribeResource(
       }
 
       console.error('获取全部资源失败:', error)
-      message.error('获取全部资源失败')
+      message.error(getErrorMessage(error, '获取全部资源失败'))
       return false
     } finally {
       if (isActive() && currentRequest === allResourcesRequestVersion) {
