@@ -38,6 +38,12 @@ func (m *mockAdvanceCloudTokenService) QueryAccessible(ctx appContext.Context, i
 func performAdvanceFamilyListRequest(t *testing.T, cloudTokenService cloudtokenSvi.Service) *httptest.ResponseRecorder {
 	t.Helper()
 
+	return performAdvanceFamilyListRequestURL(t, cloudTokenService, "/family/list?cloudToken=123")
+}
+
+func performAdvanceFamilyListRequestURL(t *testing.T, cloudTokenService cloudtokenSvi.Service, url string) *httptest.ResponseRecorder {
+	t.Helper()
+
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
@@ -49,7 +55,7 @@ func performAdvanceFamilyListRequest(t *testing.T, cloudTokenService cloudtokenS
 	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
 	router.GET("/family/list", wrapper.Wrap(NewHandler(nil, cloudTokenService).FamilyList()))
 
-	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/family/list?cloudToken=123", nil)
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, url, nil)
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)
 
@@ -89,4 +95,18 @@ func TestFamilyListReturnsQueryErrorWhenCloudTokenLookupFails(t *testing.T) {
 	recorder := performAdvanceFamilyListRequest(t, &mockAdvanceCloudTokenService{err: errors.New("database unavailable")})
 
 	assertAdvanceHTTPError(t, recorder, http.StatusBadRequest, codeStorageAdvanceQueryCloudTokenError)
+}
+
+func TestFamilyListRejectsInvalidCloudTokenBeforeLookup(t *testing.T) {
+	cloudTokenService := &mockAdvanceCloudTokenService{}
+
+	recorder := performAdvanceFamilyListRequestURL(t, cloudTokenService, "/family/list?cloudToken=0")
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected HTTP %d, got %d body=%s", http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	}
+
+	if len(cloudTokenService.queries) != 0 {
+		t.Fatalf("expected invalid cloud token not to query service, got %v", cloudTokenService.queries)
+	}
 }

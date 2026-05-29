@@ -8,7 +8,7 @@ import (
 type getPersonFilesRequest struct {
 	PageNum    int    `form:"pageNum,default=1" binding:"min=1"`
 	PageSize   int    `form:"pageSize,default=10" binding:"min=1,max=100"`
-	CloudToken int64  `form:"cloudToken" binding:"required"`
+	CloudToken int64  `form:"cloudToken" binding:"required,min=1"`
 	ParentId   string `form:"parentId,omitempty,default=-11"`
 }
 

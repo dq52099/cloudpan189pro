@@ -6,7 +6,7 @@ import (
 )
 
 type familyListRequest struct {
-	CloudToken int64 `form:"cloudToken" binding:"required"`
+	CloudToken int64 `form:"cloudToken" binding:"required,min=1"`
 }
 
 // FamilyList 获取家庭云列表
