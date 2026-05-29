@@ -209,4 +209,8 @@ func TestRefreshQueuesMountPointFileID(t *testing.T) {
 	if task.FileId != 99 || !task.Deep {
 		t.Fatalf("expected queued virtual file id 99 with deep=true, got %+v", task)
 	}
+
+	if task.ExpectedUserID != 100 || task.TriggeredByAdmin {
+		t.Fatalf("expected queued refresh user snapshot user=100 admin=false, got %+v", task)
+	}
 }

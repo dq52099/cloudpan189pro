@@ -70,6 +70,8 @@ type mockBatchModifyTokenMountPointService struct {
 	queriedMountPointIDs   []int64
 	batchDeleteErrByID     map[int64]error
 	batchDeleteRequests    []*mountPointSvi.BatchDeleteRequest
+	refreshTimeUpdates     []int64
+	lastStateUpdates       []int64
 }
 
 func (m *mockBatchModifyTokenMountPointService) Query(ctx appContext.Context, fileID int64) (*models.MountPoint, error) {
@@ -120,10 +122,14 @@ func (m *mockBatchModifyTokenMountPointService) BatchDelete(ctx appContext.Conte
 }
 
 func (m *mockBatchModifyTokenMountPointService) UpdateRefreshTime(ctx appContext.Context, fileID int64) error {
+	m.refreshTimeUpdates = append(m.refreshTimeUpdates, fileID)
+
 	return nil
 }
 
 func (m *mockBatchModifyTokenMountPointService) UpdateLastState(ctx appContext.Context, fileID int64, state string) error {
+	m.lastStateUpdates = append(m.lastStateUpdates, fileID)
+
 	return nil
 }
 
@@ -441,6 +447,70 @@ func TestScanFileJoinsBusinessAndFailedStatusErrors(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "不支持的文件类型") {
 		t.Fatalf("expected scan business error to be preserved, got %v", err)
+	}
+}
+
+func TestScanFileSkipsWhenMountPointOwnerChanged(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := filetasklog.NewService(tDB)
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		childrenByParent: map[int64][]*models.VirtualFile{},
+		deleteErrByID:    map[int64]error{},
+		filesByID: map[int64]*models.VirtualFile{
+			10: {ID: 10, TopId: 10, IsTop: true, Name: "top", IsDir: true, OsType: models.OsTypeFolder},
+		},
+	}
+	mountPointService := &mockBatchModifyTokenMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			10: {ID: 1001, FileId: 10, CreatorUserID: 200, Name: "changed-owner"},
+		},
+	}
+
+	oldMediaConfig := shared.MediaConfig
+	shared.MediaConfig = nil
+
+	defer func() {
+		shared.MediaConfig = oldMediaConfig
+	}()
+
+	handler := NewHandler(
+		zap.NewNop(),
+		virtualFileService,
+		nil,
+		nil,
+		mountPointService,
+		logService,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	req := topic.FileScanFileRequest{
+		FileId:         10,
+		ExpectedUserID: 100,
+	}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.ScanFile())
+	if err := processor.Process(stdctx.Background(), payload); err != nil {
+		t.Fatalf("owner-changed scan should be skipped without retrying queue item: %v", err)
+	}
+
+	var logCount int64
+	if err := tDB.db.Model(&models.FileTaskLog{}).Count(&logCount).Error; err != nil {
+		t.Fatalf("count task logs: %v", err)
+	}
+
+	if logCount != 0 {
+		t.Fatalf("expected skipped scan not to create task log, got %d", logCount)
+	}
+
+	if len(mountPointService.refreshTimeUpdates) != 0 || len(mountPointService.lastStateUpdates) != 0 {
+		t.Fatalf("expected skipped scan not to update mount point state, got refresh=%v state=%v", mountPointService.refreshTimeUpdates, mountPointService.lastStateUpdates)
 	}
 }
 

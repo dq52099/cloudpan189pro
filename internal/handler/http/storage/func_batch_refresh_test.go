@@ -124,6 +124,10 @@ func TestBatchRefreshDeduplicatesIDsBeforeQueueingTasks(t *testing.T) {
 		t.Fatalf("unexpected first queued task: %+v", firstTask)
 	}
 
+	if firstTask.ExpectedUserID != 100 || firstTask.TriggeredByAdmin {
+		t.Fatalf("expected queued refresh user snapshot user=100 admin=false, got %+v", firstTask)
+	}
+
 	var response struct {
 		Code int                  `json:"code"`
 		Data batchRefreshResponse `json:"data"`

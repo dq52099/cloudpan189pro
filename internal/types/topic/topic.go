@@ -9,8 +9,10 @@ type Request interface {
 }
 
 type FileScanFileRequest struct {
-	FileId int64 `json:"fileId"` // 入口地址
-	Deep   bool  `json:"deep"`   // 是否深度扫描
+	FileId           int64 `json:"fileId"` // 入口地址
+	Deep             bool  `json:"deep"`   // 是否深度扫描
+	ExpectedUserID   int64 `json:"expectedUserId,omitempty"`
+	TriggeredByAdmin bool  `json:"triggeredByAdmin,omitempty"`
 }
 
 func (r FileScanFileRequest) Topic() taskengine.Topic {

@@ -120,8 +120,10 @@ func (h *handler) BatchRefresh() httpcontext.HandlerFunc {
 		for _, id := range validIDs {
 			mp := mountPoints[id]
 			taskReq := &topic.FileScanFileRequest{
-				FileId: mp.fileId,
-				Deep:   req.Deep,
+				FileId:           mp.fileId,
+				Deep:             req.Deep,
+				ExpectedUserID:   userID,
+				TriggeredByAdmin: isAdmin,
 			}
 
 			body, err := json.Marshal(taskReq)

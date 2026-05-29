@@ -44,8 +44,10 @@ func (h *handler) Refresh() httpcontext.HandlerFunc {
 		}
 
 		taskReq := &topic.FileScanFileRequest{
-			FileId: mountPoint.FileId,
-			Deep:   req.Deep,
+			FileId:           mountPoint.FileId,
+			Deep:             req.Deep,
+			ExpectedUserID:   ctx.GetInt64(consts.CtxKeyUserId),
+			TriggeredByAdmin: ctx.GetBool(consts.CtxKeyIsAdmin),
 		}
 
 		body, err := json.Marshal(taskReq)
