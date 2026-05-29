@@ -114,7 +114,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, reactive, ref, watch } from 'vue'
 import {
   NButton,
   NDataTable,
@@ -171,6 +171,7 @@ const storageList = ref<StorageSelectItem[]>([])
 const selectedStorageIds = ref<number[]>([])
 const selectedStorageMap = ref<Record<number, StorageSelectItem>>({})
 const operationVersion = ref(0)
+const isComponentMounted = ref(true)
 
 const pagination = reactive({
   page: 1,
@@ -208,7 +209,15 @@ const invalidateOperation = () => {
 const getCurrentUserGroupId = () => props.userGroupInfo?.id ?? null
 
 const isCurrentOperation = (version: number, userGroupId: number | null) =>
-  visible.value && operationVersion.value === version && getCurrentUserGroupId() === userGroupId
+  isComponentMounted.value &&
+  visible.value &&
+  operationVersion.value === version &&
+  getCurrentUserGroupId() === userGroupId
+
+onUnmounted(() => {
+  isComponentMounted.value = false
+  invalidateOperation()
+})
 
 watch(
   () => [props.show, props.userGroupInfo?.id ?? null] as const,

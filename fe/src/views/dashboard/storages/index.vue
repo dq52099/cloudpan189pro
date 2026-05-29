@@ -73,7 +73,9 @@
             type="error"
             ghost
             :loading="clearingAll"
-            :disabled="clearingAll || batchSubmitting || storageDangerDialogOpen"
+            :disabled="
+              clearingAll || batchSubmitting || storageDangerDialogOpen || hasRefreshingStorage
+            "
             @click="handleClearAll"
           >
             <template #icon>
@@ -112,6 +114,7 @@
           :disabled="
             batchSubmitting ||
             storageDangerDialogOpen ||
+            hasRefreshingStorage ||
             selectedIds.length === 0 ||
             selectedIds.length > maxBatchActionIds
           "
@@ -128,6 +131,7 @@
           :disabled="
             batchSubmitting ||
             storageDangerDialogOpen ||
+            hasRefreshingStorage ||
             selectedIds.length === 0 ||
             selectedIds.length > maxBatchActionIds
           "
@@ -144,6 +148,7 @@
           :disabled="
             batchSubmitting ||
             storageDangerDialogOpen ||
+            hasRefreshingStorage ||
             selectedIds.length === 0 ||
             selectedIds.length > maxBatchModifyTokenIds
           "
@@ -160,6 +165,7 @@
           :disabled="
             batchSubmitting ||
             storageDangerDialogOpen ||
+            hasRefreshingStorage ||
             selectedIds.length === 0 ||
             selectedIds.length > maxBatchActionIds
           "
@@ -234,7 +240,7 @@
                 quaternary
                 circle
                 :loading="isStorageDeleting(storage.mountPointId)"
-                :disabled="isStorageDeleteBlocked(storage.mountPointId)"
+                :disabled="isStorageActionBlocked(storage.mountPointId)"
                 @click="handleDelete(storage)"
               >
                 <template #icon>
@@ -245,7 +251,13 @@
               </n-button>
 
               <n-dropdown :options="getRefreshOptions(storage.mountPointId)" trigger="click">
-                <n-button size="small" quaternary circle>
+                <n-button
+                  size="small"
+                  quaternary
+                  circle
+                  :loading="isStorageRefreshing(storage.mountPointId)"
+                  :disabled="isStorageActionBlocked(storage.mountPointId)"
+                >
                   <template #icon>
                     <n-icon :size="16">
                       <RefreshOutline />
@@ -920,6 +932,7 @@ const intervalTimer = ref<ReturnType<typeof setInterval> | null>(null)
 let isPageMounted = false
 let storageListRequestId = 0
 let selectAllPagesRequestId = 0
+let storageActionSession = 0
 
 // 页面设置表单
 const pageSettingsForm = ref({
@@ -1158,10 +1171,13 @@ const addNewStorageCallback = (data: { success: boolean }) => {
 
 // 获取刷新选项
 const getRefreshOptions = (mountPointId: number): DropdownOption[] => {
+  const disabled = isStorageActionBlocked(mountPointId)
+
   return [
     {
       label: '普通刷新',
       key: `normal-${mountPointId}`,
+      disabled,
       props: {
         onClick: () => handleRefresh(mountPointId, false),
       },
@@ -1169,6 +1185,7 @@ const getRefreshOptions = (mountPointId: number): DropdownOption[] => {
     {
       label: '深度刷新',
       key: `deep-${mountPointId}`,
+      disabled,
       props: {
         onClick: () => handleRefresh(mountPointId, true),
       },
@@ -1178,13 +1195,24 @@ const getRefreshOptions = (mountPointId: number): DropdownOption[] => {
 
 // 处理刷新
 const handleRefresh = (mountPointId: number, deep: boolean) => {
+  if (!isPageMounted || isStorageActionBlocked(mountPointId)) {
+    return
+  }
+
   const storage = tableData.find((s) => s.mountPointId === mountPointId)
   const refreshType = deep ? '深度刷新' : '普通刷新'
+  const actionSession = storageActionSession
+
+  setRefreshingStorage(mountPointId, true)
 
   message.loading(`正在执行${refreshType}...`)
 
   refreshStorage({ id: mountPointId, deep })
     .then((res) => {
+      if (!isCurrentStorageAction(actionSession) || !isStorageRefreshing(mountPointId)) {
+        return
+      }
+
       if (!isBusinessSuccess(res)) {
         message.error(res.msg || '刷新失败')
 
@@ -1194,15 +1222,24 @@ const handleRefresh = (mountPointId: number, deep: boolean) => {
       fetchStorageList()
     })
     .catch((error) => {
+      if (!isCurrentStorageAction(actionSession) || !isStorageRefreshing(mountPointId)) {
+        return
+      }
+
       console.error('刷新存储失败:', error)
       message.error(getErrorMessage(error, '刷新失败'))
+    })
+    .finally(() => {
+      if (isCurrentStorageAction(actionSession)) {
+        setRefreshingStorage(mountPointId, false)
+      }
     })
 }
 
 // 处理删除
 const handleDelete = (storage: StorageInfo) => {
   const id = storage.mountPointId
-  if (!isPageMounted || isStorageDeleteBlocked(id)) return
+  if (!isPageMounted || isStorageActionBlocked(id)) return
 
   setDeleteDialogOpen(id, true)
 
@@ -1212,7 +1249,7 @@ const handleDelete = (storage: StorageInfo) => {
     positiveText: '确认删除',
     negativeText: '取消',
     onAfterLeave: () => {
-      if (!isStorageDeleting(id)) {
+      if (isPageMounted && !isStorageDeleting(id)) {
         setDeleteDialogOpen(id, false)
       }
     },
@@ -1220,11 +1257,12 @@ const handleDelete = (storage: StorageInfo) => {
       if (!isPageMounted || isStorageDeleting(id)) return
 
       setDeletingStorage(id, true)
+      const actionSession = storageActionSession
       message.loading(`正在删除 ${storage.name || '存储'}...`)
 
       return deleteStorage({ id })
         .then((res) => {
-          if (!isPageMounted) {
+          if (!isCurrentStorageAction(actionSession)) {
             return
           }
 
@@ -1237,7 +1275,7 @@ const handleDelete = (storage: StorageInfo) => {
           fetchStorageList()
         })
         .catch((error) => {
-          if (!isPageMounted) {
+          if (!isCurrentStorageAction(actionSession)) {
             return
           }
 
@@ -1245,8 +1283,10 @@ const handleDelete = (storage: StorageInfo) => {
           message.error(getErrorMessage(error, '删除失败'))
         })
         .finally(() => {
-          setDeletingStorage(id, false)
-          setDeleteDialogOpen(id, false)
+          if (isCurrentStorageAction(actionSession)) {
+            setDeletingStorage(id, false)
+            setDeleteDialogOpen(id, false)
+          }
         })
     },
   })
@@ -1362,6 +1402,7 @@ const batchRefreshDialogOpen = ref(false)
 const batchDeleteDialogOpen = ref(false)
 const deletingStorageIds = ref<Set<number>>(new Set())
 const deleteDialogOpenIds = ref<Set<number>>(new Set())
+const refreshingStorageIds = ref<Set<number>>(new Set())
 const batchModifyTokenIds = ref<number[]>([])
 let batchModifyTokenModalSession = 0
 
@@ -1393,7 +1434,19 @@ const setDeleteDialogOpen = (id: number, open: boolean) => {
   deleteDialogOpenIds.value = ids
 }
 
+const setRefreshingStorage = (id: number, refreshing: boolean) => {
+  const ids = new Set(refreshingStorageIds.value)
+  if (refreshing) {
+    ids.add(id)
+  } else {
+    ids.delete(id)
+  }
+  refreshingStorageIds.value = ids
+}
+
 const isStorageDeleting = (id: number) => deletingStorageIds.value.has(id)
+const isStorageRefreshing = (id: number) => refreshingStorageIds.value.has(id)
+const hasRefreshingStorage = computed(() => refreshingStorageIds.value.size > 0)
 
 const isStorageDeleteBlocked = (id: number) =>
   batchSubmitting.value ||
@@ -1401,6 +1454,11 @@ const isStorageDeleteBlocked = (id: number) =>
   storageDangerDialogOpen.value ||
   isStorageDeleting(id) ||
   deleteDialogOpenIds.value.has(id)
+
+const isStorageActionBlocked = (id: number) => isStorageDeleteBlocked(id) || isStorageRefreshing(id)
+
+const isCurrentStorageAction = (session: number) =>
+  isPageMounted && session === storageActionSession
 
 // 进入批量模式
 const enterBatchMode = () => {
@@ -1437,7 +1495,12 @@ const handleCardClick = (id: number) => {
 
 // 处理批量删除
 const handleBatchDelete = () => {
-  if (batchSubmitting.value || storageDangerDialogOpen.value || selectedIds.value.length === 0)
+  if (
+    batchSubmitting.value ||
+    storageDangerDialogOpen.value ||
+    hasRefreshingStorage.value ||
+    selectedIds.value.length === 0
+  )
     return
   if (!validateBatchSelectionLimit(maxBatchActionIds, '批量删除')) return
 
@@ -1450,19 +1513,20 @@ const handleBatchDelete = () => {
     positiveText: '确认删除',
     negativeText: '取消',
     onAfterLeave: () => {
-      if (!batchSubmitting.value) {
+      if (isPageMounted && !batchSubmitting.value) {
         batchDeleteDialogOpen.value = false
       }
     },
     onPositiveClick: () => {
-      if (batchSubmitting.value) return
+      if (!isPageMounted || batchSubmitting.value) return
 
+      const actionSession = ++storageActionSession
       batchSubmitting.value = true
       message.loading('正在批量删除...')
 
       return batchDeleteStorage({ ids })
         .then((res) => {
-          if (!isPageMounted) {
+          if (!isCurrentStorageAction(actionSession)) {
             return
           }
 
@@ -1479,15 +1543,17 @@ const handleBatchDelete = () => {
           fetchStorageList()
         })
         .catch((error) => {
-          if (!isPageMounted) {
+          if (!isCurrentStorageAction(actionSession)) {
             return
           }
 
           message.error(getErrorMessage(error, '批量删除失败'))
         })
         .finally(() => {
-          batchSubmitting.value = false
-          batchDeleteDialogOpen.value = false
+          if (isCurrentStorageAction(actionSession)) {
+            batchSubmitting.value = false
+            batchDeleteDialogOpen.value = false
+          }
         })
     },
   })
@@ -1495,7 +1561,13 @@ const handleBatchDelete = () => {
 
 // 处理清空所有
 const handleClearAll = () => {
-  if (clearingAll.value || batchSubmitting.value || storageDangerDialogOpen.value) return
+  if (
+    clearingAll.value ||
+    batchSubmitting.value ||
+    storageDangerDialogOpen.value ||
+    hasRefreshingStorage.value
+  )
+    return
 
   clearAllDialogOpen.value = true
 
@@ -1505,19 +1577,20 @@ const handleClearAll = () => {
     positiveText: '确认清空',
     negativeText: '取消',
     onAfterLeave: () => {
-      if (!clearingAll.value) {
+      if (isPageMounted && !clearingAll.value) {
         clearAllDialogOpen.value = false
       }
     },
     onPositiveClick: () => {
-      if (clearingAll.value || batchSubmitting.value) return
+      if (!isPageMounted || clearingAll.value || batchSubmitting.value) return
 
+      const actionSession = ++storageActionSession
       clearingAll.value = true
       message.loading('正在清空所有数据...')
 
       return clearAllStorage({ deleteFiles: true })
         .then((res) => {
-          if (!isPageMounted) {
+          if (!isCurrentStorageAction(actionSession)) {
             return
           }
 
@@ -1536,15 +1609,17 @@ const handleClearAll = () => {
           fetchStorageList()
         })
         .catch((error) => {
-          if (!isPageMounted) {
+          if (!isCurrentStorageAction(actionSession)) {
             return
           }
 
           message.error(getErrorMessage(error, '清空失败'))
         })
         .finally(() => {
-          clearingAll.value = false
-          clearAllDialogOpen.value = false
+          if (isCurrentStorageAction(actionSession)) {
+            clearingAll.value = false
+            clearAllDialogOpen.value = false
+          }
         })
     },
   })
@@ -1552,7 +1627,12 @@ const handleClearAll = () => {
 
 // 处理批量刷新
 const handleBatchRefresh = (deep: boolean) => {
-  if (batchSubmitting.value || storageDangerDialogOpen.value || selectedIds.value.length === 0)
+  if (
+    batchSubmitting.value ||
+    storageDangerDialogOpen.value ||
+    hasRefreshingStorage.value ||
+    selectedIds.value.length === 0
+  )
     return
   if (!validateBatchSelectionLimit(maxBatchActionIds, '批量刷新')) return
 
@@ -1566,19 +1646,20 @@ const handleBatchRefresh = (deep: boolean) => {
     positiveText: '确认刷新',
     negativeText: '取消',
     onAfterLeave: () => {
-      if (!batchSubmitting.value) {
+      if (isPageMounted && !batchSubmitting.value) {
         batchRefreshDialogOpen.value = false
       }
     },
     onPositiveClick: () => {
-      if (batchSubmitting.value) return
+      if (!isPageMounted || batchSubmitting.value) return
 
+      const actionSession = ++storageActionSession
       batchSubmitting.value = true
       message.loading(`正在批量${refreshType}...`)
 
       return batchRefreshStorage({ ids, deep })
         .then((res) => {
-          if (!isPageMounted) {
+          if (!isCurrentStorageAction(actionSession)) {
             return
           }
 
@@ -1594,15 +1675,17 @@ const handleBatchRefresh = (deep: boolean) => {
           exitBatchMode()
         })
         .catch((error) => {
-          if (!isPageMounted) {
+          if (!isCurrentStorageAction(actionSession)) {
             return
           }
 
           message.error(getErrorMessage(error, `批量${refreshType}失败`))
         })
         .finally(() => {
-          batchSubmitting.value = false
-          batchRefreshDialogOpen.value = false
+          if (isCurrentStorageAction(actionSession)) {
+            batchSubmitting.value = false
+            batchRefreshDialogOpen.value = false
+          }
         })
     },
   })
@@ -2052,15 +2135,19 @@ onUnmounted(() => {
   isPageMounted = false
   storageListRequestId++
   selectAllPagesRequestId++
+  storageActionSession++
   cloudTokenRequestId++
   autoRefreshModalSession++
   modifyTokenModalSession++
   batchModifyTokenModalSession++
+  batchSubmitting.value = false
+  clearingAll.value = false
   clearAllDialogOpen.value = false
   batchRefreshDialogOpen.value = false
   batchDeleteDialogOpen.value = false
   deletingStorageIds.value = new Set()
   deleteDialogOpenIds.value = new Set()
+  refreshingStorageIds.value = new Set()
   stopAutoRefresh()
 })
 </script>

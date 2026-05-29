@@ -68,7 +68,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { onUnmounted, ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMessage, type FormInst } from 'naive-ui'
 import { PersonOutline, LockClosedOutline } from '@vicons/ionicons5'
@@ -85,6 +85,8 @@ const systemInfo = systemStore.get()
 
 const formRef = ref<FormInst>()
 const loading = ref(false)
+let isComponentMounted = true
+let loginRequestId = 0
 
 const formData = reactive<LoginRequest>({
   username: '',
@@ -116,22 +118,37 @@ const getErrorMessage = (error: unknown) => {
   return '登录失败，请检查用户名和密码'
 }
 
+const isCurrentLoginRequest = (requestId: number) =>
+  isComponentMounted && requestId === loginRequestId
+
 const handleLogin = async () => {
   if (loading.value) return
 
+  const requestId = ++loginRequestId
   loading.value = true
   try {
     await formRef.value?.validate()
     await authStore.login(formData)
+    if (!isCurrentLoginRequest(requestId)) return
+
     message.success('登录成功')
     await router.push('/@dashboard')
   } catch (error: unknown) {
+    if (!isCurrentLoginRequest(requestId)) return
+
     console.error('登录失败:', error)
     message.error(getErrorMessage(error))
   } finally {
-    loading.value = false
+    if (isCurrentLoginRequest(requestId)) {
+      loading.value = false
+    }
   }
 }
+
+onUnmounted(() => {
+  isComponentMounted = false
+  loginRequestId += 1
+})
 </script>
 
 <style scoped>
