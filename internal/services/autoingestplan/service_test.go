@@ -130,6 +130,43 @@ func TestServiceCRUD(t *testing.T) {
 	}
 }
 
+func TestCreatePersistsDisabledState(t *testing.T) {
+	tDB := setupTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	plan := &models.AutoIngestPlan{
+		Name:               "Disabled Plan",
+		Enabled:            false,
+		AutoIngestInterval: 30,
+		SourceType:         autoingest.SourceTypeSubscribe,
+		Offset:             1,
+		ParentPath:         "/test",
+		OnConflict:         autoingest.OnConflictRename,
+		ConcurrentCount:    4,
+		MaxRetryCount:      3,
+		UserID:             10,
+	}
+
+	id, err := svc.Create(ctx, plan)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	if plan.Enabled {
+		t.Fatal("expected returned plan to stay disabled")
+	}
+
+	var created models.AutoIngestPlan
+	if err := tDB.db.First(&created, id).Error; err != nil {
+		t.Fatalf("query created plan: %v", err)
+	}
+
+	if created.Enabled {
+		t.Fatal("expected created plan to stay disabled")
+	}
+}
+
 func TestQueryRejectsInvalidID(t *testing.T) {
 	tDB := setupTestDB(t)
 	svc := NewService(tDB)
