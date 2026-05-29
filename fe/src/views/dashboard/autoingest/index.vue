@@ -58,7 +58,7 @@
         size="small"
         type="info"
         @click="handleBatchRetry"
-        :disabled="batchActionLoading || !hasEnabledPlans"
+        :disabled="hasPlanBatchActionInFlight || hasPlanRowPending || !hasEnabledPlans"
         :loading="batchActionLoading"
       >
         <template #icon>
@@ -70,7 +70,7 @@
         size="small"
         type="primary"
         @click="handleBatchRefresh"
-        :disabled="batchActionLoading || !hasEnabledPlans"
+        :disabled="hasPlanBatchActionInFlight || hasPlanRowPending || !hasEnabledPlans"
         :loading="batchActionLoading"
       >
         <template #icon>
@@ -82,7 +82,7 @@
         size="small"
         type="success"
         @click="handleBatchEnable"
-        :disabled="batchActionLoading || !hasDisabledPlans"
+        :disabled="hasPlanBatchActionInFlight || hasPlanRowPending || !hasDisabledPlans"
         :loading="batchActionLoading"
       >
         <template #icon>
@@ -94,7 +94,7 @@
         size="small"
         type="warning"
         @click="handleBatchDisable"
-        :disabled="batchActionLoading || !hasEnabledPlans"
+        :disabled="hasPlanBatchActionInFlight || hasPlanRowPending || !hasEnabledPlans"
         :loading="batchActionLoading"
       >
         <template #icon>
@@ -106,7 +106,7 @@
         size="small"
         type="error"
         @click="handleBatchDelete"
-        :disabled="batchActionLoading || batchDeleteDialogOpen"
+        :disabled="hasPlanBatchActionInFlight || hasPlanRowPending"
         :loading="batchActionLoading"
       >
         <template #icon>
@@ -399,6 +399,10 @@ const planActionKey = (action: PlanRowAction, planId?: number) => `${action}:${p
 const isPlanActionPending = (action: PlanRowAction, planId?: number) => {
   return planActionPending.value.has(planActionKey(action, planId))
 }
+const hasPlanRowPending = computed(() => planActionPending.value.size > 0)
+const hasPlanBatchActionInFlight = computed(
+  () => batchActionLoading.value || batchDeleteDialogOpen.value
+)
 const setPlanActionPending = (
   action: PlanRowAction,
   planId: number | undefined,
@@ -440,7 +444,7 @@ const handlePlanSelectionChange = (keys: DataTableRowKey[]) => {
 
 // 批量操作处理函数
 const handleBatchRetry = () => {
-  if (batchActionLoading.value || !isPageAlive) {
+  if (hasPlanBatchActionInFlight.value || hasPlanRowPending.value || !isPageAlive) {
     return
   }
 
@@ -481,7 +485,7 @@ const handleBatchRetry = () => {
 }
 
 const handleBatchRefresh = () => {
-  if (batchActionLoading.value || !isPageAlive) {
+  if (hasPlanBatchActionInFlight.value || hasPlanRowPending.value || !isPageAlive) {
     return
   }
 
@@ -521,7 +525,7 @@ const handleBatchRefresh = () => {
 }
 
 const handleBatchEnable = () => {
-  if (batchActionLoading.value || !isPageAlive) {
+  if (hasPlanBatchActionInFlight.value || hasPlanRowPending.value || !isPageAlive) {
     return
   }
 
@@ -562,7 +566,7 @@ const handleBatchEnable = () => {
 }
 
 const handleBatchDisable = () => {
-  if (batchActionLoading.value || !isPageAlive) {
+  if (hasPlanBatchActionInFlight.value || hasPlanRowPending.value || !isPageAlive) {
     return
   }
 
@@ -603,7 +607,7 @@ const handleBatchDisable = () => {
 }
 
 const handleBatchDelete = () => {
-  if (batchActionLoading.value || batchDeleteDialogOpen.value || !isPageAlive) {
+  if (hasPlanBatchActionInFlight.value || hasPlanRowPending.value || !isPageAlive) {
     return
   }
 
@@ -624,7 +628,7 @@ const handleBatchDelete = () => {
       }
     },
     onPositiveClick: () => {
-      if (batchActionLoading.value || !isPageAlive) {
+      if (batchActionLoading.value || hasPlanRowPending.value || !isPageAlive) {
         return
       }
 
@@ -805,6 +809,7 @@ const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
     align: 'center',
     render: (row) => {
       const rowPending = isPlanRowPending(row.id)
+      const batchBlocked = hasPlanBatchActionInFlight.value
       const refreshPending = isPlanActionPending('refresh', row.id)
       const retryPending = isPlanActionPending('retry', row.id)
       const enablePending = isPlanActionPending('enable', row.id)
@@ -825,7 +830,7 @@ const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
                       type: 'info',
                       secondary: true,
                       loading: refreshPending,
-                      disabled: rowPending,
+                      disabled: rowPending || batchBlocked,
                       onClick: () => onRefresh(row),
                     },
                     {
@@ -841,7 +846,7 @@ const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
                       type: 'success',
                       secondary: true,
                       loading: retryPending,
-                      disabled: rowPending,
+                      disabled: rowPending || batchBlocked,
                       onClick: () => onRetry(row),
                     },
                     {
@@ -855,7 +860,7 @@ const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
                       size: 'tiny',
                       type: 'primary',
                       secondary: true,
-                      disabled: rowPending,
+                      disabled: rowPending || batchBlocked,
                       onClick: () => onEdit(row),
                     },
                     {
@@ -870,7 +875,7 @@ const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
                       type: 'warning',
                       secondary: true,
                       loading: disablePending,
-                      disabled: rowPending,
+                      disabled: rowPending || batchBlocked,
                       onClick: () => onDisable(row),
                     },
                     {
@@ -886,7 +891,7 @@ const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
                     type: 'success',
                     secondary: true,
                     loading: enablePending,
-                    disabled: rowPending,
+                    disabled: rowPending || batchBlocked,
                     onClick: () => onEnable(row),
                   },
                   {
@@ -903,7 +908,7 @@ const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
                 positiveText: '确认删除',
                 positiveButtonProps: {
                   loading: deletePending,
-                  disabled: rowPending,
+                  disabled: rowPending || batchBlocked,
                 },
               },
               {
@@ -915,7 +920,7 @@ const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
                       type: 'error',
                       secondary: true,
                       loading: deletePending,
-                      disabled: rowPending,
+                      disabled: rowPending || batchBlocked,
                     },
                     {
                       icon: () => h(NIcon, { size: 12 }, { default: () => h(TrashOutline) }),
@@ -1001,7 +1006,7 @@ const fetchPlanList = () => {
 }
 
 const onEnable = (row: Models.AutoIngestPlan) => {
-  if (isPlanRowPending(row.id)) {
+  if (hasPlanBatchActionInFlight.value || isPlanRowPending(row.id)) {
     return
   }
 
@@ -1035,7 +1040,7 @@ const onEnable = (row: Models.AutoIngestPlan) => {
 }
 
 const onDisable = (row: Models.AutoIngestPlan) => {
-  if (isPlanRowPending(row.id)) {
+  if (hasPlanBatchActionInFlight.value || isPlanRowPending(row.id)) {
     return
   }
 
@@ -1069,7 +1074,7 @@ const onDisable = (row: Models.AutoIngestPlan) => {
 }
 
 const onRefresh = (row: Models.AutoIngestPlan) => {
-  if (isPlanRowPending(row.id)) {
+  if (hasPlanBatchActionInFlight.value || isPlanRowPending(row.id)) {
     return
   }
 
@@ -1103,7 +1108,7 @@ const onRefresh = (row: Models.AutoIngestPlan) => {
 }
 
 const onRetry = (row: Models.AutoIngestPlan) => {
-  if (isPlanRowPending(row.id)) {
+  if (hasPlanBatchActionInFlight.value || isPlanRowPending(row.id)) {
     return
   }
 
@@ -1137,7 +1142,7 @@ const onRetry = (row: Models.AutoIngestPlan) => {
 }
 
 const onDelete = (row: Models.AutoIngestPlan) => {
-  if (isPlanRowPending(row.id)) {
+  if (hasPlanBatchActionInFlight.value || isPlanRowPending(row.id)) {
     return
   }
 
@@ -1183,6 +1188,10 @@ const showCreateModal = ref(false)
 const showEditModal = ref(false)
 const editingPlan = ref<Models.AutoIngestPlan | null>(null)
 const onEdit = (row: Models.AutoIngestPlan) => {
+  if (hasPlanBatchActionInFlight.value || isPlanRowPending(row.id)) {
+    return
+  }
+
   editingPlan.value = row
   showEditModal.value = true
 }
