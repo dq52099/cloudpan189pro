@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/robfig/cron/v3"
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
@@ -695,6 +696,12 @@ func (h *Handler) UpdateConfig() httpcontext.HandlerFunc {
 			return
 		}
 
+		if err := normalizeSubscriptionConfigUpdate(&req); err != nil {
+			c.Fail(invalidParams(err))
+
+			return
+		}
+
 		config, err := h.updateSubscriptionConfig(c.Request.Context(), &req)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -813,6 +820,69 @@ func subscriptionConfigSupportsRowLock(db *gorm.DB) bool {
 	default:
 		return true
 	}
+}
+
+func normalizeSubscriptionConfigUpdate(req *UpdateConfigReq) error {
+	if req.PanSearchURL != nil {
+		value := strings.TrimSpace(*req.PanSearchURL)
+		if err := validateOptionalHTTPURL("盘搜 API 地址", value); err != nil {
+			return err
+		}
+
+		*req.PanSearchURL = value
+	}
+
+	if req.DefaultMountPath != nil {
+		value := strings.TrimSpace(*req.DefaultMountPath)
+		if value != "" && !strings.HasPrefix(value, "/") {
+			return fmt.Errorf("默认挂载路径必须以 / 开头")
+		}
+
+		*req.DefaultMountPath = value
+	}
+
+	if req.CronExpression != nil {
+		value := strings.TrimSpace(*req.CronExpression)
+		if value != "" {
+			if _, err := cron.ParseStandard(value); err != nil {
+				return fmt.Errorf("订阅 cron 表达式无效: %w", err)
+			}
+		}
+
+		*req.CronExpression = value
+	}
+
+	if req.OpenAIBaseURL != nil {
+		value := strings.TrimSpace(*req.OpenAIBaseURL)
+		if err := validateOptionalHTTPURL("OpenAI API 地址", value); err != nil {
+			return err
+		}
+
+		*req.OpenAIBaseURL = value
+	}
+
+	return nil
+}
+
+func validateOptionalHTTPURL(field string, value string) error {
+	if value == "" {
+		return nil
+	}
+
+	parsedURL, err := url.ParseRequestURI(value)
+	if err != nil {
+		return fmt.Errorf("%s无效: %w", field, err)
+	}
+
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return fmt.Errorf("%s必须使用 http 或 https", field)
+	}
+
+	if parsedURL.Host == "" {
+		return fmt.Errorf("%s必须包含主机名", field)
+	}
+
+	return nil
 }
 
 func applySubscriptionConfigUpdate(config *models.SubscriptionConfig, req *UpdateConfigReq) {

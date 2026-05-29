@@ -234,6 +234,160 @@ func TestUpdateConfigUpdatesExistingSettingWithoutDuplicate(t *testing.T) {
 	}
 }
 
+func TestUpdateConfigRejectsInvalidConfigFieldsBeforeWriting(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "invalid pan search url",
+			body: `{"panSearchURL":"ftp://search.example.com/api/search"}`,
+		},
+		{
+			name: "relative default mount path",
+			body: `{"defaultMountPath":"热门订阅"}`,
+		},
+		{
+			name: "invalid cron expression",
+			body: `{"cronExpression":"not a cron"}`,
+		},
+		{
+			name: "invalid openai base url",
+			body: `{"openaiBaseURL":"mailto:api@example.com"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := setupSubscriptionHandlerTestDB(t)
+			handler := NewHandler(db, nil, nil, nil, nil, zap.NewNop(), nil)
+
+			router := gin.New()
+			wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+			router.POST("/config", wrapper.Wrap(handler.UpdateConfig()))
+
+			req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/config", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, req)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+			}
+
+			var count int64
+			if err := db.Model(&Setting{}).Where("name = ?", subscriptionConfigName).Count(&count).Error; err != nil {
+				t.Fatalf("count settings: %v", err)
+			}
+
+			if count != 0 {
+				t.Fatalf("expected invalid config not to create setting, got count %d", count)
+			}
+		})
+	}
+}
+
+func TestUpdateConfigNormalizesOptionalConfigFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupSubscriptionHandlerTestDB(t)
+	handler := NewHandler(db, nil, nil, nil, nil, zap.NewNop(), nil)
+
+	router := gin.New()
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/config", wrapper.Wrap(handler.UpdateConfig()))
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/config",
+		strings.NewReader(`{"panSearchURL":" https://new.example.com/api/search ","defaultMountPath":" /new ","cronExpression":" 0 3 * * * ","openaiBaseURL":" https://api.openai.com/v1 "}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var updated Setting
+	if err := db.Where("name = ?", subscriptionConfigName).First(&updated).Error; err != nil {
+		t.Fatalf("query updated setting: %v", err)
+	}
+
+	if updated.Value.PanSearchURL != "https://new.example.com/api/search" {
+		t.Fatalf("expected trimmed pan search URL, got %q", updated.Value.PanSearchURL)
+	}
+
+	if updated.Value.DefaultMountPath != "/new" {
+		t.Fatalf("expected trimmed default mount path, got %q", updated.Value.DefaultMountPath)
+	}
+
+	if updated.Value.CronExpression != "0 3 * * *" {
+		t.Fatalf("expected trimmed cron expression, got %q", updated.Value.CronExpression)
+	}
+
+	if updated.Value.OpenAIBaseURL != "https://api.openai.com/v1" {
+		t.Fatalf("expected trimmed OpenAI base URL, got %q", updated.Value.OpenAIBaseURL)
+	}
+}
+
+func TestUpdateConfigAllowsClearingOptionalConfigFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupSubscriptionHandlerTestDB(t)
+	handler := NewHandler(db, nil, nil, nil, nil, zap.NewNop(), nil)
+
+	existing := &Setting{
+		Name: subscriptionConfigName,
+		Value: models.SubscriptionConfig{
+			PanSearchURL:     "https://old.example.com/api/search",
+			CronExpression:   "0 1 * * *",
+			DefaultMountPath: "/old",
+			OpenAIBaseURL:    "https://old-openai.example.com",
+		},
+	}
+	if err := db.Create(existing).Error; err != nil {
+		t.Fatalf("create setting: %v", err)
+	}
+
+	router := gin.New()
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/config", wrapper.Wrap(handler.UpdateConfig()))
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/config",
+		strings.NewReader(`{"panSearchURL":"","defaultMountPath":"","cronExpression":"","openaiBaseURL":""}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var updated Setting
+	if err := db.First(&updated, existing.ID).Error; err != nil {
+		t.Fatalf("query updated setting: %v", err)
+	}
+
+	if updated.Value.PanSearchURL != "" ||
+		updated.Value.DefaultMountPath != "" ||
+		updated.Value.CronExpression != "" ||
+		updated.Value.OpenAIBaseURL != "" {
+		t.Fatalf("expected optional config fields cleared, got %+v", updated.Value)
+	}
+}
+
 func TestUpdateConfigUpsertsWhenSettingIsCreatedConcurrently(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
