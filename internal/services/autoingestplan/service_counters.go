@@ -12,6 +12,10 @@ func (s *service) IncrAddCount(ctx context.Context, id int64, delta int64) error
 		return errInvalidAutoIngestPlanID
 	}
 
+	if delta < 0 {
+		return errInvalidAutoIngestPlanCounterDelta
+	}
+
 	result := s.getDB(ctx).Where("id = ?", id).Update("add_count", gorm.Expr("add_count + ?", delta))
 	if result.Error != nil {
 		ctx.Error("更新自动挂载计划新增计数失败", zap.Error(result.Error), zap.Int64("id", id), zap.Int64("delta", delta))
@@ -34,6 +38,10 @@ func (s *service) IncrAddCount(ctx context.Context, id int64, delta int64) error
 func (s *service) IncrFailedCount(ctx context.Context, id int64, delta int64) error {
 	if id <= 0 {
 		return errInvalidAutoIngestPlanID
+	}
+
+	if delta < 0 {
+		return errInvalidAutoIngestPlanCounterDelta
 	}
 
 	result := s.getDB(ctx).Where("id = ?", id).Update("failed_count", gorm.Expr("failed_count + ?", delta))

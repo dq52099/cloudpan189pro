@@ -11,6 +11,10 @@ func (s *service) UpdateOffset(ctx context.Context, id int64, offset int64) erro
 		return errInvalidAutoIngestPlanID
 	}
 
+	if offset < 0 {
+		return errInvalidAutoIngestPlanOffset
+	}
+
 	result := s.getDB(ctx).Where("id = ?", id).Update("offset", offset)
 	if result.Error != nil {
 		ctx.Error("更新自动挂载计划偏移量失败", zap.Error(result.Error), zap.Int64("id", id), zap.Int64("offset", offset))

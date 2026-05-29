@@ -533,6 +533,38 @@ func TestServiceUpdateOffsetRejectsInvalidID(t *testing.T) {
 	}
 }
 
+func TestServiceUpdateOffsetRejectsNegativeOffset(t *testing.T) {
+	tDB := setupTestDB(t)
+	svc := NewService(tDB)
+
+	ctx := context.NewContext(stdctx.Background())
+
+	plan := &models.AutoIngestPlan{
+		Name:       "Test Plan",
+		Enabled:    true,
+		SourceType: autoingest.SourceTypeSubscribe,
+		Offset:     100,
+		ParentPath: "/test",
+	}
+	if _, err := svc.Create(ctx, plan); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	err := svc.UpdateOffset(ctx, plan.ID, -1)
+	if !errors.Is(err, errInvalidAutoIngestPlanOffset) {
+		t.Fatalf("expected invalid auto ingest plan offset, got %v", err)
+	}
+
+	retrieved, err := svc.Query(ctx, plan.ID)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if retrieved.Offset != 100 {
+		t.Fatalf("expected offset to remain 100, got %d", retrieved.Offset)
+	}
+}
+
 func TestServiceCounters(t *testing.T) {
 	tDB := setupTestDB(t)
 	svc := NewService(tDB)
@@ -625,6 +657,56 @@ func TestServiceCountersNoOpExistingPlan(t *testing.T) {
 
 	if retrieved.FailedCount != 0 {
 		t.Fatalf("expected FailedCount to remain 0, got %d", retrieved.FailedCount)
+	}
+}
+
+func TestServiceCountersRejectNegativeDelta(t *testing.T) {
+	tDB := setupTestDB(t)
+	svc := NewService(tDB)
+
+	ctx := context.NewContext(stdctx.Background())
+
+	plan := &models.AutoIngestPlan{
+		Name:        "Test Plan",
+		Enabled:     true,
+		SourceType:  autoingest.SourceTypeSubscribe,
+		Offset:      1,
+		ParentPath:  "/test",
+		AddCount:    5,
+		FailedCount: 2,
+	}
+	if _, err := svc.Create(ctx, plan); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "incr add", run: func() error { return svc.IncrAddCount(ctx, plan.ID, -1) }},
+		{name: "incr failed", run: func() error { return svc.IncrFailedCount(ctx, plan.ID, -1) }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.run()
+			if !errors.Is(err, errInvalidAutoIngestPlanCounterDelta) {
+				t.Fatalf("expected invalid auto ingest plan counter delta, got %v", err)
+			}
+		})
+	}
+
+	retrieved, err := svc.Query(ctx, plan.ID)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if retrieved.AddCount != 5 {
+		t.Fatalf("expected AddCount to remain 5, got %d", retrieved.AddCount)
+	}
+
+	if retrieved.FailedCount != 2 {
+		t.Fatalf("expected FailedCount to remain 2, got %d", retrieved.FailedCount)
 	}
 }
 
