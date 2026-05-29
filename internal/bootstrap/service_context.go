@@ -47,7 +47,27 @@ func (s *serviceContext) GetLogger(name string, fields ...zap.Field) *zap.Logger
 }
 
 func (s *serviceContext) Close() {
-	_ = s.logger.Sync()
+	logger := s.logger
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
+	if s.taskEngine != nil && s.taskEngine.IsRunning() {
+		if err := s.taskEngine.Stop(); err != nil {
+			logger.Warn("停止任务引擎失败", zap.Error(err))
+		}
+	}
+
+	if s.db != nil {
+		sqlDB, err := s.db.DB()
+		if err != nil {
+			logger.Warn("获取数据库连接失败", zap.Error(err))
+		} else if err := sqlDB.Close(); err != nil {
+			logger.Warn("关闭数据库连接失败", zap.Error(err))
+		}
+	}
+
+	_ = logger.Sync()
 }
 
 func (s *serviceContext) GetPort() int {
