@@ -12,7 +12,6 @@ on:
         type: string
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
   PROJECT_NAME: cloudpan189pro
   MODULE_NAME: github.com/xxcheng123/cloudpan189-share
   CONFIG_PACKAGE: github.com/xxcheng123/cloudpan189-share/internal/configs
@@ -73,7 +72,6 @@ jobs:
       - name: 🧩 安装 pnpm
         uses: pnpm/action-setup@v4
         with:
-          run_install: true
           package_json_file: fe/package.json
 
       - name: 📦 设置 Node.js ${{ env.NODE_VERSION }}
@@ -83,6 +81,11 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: |
             fe/pnpm-lock.yaml
+
+      - name: 📦 安装前端依赖
+        run: |
+          cd fe
+          pnpm install --frozen-lockfile
 
       - name: 🔍 验证前端环境
         run: |

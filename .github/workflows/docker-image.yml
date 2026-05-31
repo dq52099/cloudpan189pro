@@ -12,7 +12,6 @@ on:
         type: string
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
   APP_NAME: cloudpan189pro
   MODULE_NAME: github.com/xxcheng123/cloudpan189-share
 
