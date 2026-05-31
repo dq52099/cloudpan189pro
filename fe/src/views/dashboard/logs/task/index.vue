@@ -271,7 +271,12 @@ const syncCurrentTask = () => {
   const latestTask = state.tableData.find((item) => item.id === state.currentTask?.id)
   if (latestTask) {
     state.currentTask = latestTask
+
+    return
   }
+
+  state.showDetailModal = false
+  state.currentTask = null
 }
 
 const hasActiveTasks = () => {

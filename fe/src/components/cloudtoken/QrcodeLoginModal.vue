@@ -328,7 +328,8 @@ const handleCheckLogin = () => {
             return
           }
 
-          showModal.value = false
+          successPending.value = false
+          emit('update:show', false)
           emit('success')
         }, 1500)
       } else if (response.code === 40001) {

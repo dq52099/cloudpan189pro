@@ -327,6 +327,24 @@ const warnInvalidEngineStatsOnce = (data: TaskEngineListResponse) => {
   }
 }
 
+const syncCurrentTask = () => {
+  if (!state.currentTask || !state.engineData) {
+    return
+  }
+
+  const latestTask = [...state.engineData.runningTasks, ...state.engineData.pendingTasks].find(
+    (item) => item.id === state.currentTask?.id
+  )
+  if (latestTask) {
+    state.currentTask = latestTask
+
+    return
+  }
+
+  state.showTaskDetailModal = false
+  state.currentTask = null
+}
+
 // 获取任务引擎状态
 const fetchEngineStatus = (silent = false) => {
   if (!isComponentMounted) {
@@ -353,6 +371,7 @@ const fetchEngineStatus = (silent = false) => {
       if (response.code === 200 && response.data) {
         warnInvalidEngineStatsOnce(response.data)
         state.engineData = normalizeTaskEngineData(response.data)
+        syncCurrentTask()
 
         return
       }
