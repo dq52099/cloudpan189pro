@@ -35,9 +35,9 @@ type addResponseItem struct {
 	ScanError  string `json:"scanError,omitempty"`
 }
 
-type batchAddSuccessRef struct {
-	fileID      int64
-	resultIndex int
+type batchAddScanRef struct {
+	fileID        int64
+	resultIndexes []int
 }
 
 // BatchAdd 批量添加存储挂载
@@ -76,7 +76,8 @@ func (h *handler) BatchAdd() httpcontext.HandlerFunc {
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
 
 		results := make([]addResponseItem, 0, len(req.Items))
-		successRefs := make([]batchAddSuccessRef, 0, len(req.Items))
+		scanRefs := make([]batchAddScanRef, 0, len(req.Items))
+		scanRefIndexes := make(map[int64]int)
 
 		for i := range req.Items {
 			item := req.Items[i]
@@ -131,9 +132,18 @@ func (h *handler) BatchAdd() httpcontext.HandlerFunc {
 			result.Success = true
 
 			results = append(results, result)
-			successRefs = append(successRefs, batchAddSuccessRef{
-				fileID:      id,
-				resultIndex: len(results) - 1,
+			resultIndex := len(results) - 1
+
+			if scanRefIndex, ok := scanRefIndexes[id]; ok {
+				scanRefs[scanRefIndex].resultIndexes = append(scanRefs[scanRefIndex].resultIndexes, resultIndex)
+
+				continue
+			}
+
+			scanRefIndexes[id] = len(scanRefs)
+			scanRefs = append(scanRefs, batchAddScanRef{
+				fileID:        id,
+				resultIndexes: []int{resultIndex},
 			})
 		}
 
@@ -152,11 +162,15 @@ func (h *handler) BatchAdd() httpcontext.HandlerFunc {
 		scanFailedCount := 0
 
 		// 后台推送扫描任务，挂载创建结果和扫描派发结果分别统计。
-		for _, ref := range successRefs {
+		for _, ref := range scanRefs {
 			mountPoint, err := h.mountPointService.Query(ctx.GetContext(), ref.fileID)
 			if err != nil {
-				scanFailedCount++
-				results[ref.resultIndex].ScanError = err.Error()
+				scanFailedCount += len(ref.resultIndexes)
+				h.markInitialScanFailed(ctx.GetContext(), ref.fileID, "准备失败", err)
+
+				for _, resultIndex := range ref.resultIndexes {
+					results[resultIndex].ScanError = err.Error()
+				}
 
 				continue
 			}
@@ -172,8 +186,12 @@ func (h *handler) BatchAdd() httpcontext.HandlerFunc {
 			if err != nil {
 				ctx.GetContext().Warn("序列化扫描任务失败", zap.Int64("id", ref.fileID), zap.Error(err))
 
-				scanFailedCount++
-				results[ref.resultIndex].ScanError = err.Error()
+				scanFailedCount += len(ref.resultIndexes)
+				h.markInitialScanFailed(ctx.GetContext(), ref.fileID, "序列化失败", err)
+
+				for _, resultIndex := range ref.resultIndexes {
+					results[resultIndex].ScanError = err.Error()
+				}
 
 				continue
 			}
@@ -192,14 +210,20 @@ func (h *handler) BatchAdd() httpcontext.HandlerFunc {
 			); err != nil {
 				ctx.GetContext().Warn("推送批量挂载扫描任务失败", zap.Int64("id", ref.fileID), zap.Error(err))
 
-				scanFailedCount++
-				results[ref.resultIndex].ScanError = err.Error()
+				scanFailedCount += len(ref.resultIndexes)
+				h.markInitialScanFailed(ctx.GetContext(), ref.fileID, "入队失败", err)
+
+				for _, resultIndex := range ref.resultIndexes {
+					results[resultIndex].ScanError = err.Error()
+				}
 
 				continue
 			}
 
-			scanQueuedCount++
-			results[ref.resultIndex].ScanQueued = true
+			scanQueuedCount += len(ref.resultIndexes)
+			for _, resultIndex := range ref.resultIndexes {
+				results[resultIndex].ScanQueued = true
+			}
 		}
 
 		ctx.GetContext().Info("批量挂载已推送扫描任务",

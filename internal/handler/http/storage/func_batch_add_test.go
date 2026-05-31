@@ -170,6 +170,11 @@ func TestBatchAddReportsScanDispatchFailureSeparately(t *testing.T) {
 	if !strings.Contains(result.ScanError, "queue unavailable") {
 		t.Fatalf("expected scan error to contain queue unavailable, got %q", result.ScanError)
 	}
+
+	if got := mountPointService.lastStateUpdates[11]; !strings.Contains(got, "初始化扫描任务入队失败") ||
+		!strings.Contains(got, "queue unavailable") {
+		t.Fatalf("expected failed initial scan state, got %q", got)
+	}
 }
 
 func TestBatchAddReportsScanDispatchSuccess(t *testing.T) {
@@ -245,6 +250,66 @@ func TestBatchAddReportsScanDispatchSuccess(t *testing.T) {
 
 	if taskReq.ExpectedUserID != 100 || taskReq.TriggeredByAdmin {
 		t.Fatalf("expected queued scan user snapshot user=100 admin=false, got %+v", taskReq)
+	}
+}
+
+func TestBatchAddDeduplicatesInitialScanTasksByFileID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: {FileId: 11, FullPath: "/subscribed", CreatorUserID: 100},
+		},
+		mountPointsByPath: map[string]*models.MountPoint{},
+	}
+	storageFacade := &mockBatchAddStorageFacade{createID: 11}
+
+	router := newBatchAddTestRouter(taskEngine, mountPointService, storageFacade)
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/batch_add",
+		strings.NewReader(`{"items":[{"localPath":"/subscribed","osType":"subscribe","subscribeUser":"up-user"},{"localPath":"/subscribed","osType":"subscribe","subscribeUser":"up-user"}]}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Code int              `json:"code"`
+		Data batchAddResponse `json:"data"`
+	}
+
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Data.SuccessCount != 2 || response.Data.FailCount != 0 {
+		t.Fatalf("expected two successful mount results, got %+v", response.Data)
+	}
+
+	if response.Data.ScanQueuedCount != 2 || response.Data.ScanFailedCount != 0 {
+		t.Fatalf("expected both results covered by one queued scan, got %+v", response.Data)
+	}
+
+	if len(taskEngine.payloads) != 1 {
+		t.Fatalf("expected one queued scan task for duplicate file id, got %d", len(taskEngine.payloads))
+	}
+
+	if got, want := mountPointService.queries, []int64{11}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected one mount point query for duplicate file id %v, got %v", want, got)
+	}
+
+	for _, result := range response.Data.Results {
+		if !result.Success || !result.ScanQueued || result.ID != 11 {
+			t.Fatalf("expected duplicate result covered by queued scan, got %+v", result)
+		}
 	}
 }
 

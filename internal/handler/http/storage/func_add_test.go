@@ -43,7 +43,8 @@ func TestAddReturnsCreatedStorageWhenInitialScanDispatchFails(t *testing.T) {
 
 	taskEngine := &mockBatchDeleteTaskEngine{pushErr: errQueueUnavailable}
 	storageFacade := &mockBatchAddStorageFacade{createID: 11}
-	router := newAddTestRouter(taskEngine, storageFacade)
+	mountPointService := &mockBatchDeleteMountPointService{}
+	router := newAddTestRouterWithMountPoint(taskEngine, storageFacade, mountPointService)
 
 	req := httptest.NewRequestWithContext(
 		stdctx.Background(),
@@ -87,6 +88,11 @@ func TestAddReturnsCreatedStorageWhenInitialScanDispatchFails(t *testing.T) {
 
 	if storageFacade.req == nil || storageFacade.req.LocalPath != "/subscribed" {
 		t.Fatalf("expected storage facade to be called, got %+v", storageFacade.req)
+	}
+
+	if got := mountPointService.lastStateUpdates[11]; !strings.Contains(got, "初始化扫描任务入队失败") ||
+		!strings.Contains(got, errQueueUnavailable.Error()) {
+		t.Fatalf("expected failed initial scan state, got %q", got)
 	}
 }
 
@@ -196,13 +202,35 @@ func newAddTestRouter(
 	taskEngine *mockBatchDeleteTaskEngine,
 	storageFacade *mockBatchAddStorageFacade,
 ) *gin.Engine {
-	return newAddTestRouterWithCloudToken(taskEngine, storageFacade, nil)
+	return newAddTestRouterWithMountPoint(taskEngine, storageFacade, &mockBatchDeleteMountPointService{})
 }
 
 func newAddTestRouterWithCloudToken(
 	taskEngine *mockBatchDeleteTaskEngine,
 	storageFacade *mockBatchAddStorageFacade,
 	cloudTokenService cloudtokenSvi.Service,
+) *gin.Engine {
+	return newAddTestRouterWithCloudTokenAndMountPoint(
+		taskEngine,
+		storageFacade,
+		cloudTokenService,
+		&mockBatchDeleteMountPointService{},
+	)
+}
+
+func newAddTestRouterWithMountPoint(
+	taskEngine *mockBatchDeleteTaskEngine,
+	storageFacade *mockBatchAddStorageFacade,
+	mountPointService *mockBatchDeleteMountPointService,
+) *gin.Engine {
+	return newAddTestRouterWithCloudTokenAndMountPoint(taskEngine, storageFacade, nil, mountPointService)
+}
+
+func newAddTestRouterWithCloudTokenAndMountPoint(
+	taskEngine *mockBatchDeleteTaskEngine,
+	storageFacade *mockBatchAddStorageFacade,
+	cloudTokenService cloudtokenSvi.Service,
+	mountPointService *mockBatchDeleteMountPointService,
 ) *gin.Engine {
 	router := gin.New()
 	router.Use(func(ctx *gin.Context) {
@@ -216,7 +244,7 @@ func newAddTestRouterWithCloudToken(
 		nil,
 		&mockBatchAddCloudBridge{},
 		cloudTokenService,
-		nil,
+		mountPointService,
 		nil,
 		storageFacade,
 		nil,

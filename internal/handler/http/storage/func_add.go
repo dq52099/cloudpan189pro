@@ -145,6 +145,7 @@ func (h *handler) Add() httpcontext.HandlerFunc {
 		body, err := json.Marshal(taskReq)
 		if err != nil {
 			ctx.GetContext().Warn("序列化创建初始化扫描任务失败", zap.Int64("file_id", id), zap.Error(err))
+			h.markInitialScanFailed(ctx.GetContext(), id, "序列化失败", err)
 			resp.ScanError = err.Error()
 			ctx.Success(resp)
 
@@ -157,6 +158,7 @@ func (h *handler) Add() httpcontext.HandlerFunc {
 				WithValue(consts.CtxKeyInvokeHandlerName, "创建初始化执行器"),
 			taskReq.Topic(), body); err != nil {
 			ctx.GetContext().Warn("推送创建初始化扫描任务失败", zap.Int64("file_id", id), zap.Error(err))
+			h.markInitialScanFailed(ctx.GetContext(), id, "入队失败", err)
 			resp.ScanError = err.Error()
 			ctx.Success(resp)
 

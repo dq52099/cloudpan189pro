@@ -48,6 +48,8 @@ type mockBatchDeleteMountPointService struct {
 	queries                  []int64
 	enableAutoRefreshCalls   []int64
 	updateRefreshConfigCalls []int64
+	lastStateUpdates         map[int64]string
+	lastStateErr             error
 }
 
 func (m *mockBatchDeleteMountPointService) Query(ctx appContext.Context, fileID int64) (*models.MountPoint, error) {
@@ -94,6 +96,20 @@ func (m *mockBatchDeleteMountPointService) EnableAutoRefresh(ctx appContext.Cont
 
 func (m *mockBatchDeleteMountPointService) UpdateRefreshConfig(ctx appContext.Context, fileID int64, config mountPointSvi.RefreshConfig) error {
 	m.updateRefreshConfigCalls = append(m.updateRefreshConfigCalls, fileID)
+
+	return nil
+}
+
+func (m *mockBatchDeleteMountPointService) UpdateLastState(ctx appContext.Context, fileID int64, state string) error {
+	if m.lastStateErr != nil {
+		return m.lastStateErr
+	}
+
+	if m.lastStateUpdates == nil {
+		m.lastStateUpdates = make(map[int64]string)
+	}
+
+	m.lastStateUpdates[fileID] = state
 
 	return nil
 }
