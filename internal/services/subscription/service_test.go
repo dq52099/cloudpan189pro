@@ -801,7 +801,25 @@ func TestProcessSubscriptionSkipsSearchWhenDailyHotHistoryQueryFails(t *testing.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt32(&searchRequests, 1)
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"total":0,"merged_by_type":{}}}`))
+		_, _ = w.Write([]byte(`{
+			"code": 0,
+			"message": "ok",
+			"data": {
+				"total": 1,
+				"merged_by_type": {
+					"tianyi": [
+						{
+							"url": "https://cloud.189.cn/t/abcdef",
+							"password": "",
+							"note": "写入失败电影",
+							"datetime": "2026-05-19",
+							"source": "test",
+							"images": []
+						}
+					]
+				}
+			}
+		}`))
 	}))
 	defer server.Close()
 
@@ -814,10 +832,11 @@ func TestProcessSubscriptionSkipsSearchWhenDailyHotHistoryQueryFails(t *testing.
 	})
 
 	sub := &models.Subscription{
-		Name:     "热门订阅",
-		Source:   "tmdb",
-		Category: "movie",
-		Enable:   true,
+		Name:      "热门订阅",
+		Source:    "tmdb",
+		Category:  "movie",
+		MountPath: "/热门",
+		Enable:    true,
 	}
 	if err := svc.CreateSubscription(sub); err != nil {
 		t.Fatalf("Failed to create subscription: %v", err)
@@ -844,7 +863,57 @@ func TestProcessSubscriptionSkipsSearchWhenDailyHotHistoryQueryFails(t *testing.
 	}
 }
 
-func TestProcessSubscriptionSkipsSearchWhenDailyHotHistoryCreateFails(t *testing.T) {
+func TestProcessSubscriptionRetriesWhenDailyHotSearchFails(t *testing.T) {
+	db, err := setupTestDB()
+	if err != nil {
+		t.Fatalf("Failed to setup test DB: %v", err)
+	}
+
+	var searchRequests int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&searchRequests, 1)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`search unavailable`))
+	}))
+	defer server.Close()
+
+	svc := NewService(db, zap.NewNop(), &SubscriptionConfig{
+		PanSearchURL: server.URL,
+		EnableTMDB:   true,
+	}).(*service)
+	svc.SetTMDBService(&mockTMDBService{
+		movies: []tmdb.Movie{{Title: "搜索失败电影", ReleaseDate: "2024-01-02"}},
+	})
+
+	sub := &models.Subscription{
+		Name:     "热门订阅",
+		Source:   "tmdb",
+		Category: "movie",
+		Enable:   true,
+	}
+	if err := svc.CreateSubscription(sub); err != nil {
+		t.Fatalf("Failed to create subscription: %v", err)
+	}
+
+	svc.processSubscription(sub)
+	svc.processSubscription(sub)
+
+	if got := atomic.LoadInt32(&searchRequests); got != 2 {
+		t.Fatalf("expected failed search to be retried, got %d requests", got)
+	}
+
+	var historyCount int64
+	if err := db.Model(&models.DailyHotHistory{}).Count(&historyCount).Error; err != nil {
+		t.Fatalf("count daily hot history: %v", err)
+	}
+
+	if historyCount != 0 {
+		t.Fatalf("expected no history rows after failed searches, got %d", historyCount)
+	}
+}
+
+func TestProcessSubscriptionRecordsDailyHotHistoryAfterSuccessfulMount(t *testing.T) {
 	db, err := setupTestDB()
 	if err != nil {
 		t.Fatalf("Failed to setup test DB: %v", err)
@@ -855,10 +924,105 @@ func TestProcessSubscriptionSkipsSearchWhenDailyHotHistoryCreateFails(t *testing
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt32(&searchRequests, 1)
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"code":0,"message":"ok","data":{"total":0,"merged_by_type":{}}}`))
+		_, _ = w.Write([]byte(`{
+			"code": 0,
+			"message": "ok",
+			"data": {
+				"total": 1,
+				"merged_by_type": {
+					"tianyi": [
+						{
+							"url": "https://cloud.189.cn/t/abcdef",
+							"password": "",
+							"note": "成功电影",
+							"datetime": "2026-05-19",
+							"source": "test",
+							"images": []
+						}
+					]
+				}
+			}
+		}`))
 	}))
 	defer server.Close()
 
+	mountService := &mockMountService{}
+	svc := NewService(db, zap.NewNop(), &SubscriptionConfig{
+		PanSearchURL: server.URL,
+		EnableTMDB:   true,
+	}).(*service)
+	svc.SetTMDBService(&mockTMDBService{
+		movies: []tmdb.Movie{{Title: "成功电影", ReleaseDate: "2024-01-02"}},
+	})
+	svc.SetMountService(mountService)
+	svc.SetShareInfoFetcher(&mockShareInfoFetcher{})
+
+	sub := &models.Subscription{
+		Name:      "热门订阅",
+		Source:    "tmdb",
+		Category:  "movie",
+		MountPath: "/热门",
+		Enable:    true,
+	}
+	if err := svc.CreateSubscription(sub); err != nil {
+		t.Fatalf("Failed to create subscription: %v", err)
+	}
+
+	svc.processSubscription(sub)
+	svc.processSubscription(sub)
+
+	if got := atomic.LoadInt32(&searchRequests); got != 1 {
+		t.Fatalf("expected successful daily hot item to be skipped on second run, got %d search requests", got)
+	}
+
+	if len(mountService.requests) != 1 {
+		t.Fatalf("expected one mount request, got %d", len(mountService.requests))
+	}
+
+	var historyCount int64
+	if err := db.Model(&models.DailyHotHistory{}).Count(&historyCount).Error; err != nil {
+		t.Fatalf("count daily hot history: %v", err)
+	}
+
+	if historyCount != 1 {
+		t.Fatalf("expected one history row after successful mount, got %d", historyCount)
+	}
+}
+
+func TestProcessSubscriptionStillSearchesWhenDailyHotHistoryCreateFails(t *testing.T) {
+	db, err := setupTestDB()
+	if err != nil {
+		t.Fatalf("Failed to setup test DB: %v", err)
+	}
+
+	var searchRequests int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&searchRequests, 1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"code": 0,
+			"message": "ok",
+			"data": {
+				"total": 1,
+				"merged_by_type": {
+					"tianyi": [
+						{
+							"url": "https://cloud.189.cn/t/abcdef",
+							"password": "",
+							"note": "写入失败电影",
+							"datetime": "2026-05-19",
+							"source": "test",
+							"images": []
+						}
+					]
+				}
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	mountService := &mockMountService{}
 	svc := NewService(db, zap.NewNop(), &SubscriptionConfig{
 		PanSearchURL: server.URL,
 		EnableTMDB:   true,
@@ -866,6 +1030,8 @@ func TestProcessSubscriptionSkipsSearchWhenDailyHotHistoryCreateFails(t *testing
 	svc.SetTMDBService(&mockTMDBService{
 		movies: []tmdb.Movie{{Title: "写入失败电影", ReleaseDate: "2024-01-02"}},
 	})
+	svc.SetMountService(mountService)
+	svc.SetShareInfoFetcher(&mockShareInfoFetcher{})
 
 	sub := &models.Subscription{
 		Name:     "热门订阅",
@@ -893,8 +1059,12 @@ func TestProcessSubscriptionSkipsSearchWhenDailyHotHistoryCreateFails(t *testing
 
 	svc.processSubscription(sub)
 
-	if got := atomic.LoadInt32(&searchRequests); got != 0 {
-		t.Fatalf("expected search not to run after history create failure, got %d requests", got)
+	if got := atomic.LoadInt32(&searchRequests); got != 1 {
+		t.Fatalf("expected search to run before history create failure, got %d requests", got)
+	}
+
+	if len(mountService.requests) != 1 {
+		t.Fatalf("expected mount before history create failure, got %d requests", len(mountService.requests))
 	}
 
 	var historyCount int64

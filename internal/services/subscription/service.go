@@ -308,19 +308,6 @@ func (s *service) processSubscription(sub *models.Subscription) {
 			continue
 		}
 
-		// 记录处理历史
-		if err := s.db.Create(&models.DailyHotHistory{
-			Source:      item.Source,
-			ContentID:   contentID,
-			Title:       item.Title,
-			Year:        item.Year,
-			ProcessedAt: time.Now(),
-		}).Error; err != nil {
-			s.logger.Error("记录每日热门历史失败", zap.String("title", item.Title), zap.Error(err))
-
-			continue
-		}
-
 		// 搜索并挂载
 		results, err := s.SearchPan(item.Title + " " + item.Year)
 		if err != nil {
@@ -329,13 +316,34 @@ func (s *service) processSubscription(sub *models.Subscription) {
 			continue
 		}
 
+		matched := false
+
 		for _, r := range results {
-			s.processSearchResult(sub, r)
+			if s.processSearchResult(sub, r) {
+				matched = true
+			}
 		}
 
 		// 如果启用 AI 洗版
 		if sub.EnableAutoUpgrade {
 			s.processAutoUpgrade(sub, item)
+		}
+
+		if !matched {
+			s.logger.Debug("热门资源未匹配成功，保留后续重试机会", zap.String("title", item.Title))
+
+			continue
+		}
+
+		// 只有搜索并挂载成功后才记录处理历史，避免失败资源当天被永久跳过。
+		if err := s.db.Create(&models.DailyHotHistory{
+			Source:      item.Source,
+			ContentID:   contentID,
+			Title:       item.Title,
+			Year:        item.Year,
+			ProcessedAt: time.Now(),
+		}).Error; err != nil {
+			s.logger.Error("记录每日热门历史失败", zap.String("title", item.Title), zap.Error(err))
 		}
 	}
 
@@ -456,7 +464,7 @@ func (s *service) getDoubanMovies() []HotResource {
 	return results
 }
 
-func (s *service) processSearchResult(sub *models.Subscription, result SearchResult) {
+func (s *service) processSearchResult(sub *models.Subscription, result SearchResult) bool {
 	title := result.Title
 	if title == "" {
 		title = sub.Name
@@ -466,7 +474,7 @@ func (s *service) processSearchResult(sub *models.Subscription, result SearchRes
 	if err != nil {
 		s.logger.Error("Match and mount failed", zap.Error(err))
 
-		return
+		return false
 	}
 
 	if matchResult.Success {
@@ -487,7 +495,11 @@ func (s *service) processSearchResult(sub *models.Subscription, result SearchRes
 				s.logger.Warn("发送订阅挂载通知失败", zap.Error(err))
 			}
 		}
+
+		return true
 	}
+
+	return false
 }
 
 func (s *service) processAutoUpgrade(sub *models.Subscription, item HotResource) {
