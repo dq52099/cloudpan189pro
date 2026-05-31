@@ -311,15 +311,17 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 							if exists.CloudId == pItem.item.ID {
 								logger.Debug("文件已入库，跳过重复资源", zap.String("path", fullPath), zap.String("cloud_id", pItem.item.ID))
 
-								if err = enqueueScanTask(fullPath, exists.ID); err != nil {
-									logger.Error("下发已存在文件扫描任务失败", zap.Error(err))
-									mu.Lock()
-									localFailedCount++
-									mu.Unlock()
+								if req.IsRetry {
+									if err = enqueueScanTask(fullPath, exists.ID); err != nil {
+										logger.Error("下发已存在文件扫描任务失败", zap.Error(err))
+										mu.Lock()
+										localFailedCount++
+										mu.Unlock()
 
-									failedRecorded = true
+										failedRecorded = true
 
-									break
+										break
+									}
 								}
 
 								handled = true

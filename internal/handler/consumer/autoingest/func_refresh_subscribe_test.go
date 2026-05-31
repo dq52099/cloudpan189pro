@@ -719,6 +719,61 @@ func TestRefreshSubscribeDoesNotAdvanceOffsetWhenCreateFails(t *testing.T) {
 	}
 }
 
+func TestRefreshSubscribeSkipsExistingSameCloudIDWithoutRetryScanWhenOtherItemFails(t *testing.T) {
+	planService := &mockRefreshSubscribePlanService{
+		plan:          newRefreshSubscribePlan(100, autoingest.OnConflictRename),
+		updatedOffset: -1,
+	}
+	cloudService := &mockRefreshSubscribeCloudBridgeService{
+		items: []*cloudbridge.ShareResourceInfo{
+			{
+				Name:      "created-before",
+				ID:        "cloud-created",
+				ShareId:   88,
+				ShareTime: time.Unix(200, 0),
+				IsTop:     1,
+			},
+			{
+				Name:      "will-fail",
+				ID:        "cloud-fail",
+				ShareId:   89,
+				ShareTime: time.Unix(201, 0),
+				IsTop:     1,
+			},
+		},
+	}
+	logService := &mockRefreshSubscribeLogService{}
+	storageService := &mockRefreshSubscribeStorageFacadeService{err: errors.New("create failed")}
+	virtualService := &mockRefreshSubscribeVirtualFileService{
+		queryFiles: []*models.VirtualFile{
+			{ID: 55, Name: "created-before", CloudId: "cloud-created"},
+			nil,
+			nil,
+		},
+	}
+	taskEngine := &mockRefreshSubscribeTaskEngine{}
+
+	if err := runRefreshSubscribeHandlerWithTaskEngine(t, taskEngine, planService, cloudService, logService, storageService, virtualService); err != nil {
+		t.Fatalf("refresh subscribe: %v", err)
+	}
+
+	if taskEngine.Count() != 0 {
+		t.Fatalf("expected existing completed item not to enqueue scan during ordinary refresh, got %d", taskEngine.Count())
+	}
+
+	if planService.updatedOffset != 100 {
+		t.Fatalf("expected offset kept at 100 while another item fails, got %d", planService.updatedOffset)
+	}
+
+	if planService.failedDelta != 1 {
+		t.Fatalf("expected only failing item counted failed, got %d", planService.failedDelta)
+	}
+
+	if storageService.Count() != 2 {
+		t.Fatalf("expected failing item create and retry only, got %d", storageService.Count())
+	}
+}
+
 func TestRefreshSubscribeDuplicateCreateScansExistingAndAdvancesOffset(t *testing.T) {
 	shareTime := time.Unix(200, 0)
 	planService := &mockRefreshSubscribePlanService{
