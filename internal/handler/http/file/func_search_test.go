@@ -155,6 +155,44 @@ func TestSearchReturnsEmptyWhenUserHasNoAccessibleMountPoints(t *testing.T) {
 	}
 }
 
+func TestSearchAllowsRootParentID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	virtualFileService := &mockSearchVirtualFileService{
+		list: []*models.VirtualFile{
+			{ID: 12, TopId: 200, ParentId: 0, Name: "root-file.mp4"},
+		},
+		count: 1,
+	}
+	mountPointService := &mockSearchMountPointService{accessibleIDs: []int64{200}}
+
+	router := newSearchTestRouter(virtualFileService, mountPointService, 100, false, 0)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/search?keyword=root&pageSize=10&currentPage=1&pid=0", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if virtualFileService.listReq == nil {
+		t.Fatal("expected virtual file list to be called")
+	}
+
+	if virtualFileService.listReq.ParentId == nil || *virtualFileService.listReq.ParentId != 0 {
+		t.Fatalf("expected root parent id 0, got %#v", virtualFileService.listReq.ParentId)
+	}
+
+	if virtualFileService.countReq == nil {
+		t.Fatal("expected virtual file count to be called")
+	}
+
+	if virtualFileService.countReq.ParentId == nil || *virtualFileService.countReq.ParentId != 0 {
+		t.Fatalf("expected count root parent id 0, got %#v", virtualFileService.countReq.ParentId)
+	}
+}
+
 func newSearchTestRouter(
 	virtualFileService virtualfileSvi.Service,
 	mountPointService mountpointSvi.Service,

@@ -126,7 +126,7 @@ func (s *service) getListQuery(ctx context.Context, req *ListRequest) (*gorm.DB,
 	query := s.getDB(ctx)
 
 	if req.ParentId != nil {
-		if *req.ParentId <= 0 {
+		if *req.ParentId < 0 {
 			return nil, errInvalidVirtualFileID
 		}
 

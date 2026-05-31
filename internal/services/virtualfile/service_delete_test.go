@@ -583,7 +583,6 @@ func TestListVirtualFileRejectsInvalidIDFilters(t *testing.T) {
 		name string
 		req  *ListRequest
 	}{
-		{name: "parent id zero", req: &ListRequest{ParentId: ptrInt64(0)}},
 		{name: "parent id negative", req: &ListRequest{ParentId: ptrInt64(-1)}},
 		{name: "top id zero", req: &ListRequest{TopId: ptrInt64(0)}},
 		{name: "top id negative", req: &ListRequest{TopId: ptrInt64(-1)}},
@@ -603,6 +602,37 @@ func TestListVirtualFileRejectsInvalidIDFilters(t *testing.T) {
 				t.Fatalf("expected count invalid virtual file id, got %v", err)
 			}
 		})
+	}
+}
+
+func TestListVirtualFileAllowsRootParentID(t *testing.T) {
+	tDB := setupVirtualFileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	rootFile := createVirtualFile(t, tDB.db, 0, "root.txt")
+	createVirtualFile(t, tDB.db, rootFile.ID, "child.txt")
+
+	list, err := svc.List(ctx, &ListRequest{ParentId: ptrInt64(0)})
+	if err != nil {
+		t.Fatalf("list virtual files under root parent: %v", err)
+	}
+
+	if len(list) != 1 {
+		t.Fatalf("expected 1 root child, got %d", len(list))
+	}
+
+	if list[0].ID != rootFile.ID {
+		t.Fatalf("expected root file id %d, got %d", rootFile.ID, list[0].ID)
+	}
+
+	count, err := svc.Count(ctx, &ListRequest{ParentId: ptrInt64(0)})
+	if err != nil {
+		t.Fatalf("count virtual files under root parent: %v", err)
+	}
+
+	if count != 1 {
+		t.Fatalf("expected root child count 1, got %d", count)
 	}
 }
 
