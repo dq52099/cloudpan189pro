@@ -228,8 +228,8 @@ func TestTerminalTaskLogStatusDoesNotGetOverwritten(t *testing.T) {
 		t.Fatalf("fail task log: %v", err)
 	}
 
-	if err := svc.Completed(ctx, failedTracker); err != nil {
-		t.Fatalf("late completed should be ignored without error: %v", err)
+	if err := svc.Completed(ctx, failedTracker); !errors.Is(err, ErrFileTaskLogTerminalState) {
+		t.Fatalf("expected late completed to report terminal state, got %v", err)
 	}
 
 	completedTracker, err := svc.Create(ctx, "scan", "completed scan")
@@ -245,8 +245,8 @@ func TestTerminalTaskLogStatusDoesNotGetOverwritten(t *testing.T) {
 		t.Fatalf("complete task log: %v", err)
 	}
 
-	if err := svc.Failed(ctx, completedTracker); err != nil {
-		t.Fatalf("late failed should be ignored without error: %v", err)
+	if err := svc.Failed(ctx, completedTracker); !errors.Is(err, ErrFileTaskLogTerminalState) {
+		t.Fatalf("expected late failed to report terminal state, got %v", err)
 	}
 
 	var failedLog models.FileTaskLog

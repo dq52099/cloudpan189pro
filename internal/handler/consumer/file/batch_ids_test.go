@@ -295,6 +295,52 @@ func TestClearFileReturnsCompletedStatusError(t *testing.T) {
 	}
 }
 
+func TestClearFileIgnoresTerminalCompletedStatus(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := &failingCompletedFileTaskLogService{
+		Service:      filetasklog.NewService(tDB),
+		completedErr: filetasklog.ErrFileTaskLogTerminalState,
+	}
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		filesByID: map[int64]*models.VirtualFile{
+			10: {ID: 10, TopId: 10, Name: "dir", IsDir: true},
+		},
+		childrenByParent: map[int64][]*models.VirtualFile{},
+		deleteErrByID:    map[int64]error{},
+	}
+
+	oldMediaConfig := shared.MediaConfig
+	shared.MediaConfig = nil
+
+	defer func() {
+		shared.MediaConfig = oldMediaConfig
+	}()
+
+	handler := NewHandler(
+		zap.NewNop(),
+		virtualFileService,
+		nil,
+		nil,
+		&mockBatchModifyTokenMountPointService{},
+		logService,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	req := topic.FileClearFileRequest{FileId: 10}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.ClearFile())
+	if err = processor.Process(stdctx.Background(), payload); err != nil {
+		t.Fatalf("expected terminal completed status to be ignored, got %v", err)
+	}
+}
+
 func TestClearFileJoinsBusinessAndFailedStatusErrors(t *testing.T) {
 	tDB := setupBatchDeleteTaskLogTestDB(t)
 	statusErr := errors.New("clear failed status write failed")
@@ -394,6 +440,50 @@ func TestScanFileReturnsCompletedStatusError(t *testing.T) {
 
 	if !errors.Is(err, statusErr) {
 		t.Fatalf("expected scan completed status error, got %v", err)
+	}
+}
+
+func TestScanFileIgnoresTerminalCompletedStatus(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := &failingCompletedFileTaskLogService{
+		Service:      filetasklog.NewService(tDB),
+		completedErr: filetasklog.ErrFileTaskLogTerminalState,
+	}
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		childrenByParent: map[int64][]*models.VirtualFile{},
+		deleteErrByID:    map[int64]error{},
+		filesByID:        map[int64]*models.VirtualFile{},
+	}
+
+	oldMediaConfig := shared.MediaConfig
+	shared.MediaConfig = nil
+
+	defer func() {
+		shared.MediaConfig = oldMediaConfig
+	}()
+
+	handler := NewHandler(
+		zap.NewNop(),
+		virtualFileService,
+		nil,
+		nil,
+		&mockBatchModifyTokenMountPointService{},
+		logService,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	req := topic.FileScanFileRequest{FileId: 0}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.ScanFile())
+	if err = processor.Process(stdctx.Background(), payload); err != nil {
+		t.Fatalf("expected terminal completed status to be ignored, got %v", err)
 	}
 }
 

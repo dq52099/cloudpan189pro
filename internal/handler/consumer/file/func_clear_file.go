@@ -67,6 +67,12 @@ func (h *handler) ClearFile() taskcontext.HandlerFunc {
 		if err = h.clearMountFiles(ctx.GetContext(), vf.ID); err != nil {
 			_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklog.WithFailedCounter(1))
 			if statusErr := h.fileTaskLogService.Failed(ctx.GetContext(), tracker, tracker.WithCost(), utils.WithField("result", err.Error())); statusErr != nil {
+				if errors.Is(statusErr, filetasklog.ErrFileTaskLogTerminalState) {
+					logger.Warn("文件任务日志已处于终态，跳过清理失败状态回写", zap.Int64("file_id", req.FileId), zap.Error(statusErr))
+
+					return err
+				}
+
 				logger.Error("更新文件任务日志失败", zap.Int64("file_id", req.FileId), zap.Error(statusErr))
 
 				return errors.Join(err, statusErr)
@@ -74,6 +80,12 @@ func (h *handler) ClearFile() taskcontext.HandlerFunc {
 
 			return err
 		} else if err := h.fileTaskLogService.Completed(ctx.GetContext(), tracker, tracker.WithCost()); err != nil {
+			if errors.Is(err, filetasklog.ErrFileTaskLogTerminalState) {
+				logger.Warn("文件任务日志已处于终态，跳过清理成功状态回写", zap.Int64("file_id", req.FileId), zap.Error(err))
+
+				return nil
+			}
+
 			logger.Error("更新文件任务日志失败", zap.Int64("file_id", req.FileId), zap.Error(err))
 
 			return err

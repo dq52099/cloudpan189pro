@@ -126,6 +126,12 @@ func (h *handler) HandleBatchDelete() taskcontext.HandlerFunc {
 			}
 
 			if err != nil {
+				if errors.Is(err, filetasklog.ErrFileTaskLogTerminalState) {
+					h.logger.Warn("文件任务日志已处于终态，跳过批量删除状态回写", zap.Error(err))
+
+					return
+				}
+
 				h.logger.Error("更新任务日志失败", zap.Error(err))
 				retErr = errors.Join(retErr, err)
 			}
@@ -266,6 +272,14 @@ func (h *handler) HandleDelete() taskcontext.HandlerFunc {
 					err = h.fileTaskLogService.Failed(ctx.GetContext(), tracker, tracker.WithCost(), utils.WithField("result", handleErr.Error()))
 				} else {
 					err = h.fileTaskLogService.Completed(ctx.GetContext(), tracker, tracker.WithCost(), utils.WithField("completed", 1))
+				}
+
+				if err != nil {
+					if errors.Is(err, filetasklog.ErrFileTaskLogTerminalState) {
+						h.logger.Warn("文件任务日志已处于终态，跳过删除状态回写", zap.Error(err))
+
+						err = nil
+					}
 				}
 
 				if err != nil {

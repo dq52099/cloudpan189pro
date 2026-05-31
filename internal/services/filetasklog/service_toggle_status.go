@@ -41,7 +41,7 @@ func (s *service) ToggleStatus(ctx context.Context, key LogKey, status string, o
 	if result.Error != nil {
 		err = result.Error
 	} else if result.RowsAffected == 0 {
-		err = s.ensureTaskLogExists(ctx, id)
+		err = s.ensureTaskLogCanSwitchStatus(ctx, id)
 	}
 
 	if err != nil {
@@ -187,6 +187,30 @@ func (s *service) ensureTaskLogExists(ctx context.Context, id int64) error {
 		Take(&log).
 		Error
 	if err == nil {
+		return nil
+	}
+
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	return errors.Join(gorm.ErrRecordNotFound, errors.New("文件任务日志不存在"))
+}
+
+func (s *service) ensureTaskLogCanSwitchStatus(ctx context.Context, id int64) error {
+	var log models.FileTaskLog
+
+	err := s.getDB(ctx).
+		Session(&gorm.Session{NewDB: true}).
+		Select("status").
+		Where("id = ?", id).
+		Take(&log).
+		Error
+	if err == nil {
+		if log.Status == models.StatusCompleted || log.Status == models.StatusFailed {
+			return ErrFileTaskLogTerminalState
+		}
+
 		return nil
 	}
 

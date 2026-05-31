@@ -107,8 +107,12 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 		defer func() {
 			if scanErr != nil {
 				if err := h.fileTaskLogService.Failed(ctx.GetContext(), tracker, tracker.WithCost(), utils.WithField("result", scanErr.Error())); err != nil {
-					logger.Error("更新文件任务日志失败", zap.Int64("file_id", req.FileId), zap.Error(err))
-					scanErr = fmt.Errorf("%w; 更新文件任务日志失败: %w", scanErr, err)
+					if errors.Is(err, filetasklog.ErrFileTaskLogTerminalState) {
+						logger.Warn("文件任务日志已处于终态，跳过失败状态回写", zap.Int64("file_id", req.FileId), zap.Error(err))
+					} else {
+						logger.Error("更新文件任务日志失败", zap.Int64("file_id", req.FileId), zap.Error(err))
+						scanErr = fmt.Errorf("%w; 更新文件任务日志失败: %w", scanErr, err)
+					}
 				}
 				// 写入挂载点失败状态（顶层文件才写入）
 				if req.FileId != 0 && topFile.IsTop {
@@ -123,6 +127,12 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 					tracker.WithCost(),
 					utils.WithField("completed", gorm.Expr("total")),
 				); err != nil {
+					if errors.Is(err, filetasklog.ErrFileTaskLogTerminalState) {
+						logger.Warn("文件任务日志已处于终态，跳过成功状态回写", zap.Int64("file_id", req.FileId), zap.Error(err))
+
+						return
+					}
+
 					logger.Error("更新文件任务日志失败", zap.Int64("file_id", req.FileId), zap.Error(err))
 
 					scanErr = err

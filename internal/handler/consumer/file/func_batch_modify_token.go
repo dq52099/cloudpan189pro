@@ -67,6 +67,12 @@ func (h *handler) HandleBatchModifyToken() taskcontext.HandlerFunc {
 
 			if _, err = h.cloudTokenService.QueryAccessible(ctx.GetContext(), req.TokenID, req.UserID, req.IsAdmin); err != nil {
 				if statusErr := h.fileTaskLogService.Failed(ctx.GetContext(), tracker, tracker.WithCost(), utils.WithField("result", pkgErrors.Wrap(err, "令牌不可用").Error())); statusErr != nil {
+					if errors.Is(statusErr, filetasklogSvi.ErrFileTaskLogTerminalState) {
+						ctx.GetContext().Warn("文件任务日志已处于终态，跳过批量修改令牌失败状态回写", zap.Error(statusErr))
+
+						return nil
+					}
+
 					ctx.GetContext().Error("更新批量修改令牌任务失败状态失败", zap.Error(statusErr))
 
 					return errors.Join(err, statusErr)
@@ -82,6 +88,12 @@ func (h *handler) HandleBatchModifyToken() taskcontext.HandlerFunc {
 			groupFileIDs, err = h.group2FileService.GetBindFiles(ctx.GetContext(), req.UserGroupID)
 			if err != nil {
 				if statusErr := h.fileTaskLogService.Failed(ctx.GetContext(), tracker, tracker.WithCost(), utils.WithField("result", err.Error())); statusErr != nil {
+					if errors.Is(statusErr, filetasklogSvi.ErrFileTaskLogTerminalState) {
+						ctx.GetContext().Warn("文件任务日志已处于终态，跳过批量修改令牌失败状态回写", zap.Error(statusErr))
+
+						return err
+					}
+
 					ctx.GetContext().Error("更新批量修改令牌任务失败状态失败", zap.Error(statusErr))
 
 					return errors.Join(err, statusErr)
@@ -186,6 +198,12 @@ func (h *handler) HandleBatchModifyToken() taskcontext.HandlerFunc {
 		if failCount > 0 {
 			err := errors.New(formatBatchModifyTokenResult(successCount, unchangedCount, failCount))
 			if statusErr := h.fileTaskLogService.Failed(ctx.GetContext(), tracker, tracker.WithCost(), utils.WithField("result", err.Error())); statusErr != nil {
+				if errors.Is(statusErr, filetasklogSvi.ErrFileTaskLogTerminalState) {
+					ctx.GetContext().Warn("文件任务日志已处于终态，跳过批量修改令牌失败状态回写", zap.Error(statusErr))
+
+					return nil
+				}
+
 				ctx.GetContext().Error("更新批量修改令牌任务失败状态失败", zap.Error(statusErr))
 
 				return statusErr
@@ -194,12 +212,22 @@ func (h *handler) HandleBatchModifyToken() taskcontext.HandlerFunc {
 			return nil
 		}
 
-		return h.fileTaskLogService.Completed(
+		if err := h.fileTaskLogService.Completed(
 			ctx.GetContext(),
 			tracker,
 			tracker.WithCost(),
 			utils.WithField("result", formatBatchModifyTokenResult(successCount, unchangedCount, failCount)),
-		)
+		); err != nil {
+			if errors.Is(err, filetasklogSvi.ErrFileTaskLogTerminalState) {
+				ctx.GetContext().Warn("文件任务日志已处于终态，跳过批量修改令牌成功状态回写", zap.Error(err))
+
+				return nil
+			}
+
+			return err
+		}
+
+		return nil
 	}
 }
 
