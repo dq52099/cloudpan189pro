@@ -58,3 +58,54 @@ func TestWriteStrmKeepsExistingFileWhenCreateFailsOnPathConflict(t *testing.T) {
 		t.Fatalf("expected existing media file DB record to remain, got count %d", count)
 	}
 }
+
+func TestWriteStrmRollsBackMetadataWhenTargetPathIsDirectory(t *testing.T) {
+	tDB := setupMediaFileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+	root := t.TempDir()
+	relPath := "/movies/directory.strm"
+	fullPath := filepath.Join(root, "movies", "directory.strm")
+
+	if err := os.MkdirAll(fullPath, 0o755); err != nil {
+		t.Fatalf("create directory at strm path: %v", err)
+	}
+
+	childPath := filepath.Join(fullPath, "keep.txt")
+	if err := os.WriteFile(childPath, []byte("keep"), 0o644); err != nil {
+		t.Fatalf("write child file: %v", err)
+	}
+
+	car := media.NewWriterCar(root, media.FileConflictPolicyReplace, "http://example.test").NewSubCar("movies/directory.strm")
+
+	id, err := svc.WriteStrm(ctx, car, 3101, "http://example.test/new")
+	if err == nil {
+		t.Fatal("expected directory target replace error, got nil")
+	}
+
+	if id != 0 {
+		t.Fatalf("expected zero id, got %d", id)
+	}
+
+	info, statErr := os.Stat(fullPath)
+	if statErr != nil {
+		t.Fatalf("expected directory at target path to remain, got %v", statErr)
+	}
+
+	if !info.IsDir() {
+		t.Fatalf("expected target path to remain a directory")
+	}
+
+	if _, statErr = os.Stat(childPath); statErr != nil {
+		t.Fatalf("expected child file to remain in target directory, got %v", statErr)
+	}
+
+	var count int64
+	if err := tDB.db.Model(&models.MediaFile{}).Where("fid = ? AND path = ?", 3101, relPath).Count(&count).Error; err != nil {
+		t.Fatalf("count rolled back media file: %v", err)
+	}
+
+	if count != 0 {
+		t.Fatalf("expected media file metadata rolled back, got count %d", count)
+	}
+}

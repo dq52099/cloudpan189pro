@@ -1,6 +1,7 @@
 package mediafile
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -141,8 +142,10 @@ func (s *service) WriteStrm(ctx context.Context, car media.WriterCar, fid int64,
 
 		cleanupTmpFile()
 
-		if deleteErr := s.getDB(ctx).Where("id = ?", file.ID).Delete(new(models.MediaFile)).Error; deleteErr != nil {
-			ctx.Warn("回滚 STRM 元数据失败", zap.Int64("id", file.ID), zap.Error(deleteErr))
+		if rollbackErr := s.rollbackStrmMetadata(ctx, file.ID); rollbackErr != nil {
+			ctx.Warn("回滚 STRM 元数据失败", zap.Int64("id", file.ID), zap.Error(rollbackErr))
+
+			return 0, fmt.Errorf("%w; 回滚 STRM 元数据失败: %v", err, rollbackErr)
 		}
 
 		return 0, err
@@ -153,18 +156,36 @@ func (s *service) WriteStrm(ctx context.Context, car media.WriterCar, fid int64,
 	return file.ID, nil
 }
 
+func (s *service) rollbackStrmMetadata(ctx context.Context, fileID int64) error {
+	result := s.getDB(ctx).Where("id = ?", fileID).Delete(new(models.MediaFile))
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected != 1 {
+		return errors.Wrap(gorm.ErrRecordNotFound, "回滚 STRM 元数据未删除记录")
+	}
+
+	return nil
+}
+
 func replaceStrmFile(ctx context.Context, tmpPath string, fullPath string) error {
 	if err := os.Rename(tmpPath, fullPath); err == nil {
 		return nil
 	} else {
 		directRenameErr := err
 
-		if _, statErr := os.Stat(fullPath); statErr != nil {
+		targetInfo, statErr := os.Stat(fullPath)
+		if statErr != nil {
 			if os.IsNotExist(statErr) {
 				return directRenameErr
 			}
 
 			return errors.Wrap(statErr, "检查目标 STRM 文件状态失败")
+		}
+
+		if targetInfo.IsDir() {
+			return errors.Errorf("目标 STRM 路径是目录: %s", fullPath)
 		}
 
 		backupPath, err := createStrmBackupPath(filepath.Dir(fullPath), filepath.Base(fullPath))
