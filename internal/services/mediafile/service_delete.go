@@ -14,8 +14,14 @@ import (
 	"gorm.io/gorm"
 )
 
+var (
+	removeStrmFile      = os.Remove
+	removeMediaPathTree = os.RemoveAll
+	readMediaRootDir    = os.ReadDir
+)
+
 // DeleteStrm 删除单个 STRM 文件及其数据库记录。
-// 磁盘删除失败会记录 warning 并继续删除 DB 记录，避免孤儿 DB 记录阻塞后续流程。
+// 磁盘删除失败时保留 DB 记录，避免磁盘残留但索引丢失。
 func (s *service) DeleteStrm(ctx context.Context, fid int64, rootPath string) error {
 	if fid <= 0 {
 		return errInvalidMediaFileFID
@@ -37,11 +43,13 @@ func (s *service) DeleteStrm(ctx context.Context, fid int64, rootPath string) er
 			zap.String("path", file.Path),
 			zap.Error(pathErr),
 		)
-	} else if err := os.Remove(diskPath); err != nil && !os.IsNotExist(err) {
-		ctx.Warn("删除 STRM 文件失败（将继续清理 DB 记录）",
+	} else if err := removeStrmFile(diskPath); err != nil && !os.IsNotExist(err) {
+		ctx.Warn("删除 STRM 文件失败，保留 DB 记录以便重试",
 			zap.String("path", diskPath),
 			zap.Error(err),
 		)
+
+		return err
 	}
 
 	// 删除记录
@@ -58,7 +66,7 @@ func (s *service) DeleteStrm(ctx context.Context, fid int64, rootPath string) er
 }
 
 // Clear 清除根路径下所有文件夹并清空对应 DB 记录。
-// 单个文件删除失败时记录 warning 并继续；所有文件处理完后统一清理 DB。
+// 任一磁盘删除失败时返回错误并保留 DB 记录，避免磁盘残留但索引丢失。
 //
 // 安全检查：
 //   - rootPath 必须与 shared.MediaConfig.StoragePath 一致，防止调用方传入错误的危险路径；
@@ -73,7 +81,7 @@ func (s *service) Clear(ctx context.Context, rootPath string) error {
 
 	rootPath = validatedRoot
 
-	entries, err := os.ReadDir(rootPath)
+	entries, err := readMediaRootDir(rootPath)
 	if err != nil {
 		ctx.Error("读取目录失败", zap.String("path", rootPath), zap.Error(err))
 
@@ -82,20 +90,28 @@ func (s *service) Clear(ctx context.Context, rootPath string) error {
 
 	var failedCount int
 
+	var firstErr error
+
 	for _, entry := range entries {
 		target := filepath.Join(rootPath, entry.Name())
-		if err := os.RemoveAll(target); err != nil {
+		if err := removeMediaPathTree(target); err != nil {
 			ctx.Warn("删除文件失败，已跳过", zap.Error(err), zap.String("path", target))
 
 			failedCount++
+
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
 
 	if failedCount > 0 {
-		ctx.Warn("部分磁盘文件清理失败，将继续清理 DB 记录", zap.Int("failed_count", failedCount))
+		ctx.Warn("部分磁盘文件清理失败，保留 DB 记录以便重试", zap.Int("failed_count", failedCount))
+
+		return fmt.Errorf("清理媒体根路径失败，%d 个条目删除失败: %w", failedCount, firstErr)
 	}
 
-	// 再删除数据库中的所有记录（即便部分磁盘清理失败也要保持 DB 一致）
+	// 磁盘全部清理成功后再删除数据库中的所有记录。
 	if err := s.getDB(ctx).Where("1 = 1").Delete(new(models.MediaFile)).Error; err != nil {
 		ctx.Error("清空数据库失败", zap.Error(err))
 

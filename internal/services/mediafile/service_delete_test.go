@@ -195,6 +195,43 @@ func TestDeleteStrmRejectsInvalidFID(t *testing.T) {
 	}
 }
 
+func TestDeleteStrmKeepsDBRecordWhenDiskDeleteFails(t *testing.T) {
+	tDB := setupMediaFileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+	root := t.TempDir()
+	relPath := "/movies/not-a-file.strm"
+	fullPath := filepath.Join(root, relPath)
+
+	if err := os.MkdirAll(fullPath, 0o755); err != nil {
+		t.Fatalf("create directory at strm path: %v", err)
+	}
+
+	childPath := filepath.Join(fullPath, "keep.txt")
+	if err := os.WriteFile(childPath, []byte("keep"), 0o644); err != nil {
+		t.Fatalf("write child file: %v", err)
+	}
+
+	file := createMediaFile(t, tDB.db, 1101, relPath)
+
+	if err := svc.DeleteStrm(ctx, file.FID, root); err == nil {
+		t.Fatal("expected disk delete error")
+	}
+
+	if _, err := os.Stat(childPath); err != nil {
+		t.Fatalf("expected target directory contents to remain, got %v", err)
+	}
+
+	var count int64
+	if err := tDB.db.Model(&models.MediaFile{}).Where("id = ?", file.ID).Count(&count).Error; err != nil {
+		t.Fatalf("count media file: %v", err)
+	}
+
+	if count != 1 {
+		t.Fatalf("expected media file DB record kept, got count %d", count)
+	}
+}
+
 func TestWriteStrmRejectsInvalidFIDWithoutSideEffects(t *testing.T) {
 	tDB := setupMediaFileTestDB(t)
 	svc := NewService(tDB)
@@ -553,5 +590,67 @@ func TestClearRemovesConfiguredMediaRootChildrenOnly(t *testing.T) {
 
 	if count != 0 {
 		t.Fatalf("expected media DB records cleared, got count %d", count)
+	}
+}
+
+func TestClearKeepsDBRecordsWhenDiskDeleteFails(t *testing.T) {
+	tDB := setupMediaFileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+	root := t.TempDir()
+	okDir := filepath.Join(root, "ok")
+	okFile := filepath.Join(okDir, "movie.strm")
+	blockedDir := filepath.Join(root, "blocked")
+	blockedFile := filepath.Join(blockedDir, "movie.strm")
+
+	withMediaConfig(t, &models.MediaConfig{StoragePath: root})
+
+	for _, dir := range []string{okDir, blockedDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("create media dir %s: %v", dir, err)
+		}
+	}
+
+	for _, file := range []string{okFile, blockedFile} {
+		if err := os.WriteFile(file, []byte("http://example.test"), 0o644); err != nil {
+			t.Fatalf("write media file %s: %v", file, err)
+		}
+	}
+
+	createMediaFile(t, tDB.db, 1102, "/ok/movie.strm")
+	createMediaFile(t, tDB.db, 1103, "/blocked/movie.strm")
+
+	oldRemoveMediaPathTree := removeMediaPathTree
+	removeMediaPathTree = func(target string) error {
+		if filepath.Base(target) == "blocked" {
+			return errors.New("blocked remove")
+		}
+
+		return oldRemoveMediaPathTree(target)
+	}
+
+	t.Cleanup(func() {
+		removeMediaPathTree = oldRemoveMediaPathTree
+	})
+
+	if err := svc.Clear(ctx, root); err == nil {
+		t.Fatal("expected clear error")
+	}
+
+	if _, err := os.Stat(okDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected successfully removed dir to be gone, got %v", err)
+	}
+
+	if _, err := os.Stat(blockedFile); err != nil {
+		t.Fatalf("expected failed delete target to remain, got %v", err)
+	}
+
+	var count int64
+	if err := tDB.db.Model(&models.MediaFile{}).Count(&count).Error; err != nil {
+		t.Fatalf("count media files: %v", err)
+	}
+
+	if count != 2 {
+		t.Fatalf("expected media DB records kept, got count %d", count)
 	}
 }
