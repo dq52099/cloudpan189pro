@@ -73,6 +73,14 @@
       <n-spin size="large" />
     </div>
 
+    <div v-else-if="loadError" class="empty-state">
+      <n-empty :description="loadError">
+        <template #extra>
+          <n-button size="small" @click="refreshCurrentPath">重试</n-button>
+        </template>
+      </n-empty>
+    </div>
+
     <!-- 根据isDir判断渲染不同组件 -->
     <template v-else-if="fileInfo">
       <!-- 目录：显示文件列表 -->
@@ -115,6 +123,7 @@ import {
   NBreadcrumbItem,
   NSpin,
   NDivider,
+  NEmpty,
   useMessage,
   useDialog, // 引入 useDialog
 } from 'naive-ui'
@@ -149,6 +158,7 @@ const loading = ref(false)
 const fileInfo = ref<FileOpenResponse | null>(null)
 const currentPath = ref('/')
 const breadcrumbs = ref<BreadcrumbItem[]>([])
+const loadError = ref('')
 const showSearch = ref(false)
 // 新增：选中的文件ID列表
 const selectedRowKeys = ref<number[]>([])
@@ -328,6 +338,10 @@ const loadPath = (path: string) => {
 
   const requestId = ++fileOpenRequestId
   loading.value = true
+  currentPath.value = path
+  fileInfo.value = null
+  breadcrumbs.value = []
+  loadError.value = ''
   // 切换路径时清空选中状态
   selectedRowKeys.value = []
   downloadingRowKeys.value = []
@@ -340,24 +354,26 @@ const loadPath = (path: string) => {
         const openedFile = normalizeFileOpenResponse(response.data)
         if (!openedFile) {
           console.error('文件打开响应数据格式异常:', response.data)
-          message.error('响应数据格式异常')
+          loadError.value = '响应数据格式异常'
+          message.error(loadError.value)
 
           return
         }
 
         fileInfo.value = openedFile
-        currentPath.value = path
         breadcrumbs.value = openedFile.breadcrumbs
         prunePendingDeleteRows(openedFile.children || [])
       } else {
-        message.error(response.msg || '加载失败')
+        loadError.value = response.msg || '加载失败'
+        message.error(loadError.value)
       }
     })
     .catch((error) => {
       if (!isCurrentFileOpenRequest(requestId)) return
 
       console.error('加载文件失败:', error)
-      message.error(getErrorMessage(error, '加载文件失败'))
+      loadError.value = getErrorMessage(error, '加载文件失败')
+      message.error(loadError.value)
     })
     .finally(() => {
       if (isCurrentFileOpenRequest(requestId)) {
