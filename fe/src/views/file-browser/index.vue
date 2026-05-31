@@ -85,6 +85,7 @@
           :file-list="fileInfo.children || []"
           :loading="false"
           :downloading-row-keys="downloadingRowKeys"
+          :pending-delete-row-keys="pendingDeleteRowKeys"
           v-model:checked-row-keys="selectedRowKeys"
           @file-click="handleFileClick"
           @download="downloadFile"
@@ -154,6 +155,7 @@ const selectedRowKeys = ref<number[]>([])
 const batchDeleteSubmitting = ref(false)
 const batchDeleteDialogOpen = ref(false)
 const downloadingRowKeys = ref<number[]>([])
+const pendingDeleteRowKeys = ref<number[]>([])
 let isComponentMounted = true
 let fileOpenRequestId = 0
 const openApiBasePath = '/api/file/open'
@@ -164,6 +166,11 @@ const selectedDownloadingRowCount = computed(() => {
   const downloadingIds = new Set(downloadingRowKeys.value)
 
   return selectedRowKeys.value.filter((id) => downloadingIds.has(id)).length
+})
+const selectedPendingDeleteRowCount = computed(() => {
+  const pendingIds = new Set(pendingDeleteRowKeys.value)
+
+  return selectedRowKeys.value.filter((id) => pendingIds.has(id)).length
 })
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
@@ -308,6 +315,12 @@ const isCurrentFileOpenRequest = (requestId: number) => {
   return isComponentMounted && fileOpenRequestId === requestId
 }
 
+const prunePendingDeleteRows = (children: FileChild[]) => {
+  const visibleIds = new Set(children.map((child) => child.id))
+
+  pendingDeleteRowKeys.value = pendingDeleteRowKeys.value.filter((id) => visibleIds.has(id))
+}
+
 const loadPath = (path: string) => {
   if (!isComponentMounted) {
     return Promise.resolve()
@@ -335,6 +348,7 @@ const loadPath = (path: string) => {
         fileInfo.value = openedFile
         currentPath.value = path
         breadcrumbs.value = openedFile.breadcrumbs
+        prunePendingDeleteRows(openedFile.children || [])
       } else {
         message.error(response.msg || '加载失败')
       }
@@ -389,6 +403,7 @@ const handleBatchDelete = () => {
     batchDeleteSubmitting.value ||
     batchDeleteDialogOpen.value ||
     selectedDownloadingRowCount.value > 0 ||
+    selectedPendingDeleteRowCount.value > 0 ||
     !isComponentMounted
   ) {
     return
@@ -419,6 +434,7 @@ const handleBatchDelete = () => {
           if (!isComponentMounted) return
 
           if (res.code === 200) {
+            pendingDeleteRowKeys.value = [...new Set([...pendingDeleteRowKeys.value, ...ids])]
             message.success('删除任务已提交')
             selectedRowKeys.value = [] // 清空选中
             return refreshCurrentPath() // 刷新列表
@@ -527,6 +543,7 @@ onUnmounted(() => {
   batchDeleteSubmitting.value = false
   batchDeleteDialogOpen.value = false
   downloadingRowKeys.value = []
+  pendingDeleteRowKeys.value = []
 })
 </script>
 

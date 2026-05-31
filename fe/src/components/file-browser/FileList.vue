@@ -16,7 +16,7 @@
 
 <script setup lang="ts">
 import { h, computed } from 'vue'
-import { NDataTable, NIcon, NButton, type DataTableColumns } from 'naive-ui'
+import { NDataTable, NIcon, NButton, NTag, type DataTableColumns } from 'naive-ui'
 import {
   FolderOutline,
   DocumentOutline,
@@ -34,6 +34,7 @@ const props = defineProps<{
   loading: boolean
   checkedRowKeys?: number[] // 接收父组件的选中状态
   downloadingRowKeys?: number[]
+  pendingDeleteRowKeys?: number[]
 }>()
 
 // Emits 定义
@@ -45,11 +46,14 @@ const emit = defineEmits<{
 
 // 处理选中事件
 const downloadingRowKeySet = computed(() => new Set(props.downloadingRowKeys ?? []))
+const pendingDeleteRowKeySet = computed(() => new Set(props.pendingDeleteRowKeys ?? []))
 const isRowDownloading = (rowId: number) => downloadingRowKeySet.value.has(rowId)
+const isRowPendingDelete = (rowId: number) => pendingDeleteRowKeySet.value.has(rowId)
+const isRowActionBlocked = (rowId: number) => isRowDownloading(rowId) || isRowPendingDelete(rowId)
 
 const handleCheck = (keys: Array<string | number>) => {
   const selectableKeys = keys.filter(
-    (key): key is number => typeof key === 'number' && !isRowDownloading(key)
+    (key): key is number => typeof key === 'number' && !isRowActionBlocked(key)
   )
 
   emit('update:checkedRowKeys', selectableKeys)
@@ -58,8 +62,12 @@ const handleCheck = (keys: Array<string | number>) => {
 // 处理行点击（点击行进入目录）
 const rowProps = (row: FileChild) => {
   return {
-    style: 'cursor: pointer;',
+    style: isRowPendingDelete(row.id) ? 'cursor: not-allowed; opacity: 0.62;' : 'cursor: pointer;',
     onClick: (e: MouseEvent) => {
+      if (isRowPendingDelete(row.id)) {
+        return
+      }
+
       // 获取点击的目标元素
       const target = e.target as HTMLElement
       // 如果点击的是复选框、按钮或其内部元素，不触发进入目录操作
@@ -89,7 +97,7 @@ const columns = computed<DataTableColumns<FileChild>>(() => [
     type: 'selection', // 开启复选框列
     width: 40,
     fixed: 'left',
-    disabled: (row) => isRowDownloading(row.id),
+    disabled: (row) => isRowActionBlocked(row.id),
   },
   {
     title: '名称',
@@ -97,6 +105,7 @@ const columns = computed<DataTableColumns<FileChild>>(() => [
     render(row) {
       const IconComponent = getFileIcon(row.name, row.isDir)
       const iconColor = row.isDir ? 'var(--n-primary-color)' : undefined
+      const isPendingDelete = isRowPendingDelete(row.id)
 
       return h(
         'div',
@@ -112,6 +121,13 @@ const columns = computed<DataTableColumns<FileChild>>(() => [
             },
             row.name
           ),
+          isPendingDelete
+            ? h(
+                NTag,
+                { size: 'small', type: 'warning', bordered: false },
+                { default: () => '删除中' }
+              )
+            : null,
         ]
       )
     },
@@ -144,6 +160,7 @@ const columns = computed<DataTableColumns<FileChild>>(() => [
     fixed: 'right',
     render(row) {
       const isDownloading = isRowDownloading(row.id)
+      const isPendingDelete = isRowPendingDelete(row.id)
 
       if (row.isDir) {
         return h(
@@ -151,10 +168,15 @@ const columns = computed<DataTableColumns<FileChild>>(() => [
           {
             size: 'small',
             text: true,
-            type: 'primary',
-            onClick: () => emit('fileClick', row),
+            type: isPendingDelete ? 'warning' : 'primary',
+            disabled: isPendingDelete,
+            onClick: () => {
+              if (!isPendingDelete) {
+                emit('fileClick', row)
+              }
+            },
           },
-          { default: () => '打开' }
+          { default: () => (isPendingDelete ? '删除中' : '打开') }
         )
       } else {
         return h(
@@ -162,18 +184,18 @@ const columns = computed<DataTableColumns<FileChild>>(() => [
           {
             size: 'small',
             text: true,
-            type: 'error',
+            type: isPendingDelete ? 'warning' : 'error',
             loading: isDownloading,
-            disabled: isDownloading,
+            disabled: isDownloading || isPendingDelete,
             onClick: () => {
-              if (!isDownloading) {
+              if (!isDownloading && !isPendingDelete) {
                 emit('download', row)
               }
             },
           },
           {
             icon: () => h(NIcon, null, { default: () => h(DownloadOutline) }),
-            default: () => '下载',
+            default: () => (isPendingDelete ? '删除中' : '下载'),
           }
         )
       }
