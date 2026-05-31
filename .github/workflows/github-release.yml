@@ -21,6 +21,43 @@ env:
   NODE_VERSION: '22'
 
 jobs:
+  backend-quality:
+    name: ✅ 后端测试和 Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 检出代码
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: 🔧 设置 Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            go.mod
+
+      - name: 📦 验证 Go 模块
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+          go mod verify
+
+      - name: 🧪 运行后端测试
+        run: go test ./...
+
+      - name: 🔍 运行后端 Lint
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/app" \
+            -w /app \
+            golangci/golangci-lint:latest \
+            golangci-lint run
+
   # 先构建前端，生成 dist 目录
   build-frontend:
     name: 🎨 构建前端
@@ -31,6 +68,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
 
       - name: 🧩 安装 pnpm
         uses: pnpm/action-setup@v4
@@ -72,6 +110,12 @@ jobs:
             exit 1
           fi
 
+      - name: 🔍 前端质量检查
+        run: |
+          cd fe
+          pnpm exec eslint . --max-warnings=0
+          pnpm lint:css
+
       - name: 🎨 构建前端
         run: |
           echo "🎨 使用 Node.js ${{ env.NODE_VERSION }} 构建前端..."
@@ -105,7 +149,7 @@ jobs:
   build-backend:
     name: 🔨 构建后端 (${{ matrix.suffix }})
     runs-on: ubuntu-latest
-    needs: build-frontend  # 依赖前端构建完成
+    needs: [backend-quality, build-frontend]  # 依赖质量门禁和前端构建完成
     strategy:
       matrix:
         include:
@@ -180,23 +224,31 @@ jobs:
       - name: 📊 生成构建变量
         id: vars
         run: |
-          echo "VAR_COMMIT=$(git rev-parse HEAD)" >> $GITHUB_ENV
-          echo "VAR_BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
-          echo "VAR_GIT_SUMMARY=$(git describe --tags --dirty --always)" >> $GITHUB_ENV
-          echo "VAR_GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_ENV
+          VAR_COMMIT="$(git rev-parse HEAD)"
+          VAR_BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          VAR_GIT_SUMMARY="$(git describe --tags --dirty --always)"
+          VAR_GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
           
           # 获取版本号
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "VERSION=${{ github.event.inputs.tag }}" >> $GITHUB_ENV
+            VERSION="${{ github.event.inputs.tag }}"
           else
-            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+            VERSION="${GITHUB_REF#refs/tags/}"
           fi
+
+          {
+            echo "VAR_COMMIT=$VAR_COMMIT"
+            echo "VAR_BUILD_DATE=$VAR_BUILD_DATE"
+            echo "VAR_GIT_SUMMARY=$VAR_GIT_SUMMARY"
+            echo "VAR_GIT_BRANCH=$VAR_GIT_BRANCH"
+            echo "VERSION=$VERSION"
+          } >> "$GITHUB_ENV"
           
           echo "📊 构建变量："
-          echo "  提交: $(git rev-parse HEAD)"
-          echo "  日期: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          echo "  摘要: $(git describe --tags --dirty --always)"
-          echo "  分支: $(git rev-parse --abbrev-ref HEAD)"
+          echo "  提交: $VAR_COMMIT"
+          echo "  日期: $VAR_BUILD_DATE"
+          echo "  摘要: $VAR_GIT_SUMMARY"
+          echo "  分支: $VAR_GIT_BRANCH"
 
       - name: 🔨 构建 Go 二进制文件 (${{ matrix.suffix }})
         run: |
@@ -329,39 +381,48 @@ jobs:
           else
             VERSION="${GITHUB_REF#refs/tags/}"
           fi
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
           
           # 生成构建信息
-          echo "VAR_COMMIT=$(git rev-parse HEAD)" >> $GITHUB_ENV
-          echo "VAR_BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
-          echo "VAR_GIT_SUMMARY=$(git describe --tags --dirty --always)" >> $GITHUB_ENV
-          echo "SHORT_COMMIT=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          VAR_COMMIT="$(git rev-parse HEAD)"
+          VAR_BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          VAR_GIT_SUMMARY="$(git describe --tags --dirty --always)"
+          SHORT_COMMIT="$(git rev-parse --short HEAD)"
+
+          {
+            echo "VERSION=$VERSION"
+            echo "VAR_COMMIT=$VAR_COMMIT"
+            echo "VAR_BUILD_DATE=$VAR_BUILD_DATE"
+            echo "VAR_GIT_SUMMARY=$VAR_GIT_SUMMARY"
+            echo "SHORT_COMMIT=$SHORT_COMMIT"
+          } >> "$GITHUB_ENV"
           
           # 生成变更日志
           echo "📝 为 $VERSION 生成变更日志..."
-          if git tag --list | grep -q "^${VERSION}$"; then
+          if git tag --list | grep -Fxq "$VERSION"; then
             # 获取上一个标签
-            PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${VERSION}$" | head -n1)
+            PREV_TAG="$(git tag --sort=-version:refname | grep -Fxv "$VERSION" | head -n1)"
             if [ -n "$PREV_TAG" ]; then
               echo "📋 上一个标签: $PREV_TAG"
-              echo "CHANGELOG<<EOF" >> $GITHUB_ENV
-              echo "## 🎉 $VERSION 版本新特性" >> $GITHUB_ENV
-              echo "" >> $GITHUB_ENV
-              echo "### 📝 自 $PREV_TAG 以来的变更" >> $GITHUB_ENV
-              git log --pretty=format:"- %s ([%h](https://github.com/${{ github.repository }}/commit/%H))" $PREV_TAG..$VERSION | head -20 >> $GITHUB_ENV
-              echo "" >> $GITHUB_ENV
-              echo "" >> $GITHUB_ENV
-              echo "### 👥 贡献者" >> $GITHUB_ENV
-              git log --pretty=format:"- %an" $PREV_TAG..$VERSION | sort -u | head -10 >> $GITHUB_ENV
-              echo "" >> $GITHUB_ENV
-              echo "" >> $GITHUB_ENV
-              echo "**完整变更日志**: https://github.com/${{ github.repository }}/compare/$PREV_TAG...$VERSION" >> $GITHUB_ENV
-              echo "EOF" >> $GITHUB_ENV
+              {
+                echo "CHANGELOG<<EOF"
+                echo "## 🎉 $VERSION 版本新特性"
+                echo ""
+                echo "### 📝 自 $PREV_TAG 以来的变更"
+                git log --pretty=format:"- %s ([%h](https://github.com/${{ github.repository }}/commit/%H))" "$PREV_TAG..$VERSION" | head -20
+                echo ""
+                echo ""
+                echo "### 👥 贡献者"
+                git log --pretty=format:"- %an" "$PREV_TAG..$VERSION" | sort -u | head -10
+                echo ""
+                echo ""
+                echo "**完整变更日志**: https://github.com/${{ github.repository }}/compare/$PREV_TAG...$VERSION"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
             else
-              echo "CHANGELOG=## 🎉 发布 $VERSION" >> $GITHUB_ENV
+              echo "CHANGELOG=## 🎉 发布 $VERSION" >> "$GITHUB_ENV"
             fi
           else
-            echo "CHANGELOG=## 🎉 发布 $VERSION" >> $GITHUB_ENV
+            echo "CHANGELOG=## 🎉 发布 $VERSION" >> "$GITHUB_ENV"
           fi
 
       - name: 📥 下载所有构建产物
@@ -381,7 +442,7 @@ jobs:
           find artifacts -type f | sort
           
           # 移动所有压缩包到发布目录
-          find artifacts -name "*.tar.gz" -o -name "*.zip" | while read file; do
+          find artifacts \( -name "*.tar.gz" -o -name "*.zip" \) -type f | while IFS= read -r file; do
             filename=$(basename "$file")
             echo "📦 移动文件: $filename"
             cp "$file" "release-files/$filename"
@@ -394,7 +455,7 @@ jobs:
           # 生成校验和文件
           cd release-files
           echo "🔐 生成校验和..."
-          sha256sum *.tar.gz *.zip > SHA256SUMS 2>/dev/null || true
+          sha256sum ./*.tar.gz ./*.zip > SHA256SUMS 2>/dev/null || true
           
           echo "📋 校验和文件内容："
           cat SHA256SUMS || echo "未生成校验和文件"
