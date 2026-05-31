@@ -355,6 +355,26 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 					fullPath := path.Join(plan.ParentPath, pItem.item.Name)
 					handled := false
 					failedRecorded := false
+					buildStorageRequest := func(targetPath string) *storagefacadeSvi.CreateStorageRequest {
+						return &storagefacadeSvi.CreateStorageRequest{
+							LocalPath:  targetPath,
+							OsType:     models.OsTypeSubscribeShareFolder,
+							CloudToken: plan.TokenId,
+							FileId:     pItem.item.ID,
+							Addition: datatypes.JSONMap{
+								consts.FileAdditionKeyUpUserId: addition.UpUserId,
+								consts.FileAdditionKeyShareId:  pItem.item.ShareId,
+								consts.FileAdditionKeyIsFolder: pItem.item.IsFolder,
+							},
+							EnableAutoRefresh: plan.RefreshStrategy.EnableAutoRefresh,
+							EnableDeepRefresh: plan.RefreshStrategy.EnableDeepRefresh,
+							AutoRefreshDays:   plan.RefreshStrategy.AutoRefreshDays,
+							RefreshInterval:   plan.RefreshStrategy.RefreshInterval,
+							CreatorUserID:     plan.UserID,
+							// 自动入库允许路径已存在（上面已经检查过 QueryByPath，这里容忍竞态）
+							AllowExisting: true,
+						}
+					}
 
 					for retry := 0; retry <= maxRetryCount; retry++ {
 						if retry > 0 {
@@ -377,10 +397,44 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 
 						if exists != nil {
 							if exists.CloudId == pItem.item.ID {
+								id, err := h.storageFacadeService.CreateStorage(ctx.GetContext(), buildStorageRequest(fullPath))
+								if err != nil {
+									if errors.Is(err, storagefacadeSvi.ErrPathAlreadyExists) || errors.Is(err, storagefacadeSvi.ErrExistingPathForbidden) {
+										if plan.OnConflict == autoingest.OnConflictRename {
+											fullPath = buildConflictRenamePath(plan.ParentPath, pItem.item.Name, retry)
+
+											continue
+										}
+
+										logger.Debug("已存在同云端资源但挂载不可复用，按放弃策略跳过", zap.String("path", fullPath), zap.Error(err))
+
+										handled = true
+
+										break
+									}
+
+									if retry < maxRetryCount {
+										logger.Warn("校验已存在文件挂载失败，正在重试", zap.String("path", fullPath), zap.Error(err), zap.Int("retry", retry+1))
+
+										continue
+									}
+
+									logger.Error("校验已存在文件挂载失败", zap.Error(err), zap.String("path", fullPath))
+									mu.Lock()
+									localFailedCount++
+									mu.Unlock()
+
+									failedRecorded = true
+
+									recordFailureLog(fullPath, "校验已存在文件挂载失败", err)
+
+									break
+								}
+
 								logger.Debug("文件已入库，跳过重复资源", zap.String("path", fullPath), zap.String("cloud_id", pItem.item.ID))
 
 								if req.IsRetry {
-									if err = enqueueScanTask(fullPath, exists.ID); err != nil {
+									if err = enqueueScanTask(fullPath, id); err != nil {
 										logger.Error("下发已存在文件扫描任务失败", zap.Error(err))
 										mu.Lock()
 										localFailedCount++
@@ -413,24 +467,7 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 						}
 
 						id, err := h.storageFacadeService.CreateStorage(ctx.GetContext(),
-							&storagefacadeSvi.CreateStorageRequest{
-								LocalPath:  fullPath,
-								OsType:     models.OsTypeSubscribeShareFolder,
-								CloudToken: plan.TokenId,
-								FileId:     pItem.item.ID,
-								Addition: datatypes.JSONMap{
-									consts.FileAdditionKeyUpUserId: addition.UpUserId,
-									consts.FileAdditionKeyShareId:  pItem.item.ShareId,
-									consts.FileAdditionKeyIsFolder: pItem.item.IsFolder,
-								},
-								EnableAutoRefresh: plan.RefreshStrategy.EnableAutoRefresh,
-								EnableDeepRefresh: plan.RefreshStrategy.EnableDeepRefresh,
-								AutoRefreshDays:   plan.RefreshStrategy.AutoRefreshDays,
-								RefreshInterval:   plan.RefreshStrategy.RefreshInterval,
-								CreatorUserID:     plan.UserID,
-								// 自动入库允许路径已存在（上面已经检查过 QueryByPath，这里容忍竞态）
-								AllowExisting: true,
-							},
+							buildStorageRequest(fullPath),
 						)
 						if err != nil {
 							if errors.Is(err, storagefacadeSvi.ErrPathAlreadyExists) || errors.Is(err, storagefacadeSvi.ErrExistingPathForbidden) {

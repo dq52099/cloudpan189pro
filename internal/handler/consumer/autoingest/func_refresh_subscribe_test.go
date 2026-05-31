@@ -865,6 +865,117 @@ func TestRefreshSubscribeRenamesPathWhenCreateStoragePathExists(t *testing.T) {
 	}
 }
 
+func TestRefreshSubscribeRenamesExistingSameCloudWhenMountForbidden(t *testing.T) {
+	shareTime := time.Unix(200, 0)
+	createdFileID := int64(778)
+	planService := &mockRefreshSubscribePlanService{
+		plan:          newRefreshSubscribePlan(100, autoingest.OnConflictRename),
+		updatedOffset: -1,
+	}
+	cloudService := &mockRefreshSubscribeCloudBridgeService{
+		items: []*cloudbridge.ShareResourceInfo{{
+			Name:      "movie",
+			ID:        "cloud-1",
+			ShareId:   88,
+			ShareTime: shareTime,
+			IsTop:     1,
+		}},
+	}
+	logService := &mockRefreshSubscribeLogService{}
+	storageService := &mockRefreshSubscribeStorageFacadeService{
+		errs: []error{
+			storagefacade.ErrExistingPathForbidden,
+			nil,
+		},
+		ids: []int64{
+			0,
+			createdFileID,
+		},
+	}
+	virtualService := &mockRefreshSubscribeVirtualFileService{
+		queryFiles: []*models.VirtualFile{
+			{ID: 55, Name: "movie", CloudId: "cloud-1"},
+			nil,
+		},
+	}
+	taskEngine := &mockRefreshSubscribeTaskEngine{}
+
+	if err := runRefreshSubscribeHandlerWithTaskEngine(t, taskEngine, planService, cloudService, logService, storageService, virtualService); err != nil {
+		t.Fatalf("refresh subscribe: %v", err)
+	}
+
+	createReqs := storageService.Requests()
+	if len(createReqs) != 2 {
+		t.Fatalf("expected existing path validation and renamed create, got %d requests", len(createReqs))
+	}
+
+	if createReqs[0].LocalPath != "/subscriptions/movie" {
+		t.Fatalf("unexpected initial local path: %s", createReqs[0].LocalPath)
+	}
+
+	if createReqs[1].LocalPath == createReqs[0].LocalPath || !strings.HasPrefix(path.Base(createReqs[1].LocalPath), "movie_") {
+		t.Fatalf("expected renamed create path, got %s", createReqs[1].LocalPath)
+	}
+
+	if planService.updatedOffset != shareTime.Unix() {
+		t.Fatalf("expected offset advanced after renamed create succeeds, got %d", planService.updatedOffset)
+	}
+
+	if planService.addDelta != 1 || planService.failedDelta != 0 {
+		t.Fatalf("expected one added item and no failures, add=%d failed=%d", planService.addDelta, planService.failedDelta)
+	}
+
+	scanReqs := taskEngine.ScanRequests(t)
+	if len(scanReqs) != 1 || scanReqs[0].FileId != createdFileID {
+		t.Fatalf("expected scan for renamed created file %d, got %+v", createdFileID, scanReqs)
+	}
+}
+
+func TestRefreshSubscribeAbandonsExistingSameCloudWhenMountForbidden(t *testing.T) {
+	shareTime := time.Unix(200, 0)
+	planService := &mockRefreshSubscribePlanService{
+		plan:          newRefreshSubscribePlan(100, autoingest.OnConflictAbandon),
+		updatedOffset: -1,
+	}
+	cloudService := &mockRefreshSubscribeCloudBridgeService{
+		items: []*cloudbridge.ShareResourceInfo{{
+			Name:      "movie",
+			ID:        "cloud-1",
+			ShareId:   88,
+			ShareTime: shareTime,
+			IsTop:     1,
+		}},
+	}
+	logService := &mockRefreshSubscribeLogService{}
+	storageService := &mockRefreshSubscribeStorageFacadeService{
+		errs: []error{storagefacade.ErrExistingPathForbidden},
+	}
+	virtualService := &mockRefreshSubscribeVirtualFileService{
+		existing: &models.VirtualFile{ID: 55, Name: "movie", CloudId: "cloud-1"},
+	}
+	taskEngine := &mockRefreshSubscribeTaskEngine{}
+
+	if err := runRefreshSubscribeHandlerWithTaskEngine(t, taskEngine, planService, cloudService, logService, storageService, virtualService); err != nil {
+		t.Fatalf("refresh subscribe: %v", err)
+	}
+
+	if storageService.Count() != 1 {
+		t.Fatalf("expected one existing path validation attempt, got %d", storageService.Count())
+	}
+
+	if taskEngine.Count() != 0 {
+		t.Fatalf("expected abandoned existing path not to enqueue scan, got %d", taskEngine.Count())
+	}
+
+	if planService.updatedOffset != shareTime.Unix() {
+		t.Fatalf("expected abandoned conflict to advance offset, got %d", planService.updatedOffset)
+	}
+
+	if planService.addDelta != 0 || planService.failedDelta != 0 {
+		t.Fatalf("expected abandoned conflict not counted as add/fail, add=%d failed=%d", planService.addDelta, planService.failedDelta)
+	}
+}
+
 func TestRefreshSubscribeProcessesSameSecondResourcesAfterStoredCursor(t *testing.T) {
 	shareTime := time.Unix(200, 0)
 	planService := &mockRefreshSubscribePlanService{
@@ -1081,7 +1192,14 @@ func TestRefreshSubscribeSkipsExistingSameCloudIDWithoutRetryScanWhenOtherItemFa
 		},
 	}
 	logService := &mockRefreshSubscribeLogService{}
-	storageService := &mockRefreshSubscribeStorageFacadeService{err: errors.New("create failed")}
+	storageService := &mockRefreshSubscribeStorageFacadeService{
+		errs: []error{
+			nil,
+			errors.New("create failed"),
+			errors.New("create failed"),
+		},
+		ids: []int64{55},
+	}
 	virtualService := &mockRefreshSubscribeVirtualFileService{
 		queryFiles: []*models.VirtualFile{
 			{ID: 55, Name: "created-before", CloudId: "cloud-created"},
@@ -1107,8 +1225,8 @@ func TestRefreshSubscribeSkipsExistingSameCloudIDWithoutRetryScanWhenOtherItemFa
 		t.Fatalf("expected only failing item counted failed, got %d", planService.failedDelta)
 	}
 
-	if storageService.Count() != 2 {
-		t.Fatalf("expected failing item create and retry only, got %d", storageService.Count())
+	if storageService.Count() != 3 {
+		t.Fatalf("expected existing validation plus failing item create and retry, got %d", storageService.Count())
 	}
 }
 
