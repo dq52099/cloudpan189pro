@@ -1,23 +1,45 @@
 #!/usr/bin/env sh
 #. "$(dirname -- "$0")/_/husky.sh"
 
-# 检查 Go 代码格式化和 lint
-echo "🔍 Checking Go code formatting and linting..."
-if ! gofmt -l . | grep -q .; then
-    echo "✅ Go code formatting check passed"
-else
-    echo "❌ Go code formatting issues found:"
-    gofmt -l .
-    echo "Please run 'gofmt -w .' to fix formatting issues"
-    exit 1
+set -u
+
+run_gofmt_check() {
+    if command -v gofmt >/dev/null 2>&1; then
+        gofmt -l $(git ls-files '*.go')
+        return $?
+    fi
+
+    if command -v docker >/dev/null 2>&1; then
+        docker run --rm -v "$PWD:/app" -w /app golang:1.25-alpine \
+            sh -c "find . -path ./.git -prune -o -name '*.go' -print | xargs gofmt -l"
+        return $?
+    fi
+
+    echo "gofmt not found and Docker is unavailable"
+    return 127
+}
+
+# 检查 Go 代码格式化
+echo "🔍 Checking Go code formatting..."
+if go_files="$(git ls-files '*.go')" && [ -n "$go_files" ]; then
+    if ! gofmt_output="$(run_gofmt_check 2>&1)"; then
+        echo "❌ Go code formatting check failed:"
+        echo "$gofmt_output"
+        echo "Please install Go or Docker, then run 'gofmt -w' on the listed files"
+        exit 1
+    fi
+
+    if [ -n "$gofmt_output" ]; then
+        echo "❌ Go code formatting issues found:"
+        echo "$gofmt_output"
+        echo "Please run 'gofmt -w' on the listed files"
+        exit 1
+    fi
 fi
 
-#if ! golangci-lint run; then
-#    echo "❌ Go linting failed"
-#    exit 1
-#fi
-echo "✅ Go linting passed"
+echo "✅ Go code formatting check passed"
+echo "ℹ️ Go linting is handled by CI and the explicit release gates"
 
 # 检查前端代码
 echo "🎨 Checking frontend code..."
-cd fe && npx lint-staged
+cd fe && corepack pnpm@9.15.9 exec lint-staged
