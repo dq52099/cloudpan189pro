@@ -10,7 +10,7 @@
           <n-breadcrumb-item
             v-for="(item, index) in breadcrumbs"
             :key="index"
-            @click="navigateToPath(item.href.replace('/api/file/open', ''))"
+            @click="navigateToPath(decodeOpenHref(item.href))"
             :clickable="index < breadcrumbs.length - 1"
           >
             {{ item.name }}
@@ -156,6 +156,7 @@ const batchDeleteDialogOpen = ref(false)
 const downloadingRowKeys = ref<number[]>([])
 let isComponentMounted = true
 let fileOpenRequestId = 0
+const openApiBasePath = '/api/file/open'
 
 // 计算属性
 const canGoBack = computed(() => breadcrumbs.value.length > 0)
@@ -352,7 +353,7 @@ const loadPath = (path: string) => {
 }
 
 const handleFileClick = (file: FileChild) => {
-  navigateToPath(file.href.replace('/api/file/open', ''))
+  navigateToPath(decodeOpenHref(file.href))
 }
 
 const navigateToPath = (path: string) => {
@@ -360,6 +361,16 @@ const navigateToPath = (path: string) => {
     path: '/',
     query: { path: path },
   })
+}
+
+const decodeOpenHref = (href: string) => {
+  const path = href.startsWith(openApiBasePath) ? href.slice(openApiBasePath.length) : href
+
+  try {
+    return decodeURIComponent(path || '/')
+  } catch {
+    return path || '/'
+  }
 }
 
 const refreshCurrentPath = () => {
@@ -445,8 +456,7 @@ const goBack = () => {
   if (breadcrumbs.value.length > 0) {
     const parentIndex = breadcrumbs.value.length - 2
     if (parentIndex >= 0) {
-      const parentPath = breadcrumbs.value[parentIndex].href.replace('/api/file/open', '')
-      navigateToPath(parentPath)
+      navigateToPath(decodeOpenHref(breadcrumbs.value[parentIndex].href))
     } else {
       navigateToPath('/')
     }

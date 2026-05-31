@@ -53,12 +53,9 @@ export interface BatchDeleteRequest {
   ids: number[]
 }
 
-// 路径编码工具函数
+// 路径编码工具函数，保留路径分隔符，只编码每个路径段。
 const encodePath = (path: string): string => {
-  if (path.includes('%')) {
-    return path
-  }
-  return encodeURIComponent(path)
+  return path.split('/').map(encodeURIComponent).join('/')
 }
 
 // ===== 文件管理接口 =====
