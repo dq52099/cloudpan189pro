@@ -109,6 +109,8 @@ func (h *handler) CreateSubscribePlan() httpcontext.HandlerFunc {
 		offset := time.Now().Unix()
 		if req.OneClickAddHistory {
 			offset = 1
+		} else {
+			addition.OffsetResourceID = models.AutoIngestSubscribeOffsetResourceIDMax
 		}
 
 		// 获取当前用户ID

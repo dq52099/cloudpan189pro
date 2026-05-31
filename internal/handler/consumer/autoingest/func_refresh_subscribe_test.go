@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/taskcontext"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/datatypes"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/taskengine"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
@@ -170,12 +171,13 @@ func (m *mockRefreshSubscribeCloudBridgeService) GetSubscribeUserShareResource(
 type mockRefreshSubscribePlanService struct {
 	autoingestplan.Service
 
-	plan          *models.AutoIngestPlan
-	updatedOffset int64
-	addDelta      int64
-	failedDelta   int64
-	updateReqs    []*autoingestplan.UpdateRequest
-	updatedFields [][]utils.Field
+	plan            *models.AutoIngestPlan
+	updatedOffset   int64
+	updatedAddition datatypes.JSONMap
+	addDelta        int64
+	failedDelta     int64
+	updateReqs      []*autoingestplan.UpdateRequest
+	updatedFields   [][]utils.Field
 }
 
 func (m *mockRefreshSubscribePlanService) Query(ctx context.Context, id int64) (*models.AutoIngestPlan, error) {
@@ -184,6 +186,23 @@ func (m *mockRefreshSubscribePlanService) Query(ctx context.Context, id int64) (
 
 func (m *mockRefreshSubscribePlanService) UpdateOffset(ctx context.Context, id int64, offset int64) error {
 	m.updatedOffset = offset
+
+	return nil
+}
+
+func (m *mockRefreshSubscribePlanService) Update(ctx context.Context, id int64, fields ...utils.Field) error {
+	for _, field := range fields {
+		switch field.Key {
+		case "offset":
+			if offset, ok := field.Value.(int64); ok {
+				m.updatedOffset = offset
+			}
+		case "addition":
+			if addition, ok := field.Value.(datatypes.JSONMap); ok {
+				m.updatedAddition = addition
+			}
+		}
+	}
 
 	return nil
 }
@@ -499,6 +518,17 @@ func refreshSubscribeFieldsToMap(fields []utils.Field) map[string]any {
 	}
 
 	return result
+}
+
+func requireUpdatedSubscribeAddition(t *testing.T, planService *mockRefreshSubscribePlanService) models.AutoIngestPlanSubscribeAddition {
+	t.Helper()
+
+	var addition models.AutoIngestPlanSubscribeAddition
+	if err := planService.updatedAddition.Unmarshal(&addition); err != nil {
+		t.Fatalf("unmarshal updated addition: %v", err)
+	}
+
+	return addition
 }
 
 func TestRefreshSubscribeSkipsManualTaskWhenOwnerChanged(t *testing.T) {
@@ -832,6 +862,109 @@ func TestRefreshSubscribeRenamesPathWhenCreateStoragePathExists(t *testing.T) {
 
 	if scanReqs[0].FileId != createdFileID {
 		t.Fatalf("expected scan task to use created file id %d, got %+v", createdFileID, scanReqs[0])
+	}
+}
+
+func TestRefreshSubscribeProcessesSameSecondResourcesAfterStoredCursor(t *testing.T) {
+	shareTime := time.Unix(200, 0)
+	planService := &mockRefreshSubscribePlanService{
+		plan:          newRefreshSubscribePlan(200, autoingest.OnConflictRename),
+		updatedOffset: -1,
+	}
+	planService.plan.Addition = (&models.AutoIngestPlanSubscribeAddition{
+		UpUserId:         "up-user",
+		OffsetResourceID: "cloud-1",
+	}).JSONMap()
+	cloudService := &mockRefreshSubscribeCloudBridgeService{
+		items: []*cloudbridge.ShareResourceInfo{
+			{Name: "movie-1", ID: "cloud-1", ShareId: 81, ShareTime: shareTime, IsTop: 1},
+			{Name: "movie-2", ID: "cloud-2", ShareId: 82, ShareTime: shareTime, IsTop: 1},
+			{Name: "movie-3", ID: "cloud-3", ShareId: 83, ShareTime: shareTime, IsTop: 1},
+		},
+	}
+	logService := &mockRefreshSubscribeLogService{}
+	storageService := &mockRefreshSubscribeStorageFacadeService{}
+	virtualService := &mockRefreshSubscribeVirtualFileService{}
+	taskEngine := &mockRefreshSubscribeTaskEngine{}
+
+	if err := runRefreshSubscribeHandlerWithTaskEngine(t, taskEngine, planService, cloudService, logService, storageService, virtualService); err != nil {
+		t.Fatalf("refresh subscribe: %v", err)
+	}
+
+	if storageService.Count() != 2 {
+		t.Fatalf("expected two same-second resources after cursor to be created, got %d", storageService.Count())
+	}
+
+	createReqs := storageService.Requests()
+	if createReqs[0].FileId != "cloud-2" || createReqs[1].FileId != "cloud-3" {
+		t.Fatalf("unexpected same-second create requests: %+v", createReqs)
+	}
+
+	if planService.updatedOffset != shareTime.Unix() {
+		t.Fatalf("expected second-level offset to stay at %d, got %d", shareTime.Unix(), planService.updatedOffset)
+	}
+
+	addition := requireUpdatedSubscribeAddition(t, planService)
+	if addition.OffsetResourceID != "cloud-3" {
+		t.Fatalf("expected same-second resource cursor cloud-3, got %q", addition.OffsetResourceID)
+	}
+}
+
+func TestRefreshSubscribePendingLimitKeepsOldestWindowAboveOffset(t *testing.T) {
+	planService := &mockRefreshSubscribePlanService{
+		plan:          newRefreshSubscribePlan(100, autoingest.OnConflictRename),
+		updatedOffset: -1,
+	}
+
+	items := make([]*cloudbridge.ShareResourceInfo, 0, maxPendingItemsPerRefresh+2)
+	for sec := int64(1102); sec >= 101; sec-- {
+		items = append(items, &cloudbridge.ShareResourceInfo{
+			Name:      fmt.Sprintf("movie-%04d", sec),
+			ID:        fmt.Sprintf("cloud-%04d", sec),
+			ShareId:   sec,
+			ShareTime: time.Unix(sec, 0),
+			IsTop:     1,
+		})
+	}
+
+	cloudService := &mockRefreshSubscribeCloudBridgeService{items: items}
+	logService := &mockRefreshSubscribeLogService{}
+	storageService := &mockRefreshSubscribeStorageFacadeService{}
+	virtualService := &mockRefreshSubscribeVirtualFileService{}
+	taskEngine := &mockRefreshSubscribeTaskEngine{}
+
+	if err := runRefreshSubscribeHandlerWithTaskEngine(t, taskEngine, planService, cloudService, logService, storageService, virtualService); err != nil {
+		t.Fatalf("refresh subscribe: %v", err)
+	}
+
+	if storageService.Count() != maxPendingItemsPerRefresh {
+		t.Fatalf("expected capped create count %d, got %d", maxPendingItemsPerRefresh, storageService.Count())
+	}
+
+	if planService.updatedOffset != 1100 {
+		t.Fatalf("expected offset to advance only through oldest retained window, got %d", planService.updatedOffset)
+	}
+
+	createReqs := storageService.Requests()
+	created := make(map[string]bool, len(createReqs))
+
+	for _, req := range createReqs {
+		created[req.FileId] = true
+	}
+
+	if !created["cloud-0101"] || !created["cloud-1100"] {
+		t.Fatalf("expected retained window to include boundary resources, got created[0101]=%v created[1100]=%v",
+			created["cloud-0101"], created["cloud-1100"])
+	}
+
+	if created["cloud-1101"] || created["cloud-1102"] {
+		t.Fatalf("expected newest overflow resources to wait for next refresh, got 1101=%v 1102=%v",
+			created["cloud-1101"], created["cloud-1102"])
+	}
+
+	addition := requireUpdatedSubscribeAddition(t, planService)
+	if addition.OffsetResourceID != "cloud-1100" {
+		t.Fatalf("expected retained window cursor cloud-1100, got %q", addition.OffsetResourceID)
 	}
 }
 

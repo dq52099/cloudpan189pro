@@ -72,6 +72,35 @@ func buildConflictRenamePath(parentPath, name string, retry int) string {
 	return path.Join(parentPath, fmt.Sprintf("%s_%d_%d", name, time.Now().UnixNano(), retry+1))
 }
 
+type subscribeOffsetCursor struct {
+	Second     int64
+	ResourceID string
+}
+
+func newSubscribeOffsetCursor(item *cloudbridgeSvi.ShareResourceInfo) subscribeOffsetCursor {
+	if item == nil {
+		return subscribeOffsetCursor{}
+	}
+
+	resourceID := item.ID
+	if resourceID == "" {
+		resourceID = fmt.Sprintf("%d:%s", item.ShareId, item.Name)
+	}
+
+	return subscribeOffsetCursor{
+		Second:     item.ShareTime.Unix(),
+		ResourceID: resourceID,
+	}
+}
+
+func (c subscribeOffsetCursor) After(other subscribeOffsetCursor) bool {
+	if c.Second != other.Second {
+		return c.Second > other.Second
+	}
+
+	return c.ResourceID > other.ResourceID
+}
+
 func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 	return func(ctx *taskcontext.Context) error {
 		req := new(topic.AutoIngestRefreshSubscribeRequest)
@@ -109,12 +138,26 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 			return errors.New("计划类型错误")
 		}
 
-		if resetOffset, resetApplied, err := h.resetRefreshSubscribeRetryState(ctx, req); err != nil {
+		addition := new(models.AutoIngestPlanSubscribeAddition)
+		if err := plan.Addition.Unmarshal(addition); err != nil {
+			logger.Error("解析订阅附加信息失败", zap.Error(err), zap.Int64("plan_id", plan.ID))
+
+			return err
+		}
+
+		if resetOffset, resetApplied, err := h.resetRefreshSubscribeRetryState(ctx, req, addition); err != nil {
 			logger.Error("重置自动入库重试状态失败", zap.Error(err), zap.Int64("plan_id", req.PlanId))
 
 			return err
 		} else if resetApplied {
 			plan.Offset = resetOffset
+			addition.OffsetResourceID = ""
+		}
+
+		if addition.UpUserId == "" {
+			logger.Error("订阅附加信息缺少 UpUserId", zap.Int64("plan_id", plan.ID))
+
+			return errors.New("订阅计划缺少 UpUserId")
 		}
 
 		concurrentCount := plan.ConcurrentCount
@@ -135,23 +178,13 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 			maxRetryCount = 3
 		}
 
-		nextOffset := plan.Offset
-
-		addition := new(models.AutoIngestPlanSubscribeAddition)
-		if err := plan.Addition.Unmarshal(addition); err != nil {
-			logger.Error("解析订阅附加信息失败", zap.Error(err), zap.Int64("plan_id", plan.ID))
-
-			return err
-		}
-
-		if addition.UpUserId == "" {
-			logger.Error("订阅附加信息缺少 UpUserId", zap.Int64("plan_id", plan.ID))
-
-			return errors.New("订阅计划缺少 UpUserId")
+		nextOffset := subscribeOffsetCursor{
+			Second:     plan.Offset,
+			ResourceID: addition.OffsetResourceID,
 		}
 
 		defer func() {
-			if err := h.autoIngestPlanService.UpdateOffset(ctx.GetContext(), req.PlanId, nextOffset); err != nil {
+			if err := h.updateRefreshSubscribeOffset(ctx, req.PlanId, addition, nextOffset); err != nil {
 				logger.Warn("更新入库计划 offset 失败", zap.Error(err), zap.Int64("plan_id", req.PlanId))
 			}
 
@@ -165,11 +198,27 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 		}()
 
 		type pendingItem struct {
-			item       *cloudbridgeSvi.ShareResourceInfo
-			itemOffset int64
+			item   *cloudbridgeSvi.ShareResourceInfo
+			cursor subscribeOffsetCursor
 		}
 
 		var pendingItems []pendingItem
+
+		appendPendingItem := func(item pendingItem) {
+			pendingItems = append(pendingItems, item)
+			if len(pendingItems) <= maxPendingItemsPerRefresh {
+				return
+			}
+
+			dropIndex := 0
+			for i := 1; i < len(pendingItems); i++ {
+				if pendingItems[i].cursor.After(pendingItems[dropIndex].cursor) {
+					dropIndex = i
+				}
+			}
+
+			pendingItems = append(pendingItems[:dropIndex], pendingItems[dropIndex+1:]...)
+		}
 
 		for shouldNext {
 			list, _, err := h.cloudbridgeService.GetSubscribeUserShareResource(ctx.GetContext(), addition.UpUserId, func(opt *cloudbridgeSvi.SubscribeUserShareResourceOption) {
@@ -193,9 +242,9 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 					hasTop = false
 				}
 
-				itemOffset := item.ShareTime.Unix()
-				if itemOffset <= plan.Offset {
-					if !hasTop {
+				itemCursor := newSubscribeOffsetCursor(item)
+				if !itemCursor.After(nextOffset) {
+					if !hasTop && itemCursor.Second < nextOffset.Second {
 						shouldNext = false
 					}
 
@@ -229,22 +278,17 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 
 				logger.Debug("发现新的待入库文件", zap.String("name", item.Name))
 
-				pendingItems = append(pendingItems, pendingItem{
-					item:       item,
-					itemOffset: itemOffset,
+				appendPendingItem(pendingItem{
+					item:   item,
+					cursor: itemCursor,
 				})
-
-				// 防止单次任务堆积过多对象占用内存
-				if len(pendingItems) >= maxPendingItemsPerRefresh {
-					logger.Warn("待处理项达到上限，本次先处理一部分",
-						zap.Int("max", maxPendingItemsPerRefresh),
-					)
-
-					shouldNext = false
-
-					break
-				}
 			}
+		}
+
+		if len(pendingItems) >= maxPendingItemsPerRefresh {
+			logger.Warn("待处理项达到上限，本次先处理最靠近 offset 的一部分",
+				zap.Int("max", maxPendingItemsPerRefresh),
+			)
 		}
 
 		if len(pendingItems) == 0 {
@@ -293,7 +337,7 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 			mu               sync.Mutex
 			localAddCount    int64
 			localFailedCount int64
-			localMaxOffset   = plan.Offset
+			localMaxOffset   = nextOffset
 		)
 
 		for _, item := range pendingItems {
@@ -560,8 +604,8 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 
 					if handled {
 						mu.Lock()
-						if pItem.itemOffset > localMaxOffset {
-							localMaxOffset = pItem.itemOffset
+						if pItem.cursor.After(localMaxOffset) {
+							localMaxOffset = pItem.cursor
 						}
 						mu.Unlock()
 					}
@@ -615,12 +659,40 @@ func validateRefreshSubscribeOwnerSnapshot(logger *zap.Logger, req *topic.AutoIn
 	return false
 }
 
-func (h *handler) resetRefreshSubscribeRetryState(ctx *taskcontext.Context, req *topic.AutoIngestRefreshSubscribeRequest) (int64, bool, error) {
+func (h *handler) updateRefreshSubscribeOffset(
+	ctx *taskcontext.Context,
+	planID int64,
+	addition *models.AutoIngestPlanSubscribeAddition,
+	cursor subscribeOffsetCursor,
+) error {
+	if addition != nil {
+		addition.OffsetResourceID = cursor.ResourceID
+	}
+
+	fields := []utils.Field{utils.WithField("offset", cursor.Second)}
+	if addition != nil {
+		fields = append(fields, utils.WithField("addition", addition.JSONMap()))
+	}
+
+	return h.autoIngestPlanService.Update(ctx.GetContext(), planID, fields...)
+}
+
+func (h *handler) resetRefreshSubscribeRetryState(
+	ctx *taskcontext.Context,
+	req *topic.AutoIngestRefreshSubscribeRequest,
+	addition *models.AutoIngestPlanSubscribeAddition,
+) (int64, bool, error) {
 	if req.RetryReset == nil {
 		return 0, false, nil
 	}
 
 	fields := []utils.Field{utils.WithField("offset", req.RetryReset.Offset)}
+
+	if addition != nil {
+		addition.OffsetResourceID = ""
+		fields = append(fields, utils.WithField("addition", addition.JSONMap()))
+	}
+
 	if req.RetryReset.ResetCounters {
 		fields = append(fields,
 			utils.WithField("add_count", int64(0)),

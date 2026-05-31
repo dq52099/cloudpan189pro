@@ -53,8 +53,11 @@ func (a *AutoIngestLog) TableName() string {
 }
 
 type AutoIngestPlanSubscribeAddition struct {
-	UpUserId string `json:"upUserId"`
+	UpUserId         string `json:"upUserId"`
+	OffsetResourceID string `json:"offsetResourceId,omitempty"`
 }
+
+const AutoIngestSubscribeOffsetResourceIDMax = "~"
 
 func (a *AutoIngestPlanSubscribeAddition) JSONMap() datatypes.JSONMap {
 	m, _ := datatypes.FromStruct(a)

@@ -111,6 +111,15 @@ func TestCreateSubscribePlanReportsHistoryQueueFailure(t *testing.T) {
 	if !strings.Contains(response.Data.HistoryError, errCreateSubscribePlanQueueFailed.Error()) {
 		t.Fatalf("expected history error to contain queue failure, got %q", response.Data.HistoryError)
 	}
+
+	var addition models.AutoIngestPlanSubscribeAddition
+	if err := planService.plan.Addition.Unmarshal(&addition); err != nil {
+		t.Fatalf("unmarshal addition: %v", err)
+	}
+
+	if addition.OffsetResourceID != "" {
+		t.Fatalf("expected history plan to start without same-second cursor, got %q", addition.OffsetResourceID)
+	}
 }
 
 func TestCreateSubscribePlanDefaultsConflictPolicyToRename(t *testing.T) {
@@ -151,6 +160,15 @@ func TestCreateSubscribePlanDefaultsConflictPolicyToRename(t *testing.T) {
 
 	if planService.plan.OnConflict != autoingest.OnConflictRename {
 		t.Fatalf("expected default conflict policy rename, got %q", planService.plan.OnConflict)
+	}
+
+	var addition models.AutoIngestPlanSubscribeAddition
+	if err := planService.plan.Addition.Unmarshal(&addition); err != nil {
+		t.Fatalf("unmarshal addition: %v", err)
+	}
+
+	if addition.OffsetResourceID != models.AutoIngestSubscribeOffsetResourceIDMax {
+		t.Fatalf("expected non-history plan to skip current-second resources, got %q", addition.OffsetResourceID)
 	}
 }
 
