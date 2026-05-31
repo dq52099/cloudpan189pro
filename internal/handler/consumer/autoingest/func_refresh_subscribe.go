@@ -68,6 +68,10 @@ func isDuplicateEntryError(err error) bool {
 		strings.Contains(msg, "duplicate key value violates unique constraint")
 }
 
+func buildConflictRenamePath(parentPath, name string, retry int) string {
+	return path.Join(parentPath, fmt.Sprintf("%s_%d_%d", name, time.Now().UnixNano(), retry+1))
+}
+
 func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 	return func(ctx *taskcontext.Context) error {
 		req := new(topic.AutoIngestRefreshSubscribeRequest)
@@ -352,7 +356,7 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 							}
 
 							if plan.OnConflict == autoingest.OnConflictRename {
-								fullPath = path.Join(plan.ParentPath, fmt.Sprintf("%s_%d", pItem.item.Name, time.Now().Unix()))
+								fullPath = buildConflictRenamePath(plan.ParentPath, pItem.item.Name, retry)
 
 								continue
 							}
@@ -385,6 +389,20 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 							},
 						)
 						if err != nil {
+							if errors.Is(err, storagefacadeSvi.ErrPathAlreadyExists) || errors.Is(err, storagefacadeSvi.ErrExistingPathForbidden) {
+								if plan.OnConflict == autoingest.OnConflictRename {
+									fullPath = buildConflictRenamePath(plan.ParentPath, pItem.item.Name, retry)
+
+									continue
+								}
+
+								logger.Debug("入库时目标路径已存在，按放弃策略跳过", zap.String("path", fullPath), zap.Error(err))
+
+								handled = true
+
+								break
+							}
+
 							if isDuplicateEntryError(err) {
 								exists, queryErr := h.virtualFileService.QueryByPath(ctx.GetContext(), fullPath)
 								if queryErr != nil {
@@ -432,7 +450,7 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 								}
 
 								if exists != nil && plan.OnConflict == autoingest.OnConflictRename {
-									fullPath = path.Join(plan.ParentPath, fmt.Sprintf("%s_%d", pItem.item.Name, time.Now().Unix()))
+									fullPath = buildConflictRenamePath(plan.ParentPath, pItem.item.Name, retry)
 
 									continue
 								}

@@ -81,6 +81,7 @@ func createStorageFacadeVirtualDir(t *testing.T, db *gorm.DB, parentID int64, na
 		ModifyDate: now,
 		Rev:        now.Format(consts.RevFormat),
 		Addition:   datatypes.JSONMap{},
+		CloudId:    "cloud-id",
 	}
 	if err := db.Create(file).Error; err != nil {
 		t.Fatalf("create virtual dir: %v", err)
@@ -321,6 +322,42 @@ func TestCreateStorageAllowExistingReturnsExistingMountPointRoot(t *testing.T) {
 
 	if mountPointCount != 1 {
 		t.Fatalf("expected existing mount point only, got %d", mountPointCount)
+	}
+}
+
+func TestCreateStorageAllowExistingRejectsDifferentCloudID(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+
+	existingFile := createStorageFacadeVirtualDir(t, tDB.db, 0, "mounted-different")
+	if err := tDB.db.Model(existingFile).Update("cloud_id", "other-cloud-id").Error; err != nil {
+		t.Fatalf("update existing file cloud id: %v", err)
+	}
+
+	mountPoint := &models.MountPoint{
+		FileId:        existingFile.ID,
+		Name:          "mounted-different",
+		FullPath:      "/mounted-different",
+		OsType:        models.OsTypeFolder,
+		TokenId:       0,
+		CreatorUserID: 100,
+	}
+	if err := tDB.db.Create(mountPoint).Error; err != nil {
+		t.Fatalf("create mount point: %v", err)
+	}
+
+	svc := NewService(tDB)
+
+	_, err := svc.CreateStorage(context.NewContext(stdctx.Background()), &CreateStorageRequest{
+		LocalPath:     "/mounted-different",
+		OsType:        models.OsTypeFolder,
+		CloudToken:    0,
+		FileId:        "cloud-id",
+		Addition:      datatypes.JSONMap{},
+		CreatorUserID: 100,
+		AllowExisting: true,
+	})
+	if !errors.Is(err, ErrPathAlreadyExists) {
+		t.Fatalf("expected ErrPathAlreadyExists for different cloud id, got %v", err)
 	}
 }
 

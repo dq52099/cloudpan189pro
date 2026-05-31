@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 	"sync"
 	"testing"
@@ -229,16 +230,34 @@ type mockRefreshSubscribeStorageFacadeService struct {
 
 	mu          sync.Mutex
 	err         error
+	errs        []error
+	ids         []int64
 	createCalls int
+	requests    []*storagefacade.CreateStorageRequest
 }
 
 func (m *mockRefreshSubscribeStorageFacadeService) CreateStorage(ctx context.Context, req *storagefacade.CreateStorageRequest) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	callIndex := m.createCalls
 	m.createCalls++
+
+	if req != nil {
+		copied := *req
+		m.requests = append(m.requests, &copied)
+	}
+
+	if callIndex < len(m.errs) && m.errs[callIndex] != nil {
+		return 0, m.errs[callIndex]
+	}
+
 	if m.err != nil {
 		return 0, m.err
+	}
+
+	if callIndex < len(m.ids) && m.ids[callIndex] != 0 {
+		return m.ids[callIndex], nil
 	}
 
 	return 9000 + int64(m.createCalls), nil
@@ -249,6 +268,19 @@ func (m *mockRefreshSubscribeStorageFacadeService) Count() int {
 	defer m.mu.Unlock()
 
 	return m.createCalls
+}
+
+func (m *mockRefreshSubscribeStorageFacadeService) Requests() []*storagefacade.CreateStorageRequest {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	result := make([]*storagefacade.CreateStorageRequest, 0, len(m.requests))
+	for _, req := range m.requests {
+		copied := *req
+		result = append(result, &copied)
+	}
+
+	return result
 }
 
 type mockRefreshSubscribeVirtualFileService struct {
@@ -643,6 +675,7 @@ func TestRefreshSubscribeDoesNotAdvanceOffsetWhenScanEnqueueFails(t *testing.T) 
 		plan:          newRefreshSubscribePlan(100, autoingest.OnConflictRename),
 		updatedOffset: -1,
 	}
+
 	cloudService := &mockRefreshSubscribeCloudBridgeService{
 		items: []*cloudbridge.ShareResourceInfo{{
 			Name:      "movie",
@@ -719,6 +752,86 @@ func TestRefreshSubscribeDoesNotAdvanceOffsetWhenCreateFails(t *testing.T) {
 
 	if storageService.Count() != 2 {
 		t.Fatalf("expected initial create and one retry, got %d", storageService.Count())
+	}
+}
+
+func TestRefreshSubscribeRenamesPathWhenCreateStoragePathExists(t *testing.T) {
+	shareTime := time.Unix(200, 0)
+	createdFileID := int64(777)
+	planService := &mockRefreshSubscribePlanService{
+		plan:          newRefreshSubscribePlan(100, autoingest.OnConflictRename),
+		updatedOffset: -1,
+	}
+	planService.plan.MaxRetryCount = 2
+
+	cloudService := &mockRefreshSubscribeCloudBridgeService{
+		items: []*cloudbridge.ShareResourceInfo{{
+			Name:      "movie",
+			ID:        "cloud-1",
+			ShareId:   88,
+			ShareTime: shareTime,
+			IsTop:     1,
+		}},
+	}
+	logService := &mockRefreshSubscribeLogService{}
+	storageService := &mockRefreshSubscribeStorageFacadeService{
+		errs: []error{
+			storagefacade.ErrPathAlreadyExists,
+			storagefacade.ErrPathAlreadyExists,
+			nil,
+		},
+		ids: []int64{
+			0,
+			0,
+			createdFileID,
+		},
+	}
+	virtualService := &mockRefreshSubscribeVirtualFileService{}
+	taskEngine := &mockRefreshSubscribeTaskEngine{}
+
+	if err := runRefreshSubscribeHandlerWithTaskEngine(t, taskEngine, planService, cloudService, logService, storageService, virtualService); err != nil {
+		t.Fatalf("refresh subscribe: %v", err)
+	}
+
+	if storageService.Count() != 3 {
+		t.Fatalf("expected create retried with renamed path, got %d calls", storageService.Count())
+	}
+
+	createReqs := storageService.Requests()
+	if len(createReqs) != 3 {
+		t.Fatalf("expected three create requests, got %d", len(createReqs))
+	}
+
+	if createReqs[0].LocalPath != "/subscriptions/movie" {
+		t.Fatalf("unexpected initial local path: %s", createReqs[0].LocalPath)
+	}
+
+	renamedPaths := []string{createReqs[1].LocalPath, createReqs[2].LocalPath}
+	for _, renamedPath := range renamedPaths {
+		if path.Dir(renamedPath) != "/subscriptions" {
+			t.Fatalf("expected renamed path to stay under /subscriptions, got %s", renamedPath)
+		}
+
+		if renamedPath == createReqs[0].LocalPath || !strings.HasPrefix(path.Base(renamedPath), "movie_") {
+			t.Fatalf("expected create path to be renamed from movie, got %s", renamedPath)
+		}
+	}
+
+	if renamedPaths[0] == renamedPaths[1] {
+		t.Fatalf("expected repeated conflict renames to produce different paths, got %s", renamedPaths[0])
+	}
+
+	if planService.updatedOffset != shareTime.Unix() {
+		t.Fatalf("expected offset advanced to %d after renamed create succeeds, got %d", shareTime.Unix(), planService.updatedOffset)
+	}
+
+	scanReqs := taskEngine.ScanRequests(t)
+	if len(scanReqs) != 1 {
+		t.Fatalf("expected one scan request after renamed create succeeds, got %d", len(scanReqs))
+	}
+
+	if scanReqs[0].FileId != createdFileID {
+		t.Fatalf("expected scan task to use created file id %d, got %+v", createdFileID, scanReqs[0])
 	}
 }
 

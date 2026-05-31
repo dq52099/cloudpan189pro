@@ -134,6 +134,26 @@ func (s *service) createStorageInTransaction(ctx context.Context, req *CreateSto
 			return 0, ErrExistingPathForbidden
 		}
 
+		if req.FileId != "" {
+			existingFile, err := s.virtualFileService.Query(ctx, mp.FileId)
+			if err != nil {
+				ctx.Error("查询已存在挂载点根文件失败", zap.Error(err), zap.String("path", req.LocalPath), zap.Int64("file_id", mp.FileId))
+
+				return 0, err
+			}
+
+			if existingFile.CloudId != req.FileId {
+				ctx.Warn("挂载点路径已存在但云端资源不一致",
+					zap.String("path", req.LocalPath),
+					zap.Int64("exists_id", mp.ID),
+					zap.String("existing_cloud_id", existingFile.CloudId),
+					zap.String("request_cloud_id", req.FileId),
+				)
+
+				return 0, ErrPathAlreadyExists
+			}
+		}
+
 		// 路径已存在，返回已存在的挂载点ID而不是报错
 		ctx.Info("挂载点路径已存在，返回已存在的记录", zap.String("path", req.LocalPath), zap.Int64("exists_id", mp.ID))
 
