@@ -12,6 +12,7 @@ on:
         type: string
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
   APP_NAME: cloudpan189pro
   MODULE_NAME: github.com/xxcheng123/cloudpan189-share
 
@@ -61,24 +62,32 @@ jobs:
         run: |
           # 设置版本
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "APP_VERSION=${{ github.event.inputs.tag }}" >> $GITHUB_ENV
+            APP_VERSION="${{ github.event.inputs.tag }}"
           else
-            echo "APP_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+            APP_VERSION="${GITHUB_REF#refs/tags/}"
           fi
           
           # 生成构建信息 - 与 Makefile 保持一致
-          echo "VAR_COMMIT=$(git rev-parse HEAD)" >> $GITHUB_ENV
-          echo "VAR_BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
-          echo "VAR_GIT_SUMMARY=$(git describe --tags --dirty --always 2>/dev/null || git rev-parse --short HEAD)" >> $GITHUB_ENV
-          echo "VAR_GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_ENV
+          VAR_COMMIT="$(git rev-parse HEAD)"
+          VAR_BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          VAR_GIT_SUMMARY="$(git describe --tags --dirty --always 2>/dev/null || git rev-parse --short HEAD)"
+          VAR_GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+
+          {
+            echo "APP_VERSION=$APP_VERSION"
+            echo "VAR_COMMIT=$VAR_COMMIT"
+            echo "VAR_BUILD_DATE=$VAR_BUILD_DATE"
+            echo "VAR_GIT_SUMMARY=$VAR_GIT_SUMMARY"
+            echo "VAR_GIT_BRANCH=$VAR_GIT_BRANCH"
+          } >> "$GITHUB_ENV"
           
           # 输出构建信息用于调试
           echo "🔍 Build Information:"
-          echo "  Version: ${APP_VERSION:-${GITHUB_REF#refs/tags/}}"
-          echo "  Commit: $(git rev-parse HEAD)"
-          echo "  Build Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          echo "  Git Summary: $(git describe --tags --dirty --always 2>/dev/null || git rev-parse --short HEAD)"
-          echo "  Git Branch: $(git rev-parse --abbrev-ref HEAD)"
+          echo "  Version: $APP_VERSION"
+          echo "  Commit: $VAR_COMMIT"
+          echo "  Build Date: $VAR_BUILD_DATE"
+          echo "  Git Summary: $VAR_GIT_SUMMARY"
+          echo "  Git Branch: $VAR_GIT_BRANCH"
 
       - name: 🏷️ Generate Docker tags
         if: steps.dockerhub.outputs.enabled == 'true'
@@ -86,14 +95,15 @@ jobs:
         run: |
           # 生成 Docker 标签
           DOCKER_REPO="${{ steps.dockerhub.outputs.repo }}"
-          TAGS="${DOCKER_REPO}:${{ env.APP_VERSION }}"
+          APP_VERSION="${{ env.APP_VERSION }}"
+          TAGS="${DOCKER_REPO}:${APP_VERSION}"
           
           # 检查是否为 alpha 版本
-          if [[ "${{ env.APP_VERSION }}" == *"alpha"* ]]; then
+          if [[ "$APP_VERSION" == *"alpha"* ]]; then
             # Alpha 版本：添加 alpha 标签，不添加 latest
             TAGS="${TAGS},${DOCKER_REPO}:alpha"
             echo "🔖 检测到 Alpha 版本，将发布为 alpha 标签"
-          elif [[ "${{ env.APP_VERSION }}" != *"-"* ]]; then
+          elif [[ "$APP_VERSION" != *"-"* ]]; then
             # 正式版本：添加 latest 标签
             TAGS="${TAGS},${DOCKER_REPO}:latest"
             echo "🔖 检测到正式版本，将发布为 latest 标签"
@@ -102,7 +112,7 @@ jobs:
             echo "🔖 检测到预发布版本，仅使用版本标签"
           fi
           
-          echo "TAGS=${TAGS}" >> $GITHUB_ENV
+          echo "TAGS=${TAGS}" >> "$GITHUB_ENV"
           echo "Generated tags: ${TAGS}"
 
       - name: 🔨 Build and push
@@ -126,20 +136,25 @@ jobs:
       - name: 🔍 Inspect multi-arch image
         if: steps.dockerhub.outputs.enabled == 'true'
         run: |
+          IMAGE_REF="${{ steps.dockerhub.outputs.repo }}:${{ env.APP_VERSION }}"
           echo "🔍 检查多架构镜像信息..."
-          docker buildx imagetools inspect ${{ steps.dockerhub.outputs.repo }}:${{ env.APP_VERSION }}
+          docker buildx imagetools inspect "$IMAGE_REF"
 
       - name: 📋 Docker Image Info
         if: steps.dockerhub.outputs.enabled == 'true'
         run: |
+          APP_NAME="${{ env.APP_NAME }}"
+          APP_VERSION="${{ env.APP_VERSION }}"
+          DOCKER_REPO="${{ steps.dockerhub.outputs.repo }}"
+
           echo "🎉 Docker 镜像构建完成！"
           echo ""
           echo "📦 镜像标签:"
-          echo "  - ${{ steps.dockerhub.outputs.repo }}:${{ env.APP_VERSION }}"
-          if [[ "${{ env.APP_VERSION }}" == *"alpha"* ]]; then
-            echo "  - ${{ steps.dockerhub.outputs.repo }}:alpha"
-          elif [[ "${{ env.APP_VERSION }}" != *"-"* ]]; then
-            echo "  - ${{ steps.dockerhub.outputs.repo }}:latest"
+          echo "  - ${DOCKER_REPO}:${APP_VERSION}"
+          if [[ "$APP_VERSION" == *"alpha"* ]]; then
+            echo "  - ${DOCKER_REPO}:alpha"
+          elif [[ "$APP_VERSION" != *"-"* ]]; then
+            echo "  - ${DOCKER_REPO}:latest"
           fi
           echo ""
           echo "🏗️ 支持的架构:"
@@ -155,35 +170,35 @@ jobs:
           echo "🚀 使用方法:"
           echo ""
           # 根据版本类型显示不同的使用示例
-          if [[ "${{ env.APP_VERSION }}" == *"alpha"* ]]; then
+          if [[ "$APP_VERSION" == *"alpha"* ]]; then
             echo "# Alpha 版本运行 (测试用途)"
             echo "docker run -d \\"
-            echo "  --name ${{ env.APP_NAME }}-alpha \\"
+            echo "  --name ${APP_NAME}-alpha \\"
             echo "  -p 12395:12395 \\"
             echo "  -v \$(pwd)/data:/app/data \\"
             echo "  --restart unless-stopped \\"
-            echo "  ${{ steps.dockerhub.outputs.repo }}:alpha"
+            echo "  ${DOCKER_REPO}:alpha"
             echo ""
             echo "# 指定版本运行"
-            echo "docker run -d ${{ steps.dockerhub.outputs.repo }}:${{ env.APP_VERSION }}"
+            echo "docker run -d ${DOCKER_REPO}:${APP_VERSION}"
           else
             echo "# 基本运行"
             echo "docker run -d \\"
-            echo "  --name ${{ env.APP_NAME }} \\"
+            echo "  --name ${APP_NAME} \\"
             echo "  -p 12395:12395 \\"
             echo "  -v \$(pwd)/data:/app/data \\"
             echo "  --restart unless-stopped \\"
-            if [[ "${{ env.APP_VERSION }}" != *"-"* ]]; then
-              echo "  ${{ steps.dockerhub.outputs.repo }}:latest"
+            if [[ "$APP_VERSION" != *"-"* ]]; then
+              echo "  ${DOCKER_REPO}:latest"
             else
-              echo "  ${{ steps.dockerhub.outputs.repo }}:${{ env.APP_VERSION }}"
+              echo "  ${DOCKER_REPO}:${APP_VERSION}"
             fi
             echo ""
             echo "# 指定架构运行"
-            if [[ "${{ env.APP_VERSION }}" != *"-"* ]]; then
-              echo "docker run --platform linux/arm64 -d ${{ steps.dockerhub.outputs.repo }}:latest"
+            if [[ "$APP_VERSION" != *"-"* ]]; then
+              echo "docker run --platform linux/arm64 -d ${DOCKER_REPO}:latest"
             else
-              echo "docker run --platform linux/arm64 -d ${{ steps.dockerhub.outputs.repo }}:${{ env.APP_VERSION }}"
+              echo "docker run --platform linux/arm64 -d ${DOCKER_REPO}:${APP_VERSION}"
             fi
           fi
           echo ""
@@ -191,8 +206,8 @@ jobs:
           echo "version: '3.8'"
           echo "services:"
           echo "  cloudpan189pro:"
-          echo "    image: ${{ steps.dockerhub.outputs.repo }}:${{ env.APP_VERSION }}"
-          echo "    container_name: ${{ env.APP_NAME }}"
+          echo "    image: ${DOCKER_REPO}:${APP_VERSION}"
+          echo "    container_name: ${APP_NAME}"
           echo "    ports:"
           echo "      - \"12395:12395\""
           echo "    volumes:"
