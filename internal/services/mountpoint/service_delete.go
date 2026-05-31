@@ -185,24 +185,42 @@ func deleteUserTokenBindingsByMountPointIDs(tx *gorm.DB, mountPointIDs []int64) 
 }
 
 func (s *service) ClearAll(ctx context.Context) (int64, error) {
-	var deletedRows int64
+	var (
+		deletedMountPoints   int64
+		deletedTokenBindings int64
+	)
 
 	if err := s.svc.GetDB(ctx).Transaction(func(tx *gorm.DB) error {
-		db := tx.Exec("DELETE FROM mount_points")
-		if db.Error != nil {
-			return db.Error
+		bindingResult := tx.
+			Where("1 = 1").
+			Delete(new(models.UserMountPointToken))
+		if bindingResult.Error != nil {
+			return bindingResult.Error
 		}
 
-		deletedRows = db.RowsAffected
+		deletedTokenBindings = bindingResult.RowsAffected
 
-		return tx.Exec("DELETE FROM user_mount_point_tokens").Error
+		mountPointResult := tx.
+			Unscoped().
+			Where("1 = 1").
+			Delete(new(models.MountPoint))
+		if mountPointResult.Error != nil {
+			return mountPointResult.Error
+		}
+
+		deletedMountPoints = mountPointResult.RowsAffected
+
+		return nil
 	}); err != nil {
 		ctx.Error("清空所有挂载点失败", zap.Error(err))
 
 		return 0, err
 	}
 
-	ctx.Info("清空所有挂载点完成", zap.Int64("deleted_rows", deletedRows))
+	ctx.Info("清空所有挂载点完成",
+		zap.Int64("deleted_rows", deletedMountPoints),
+		zap.Int64("deleted_token_bindings", deletedTokenBindings),
+	)
 
-	return deletedRows, nil
+	return deletedMountPoints, nil
 }

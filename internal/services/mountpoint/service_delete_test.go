@@ -933,6 +933,42 @@ func TestClearAllRemovesMountPointsAndUserTokenBindings(t *testing.T) {
 	}
 }
 
+func TestClearAllAllowsNoMountPoints(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	svc := NewService(tDB, nil, nil, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	deleted, err := svc.ClearAll(ctx)
+	if err != nil {
+		t.Fatalf("clear all empty mount points: %v", err)
+	}
+
+	if deleted != 0 {
+		t.Fatalf("expected no deleted mount points, got %d", deleted)
+	}
+}
+
+func TestClearAllRemovesOrphanUserTokenBindings(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	svc := NewService(tDB, nil, nil, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	createUserMountPointTokenBinding(t, tDB.db, 20, 99999, 100)
+
+	deleted, err := svc.ClearAll(ctx)
+	if err != nil {
+		t.Fatalf("clear all orphan token bindings: %v", err)
+	}
+
+	if deleted != 0 {
+		t.Fatalf("expected no deleted mount points, got %d", deleted)
+	}
+
+	if count := countUserMountPointTokenBindings(t, tDB.db, "1 = 1"); count != 0 {
+		t.Fatalf("expected orphan token bindings cleared, got count %d", count)
+	}
+}
+
 func TestQueryRejectsInvalidFileID(t *testing.T) {
 	tDB := setupMountPointTestDB(t)
 	svc := NewService(tDB, nil, nil, nil)
