@@ -220,82 +220,26 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 			pendingItems = append(pendingItems[:dropIndex], pendingItems[dropIndex+1:]...)
 		}
 
-		for shouldNext {
-			list, _, err := h.cloudbridgeService.GetSubscribeUserShareResource(ctx.GetContext(), addition.UpUserId, func(opt *cloudbridgeSvi.SubscribeUserShareResourceOption) {
-				opt.PageNum = pageNum
-				opt.PageSize = pageSize
-			})
-			if err != nil {
-				logger.Error("获取订阅号内容时失败了~", zap.String("up_user_id", addition.UpUserId), zap.Int("page_num", pageNum), zap.Int("page_size", pageSize))
-
-				return err
-			}
-
-			if len(list) == 0 {
-				break
-			}
-
-			pageNum++
-
-			for _, item := range list {
-				if item.IsTop != 1 {
-					hasTop = false
-				}
-
-				itemCursor := newSubscribeOffsetCursor(item)
-				if !itemCursor.After(nextOffset) {
-					if !hasTop && itemCursor.Second < nextOffset.Second {
-						shouldNext = false
-					}
-
-					// 重试时扫描已存在目录
-					if req.IsRetry {
-						fullPath := path.Join(plan.ParentPath, item.Name)
-
-						existingFile, err := h.virtualFileService.QueryByPath(ctx.GetContext(), fullPath)
-						if err == nil && existingFile != nil {
-							scanReq := newAutoIngestFileScanRequest(plan, existingFile.ID)
-
-							scanBody, marshalErr := json.Marshal(scanReq)
-							if marshalErr != nil {
-								logger.Error("序列化已存在文件扫描任务失败", zap.Error(marshalErr))
-
-								continue
-							}
-
-							if err = h.taskEngine.PushMessage(
-								ctx.GetContext().
-									WithValue(consts.CtxKeyFullPath, fullPath).
-									WithValue(consts.CtxKeyInvokeHandlerName, "入库执行器"),
-								scanReq.Topic(), scanBody); err != nil {
-								logger.Error("下发已存在文件扫描任务失败", zap.Error(err))
-							}
-						}
-					}
-
-					continue
-				}
-
-				logger.Debug("发现新的待入库文件", zap.String("name", item.Name))
-
-				appendPendingItem(pendingItem{
-					item:   item,
-					cursor: itemCursor,
-				})
+		buildStorageRequest := func(item *cloudbridgeSvi.ShareResourceInfo, targetPath string) *storagefacadeSvi.CreateStorageRequest {
+			return &storagefacadeSvi.CreateStorageRequest{
+				LocalPath:  targetPath,
+				OsType:     models.OsTypeSubscribeShareFolder,
+				CloudToken: plan.TokenId,
+				FileId:     item.ID,
+				Addition: datatypes.JSONMap{
+					consts.FileAdditionKeyUpUserId: addition.UpUserId,
+					consts.FileAdditionKeyShareId:  item.ShareId,
+					consts.FileAdditionKeyIsFolder: item.IsFolder,
+				},
+				EnableAutoRefresh: plan.RefreshStrategy.EnableAutoRefresh,
+				EnableDeepRefresh: plan.RefreshStrategy.EnableDeepRefresh,
+				AutoRefreshDays:   plan.RefreshStrategy.AutoRefreshDays,
+				RefreshInterval:   plan.RefreshStrategy.RefreshInterval,
+				CreatorUserID:     plan.UserID,
+				// 自动入库允许路径已存在（上面已经检查过 QueryByPath，这里容忍竞态）
+				AllowExisting: true,
 			}
 		}
-
-		if len(pendingItems) >= maxPendingItemsPerRefresh {
-			logger.Warn("待处理项达到上限，本次先处理最靠近 offset 的一部分",
-				zap.Int("max", maxPendingItemsPerRefresh),
-			)
-		}
-
-		if len(pendingItems) == 0 {
-			return nil
-		}
-
-		logger.Info("开始并发入库", zap.Int("total", len(pendingItems)), zap.Int("concurrent", concurrentCount))
 
 		enqueueScanTask := func(fullPath string, fileID int64) error {
 			taskReq := newAutoIngestFileScanRequest(plan, fileID)
@@ -331,6 +275,105 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 			}
 		}
 
+		enqueueRetryExistingScan := func(item *cloudbridgeSvi.ShareResourceInfo, fullPath string) {
+			existingFile, err := h.virtualFileService.QueryByPath(ctx.GetContext(), fullPath)
+			if err != nil {
+				if !errors.Is(err, gorm.ErrRecordNotFound) {
+					logger.Warn("重试扫描已存在文件时查询路径失败", zap.String("path", fullPath), zap.Error(err))
+					recordFailureLog(fullPath, "重试扫描已存在文件时查询路径失败", err)
+				}
+
+				return
+			}
+
+			if existingFile == nil {
+				return
+			}
+
+			if existingFile.CloudId != item.ID {
+				logger.Debug("重试扫描已存在文件时云端资源不匹配，跳过", zap.String("path", fullPath), zap.String("expected_cloud_id", item.ID), zap.String("actual_cloud_id", existingFile.CloudId))
+
+				return
+			}
+
+			id, err := h.storageFacadeService.CreateStorage(ctx.GetContext(), buildStorageRequest(item, fullPath))
+			if err != nil {
+				if errors.Is(err, storagefacadeSvi.ErrPathAlreadyExists) || errors.Is(err, storagefacadeSvi.ErrExistingPathForbidden) {
+					logger.Debug("重试扫描已存在文件但挂载不可复用，跳过", zap.String("path", fullPath), zap.Error(err))
+
+					return
+				}
+
+				logger.Error("重试扫描已存在文件时校验挂载失败", zap.String("path", fullPath), zap.Error(err))
+				recordFailureLog(fullPath, "重试扫描已存在文件时校验挂载失败", err)
+
+				return
+			}
+
+			if err = enqueueScanTask(fullPath, id); err != nil {
+				logger.Error("下发已存在文件扫描任务失败", zap.Error(err))
+				recordFailureLog(fullPath, "下发已存在文件扫描任务失败", err)
+			}
+		}
+
+		for shouldNext {
+			list, _, err := h.cloudbridgeService.GetSubscribeUserShareResource(ctx.GetContext(), addition.UpUserId, func(opt *cloudbridgeSvi.SubscribeUserShareResourceOption) {
+				opt.PageNum = pageNum
+				opt.PageSize = pageSize
+			})
+			if err != nil {
+				logger.Error("获取订阅号内容时失败了~", zap.String("up_user_id", addition.UpUserId), zap.Int("page_num", pageNum), zap.Int("page_size", pageSize))
+
+				return err
+			}
+
+			if len(list) == 0 {
+				break
+			}
+
+			pageNum++
+
+			for _, item := range list {
+				if item.IsTop != 1 {
+					hasTop = false
+				}
+
+				itemCursor := newSubscribeOffsetCursor(item)
+				if !itemCursor.After(nextOffset) {
+					if !hasTop && itemCursor.Second < nextOffset.Second {
+						shouldNext = false
+					}
+
+					// 重试时扫描已存在目录
+					if req.IsRetry {
+						fullPath := path.Join(plan.ParentPath, item.Name)
+						enqueueRetryExistingScan(item, fullPath)
+					}
+
+					continue
+				}
+
+				logger.Debug("发现新的待入库文件", zap.String("name", item.Name))
+
+				appendPendingItem(pendingItem{
+					item:   item,
+					cursor: itemCursor,
+				})
+			}
+		}
+
+		if len(pendingItems) >= maxPendingItemsPerRefresh {
+			logger.Warn("待处理项达到上限，本次先处理最靠近 offset 的一部分",
+				zap.Int("max", maxPendingItemsPerRefresh),
+			)
+		}
+
+		if len(pendingItems) == 0 {
+			return nil
+		}
+
+		logger.Info("开始并发入库", zap.Int("total", len(pendingItems)), zap.Int("concurrent", concurrentCount))
+
 		var (
 			wg               sync.WaitGroup
 			itemChan         = make(chan pendingItem, len(pendingItems))
@@ -355,26 +398,6 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 					fullPath := path.Join(plan.ParentPath, pItem.item.Name)
 					handled := false
 					failedRecorded := false
-					buildStorageRequest := func(targetPath string) *storagefacadeSvi.CreateStorageRequest {
-						return &storagefacadeSvi.CreateStorageRequest{
-							LocalPath:  targetPath,
-							OsType:     models.OsTypeSubscribeShareFolder,
-							CloudToken: plan.TokenId,
-							FileId:     pItem.item.ID,
-							Addition: datatypes.JSONMap{
-								consts.FileAdditionKeyUpUserId: addition.UpUserId,
-								consts.FileAdditionKeyShareId:  pItem.item.ShareId,
-								consts.FileAdditionKeyIsFolder: pItem.item.IsFolder,
-							},
-							EnableAutoRefresh: plan.RefreshStrategy.EnableAutoRefresh,
-							EnableDeepRefresh: plan.RefreshStrategy.EnableDeepRefresh,
-							AutoRefreshDays:   plan.RefreshStrategy.AutoRefreshDays,
-							RefreshInterval:   plan.RefreshStrategy.RefreshInterval,
-							CreatorUserID:     plan.UserID,
-							// 自动入库允许路径已存在（上面已经检查过 QueryByPath，这里容忍竞态）
-							AllowExisting: true,
-						}
-					}
 
 					for retry := 0; retry <= maxRetryCount; retry++ {
 						if retry > 0 {
@@ -397,7 +420,7 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 
 						if exists != nil {
 							if exists.CloudId == pItem.item.ID {
-								id, err := h.storageFacadeService.CreateStorage(ctx.GetContext(), buildStorageRequest(fullPath))
+								id, err := h.storageFacadeService.CreateStorage(ctx.GetContext(), buildStorageRequest(pItem.item, fullPath))
 								if err != nil {
 									if errors.Is(err, storagefacadeSvi.ErrPathAlreadyExists) || errors.Is(err, storagefacadeSvi.ErrExistingPathForbidden) {
 										if plan.OnConflict == autoingest.OnConflictRename {
@@ -467,7 +490,7 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 						}
 
 						id, err := h.storageFacadeService.CreateStorage(ctx.GetContext(),
-							buildStorageRequest(fullPath),
+							buildStorageRequest(pItem.item, fullPath),
 						)
 						if err != nil {
 							if errors.Is(err, storagefacadeSvi.ErrPathAlreadyExists) || errors.Is(err, storagefacadeSvi.ErrExistingPathForbidden) {
@@ -510,9 +533,43 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 								}
 
 								if exists != nil && exists.CloudId == pItem.item.ID {
+									id, verifyErr := h.storageFacadeService.CreateStorage(ctx.GetContext(), buildStorageRequest(pItem.item, fullPath))
+									if verifyErr != nil {
+										if errors.Is(verifyErr, storagefacadeSvi.ErrPathAlreadyExists) || errors.Is(verifyErr, storagefacadeSvi.ErrExistingPathForbidden) {
+											if plan.OnConflict == autoingest.OnConflictRename {
+												fullPath = buildConflictRenamePath(plan.ParentPath, pItem.item.Name, retry)
+
+												continue
+											}
+
+											logger.Debug("入库竞态后发现同云端资源但挂载不可复用，按放弃策略跳过", zap.String("path", fullPath), zap.Error(verifyErr))
+
+											handled = true
+
+											break
+										}
+
+										if retry < maxRetryCount {
+											logger.Warn("入库竞态后校验已存在挂载失败，正在重试", zap.String("path", fullPath), zap.Error(verifyErr), zap.Int("retry", retry+1))
+
+											continue
+										}
+
+										logger.Error("入库竞态后校验已存在挂载失败", zap.String("path", fullPath), zap.Error(verifyErr))
+										mu.Lock()
+										localFailedCount++
+										mu.Unlock()
+
+										failedRecorded = true
+
+										recordFailureLog(fullPath, "入库竞态后校验已存在挂载失败", verifyErr)
+
+										break
+									}
+
 									logger.Debug("入库竞态后发现资源已存在，补发扫描任务", zap.String("path", fullPath), zap.String("cloud_id", pItem.item.ID))
 
-									if err = enqueueScanTask(fullPath, exists.ID); err != nil {
+									if err = enqueueScanTask(fullPath, id); err != nil {
 										logger.Error("下发已存在文件扫描任务失败", zap.Error(err))
 										mu.Lock()
 										localFailedCount++

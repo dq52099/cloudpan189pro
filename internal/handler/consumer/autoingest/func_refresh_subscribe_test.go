@@ -1168,6 +1168,170 @@ func TestRefreshSubscribeRetryLogsExistingScanEnqueueFailure(t *testing.T) {
 	}
 }
 
+func TestRefreshSubscribeRetryPastOffsetVerifiesExistingMountBeforeScan(t *testing.T) {
+	planService := &mockRefreshSubscribePlanService{
+		plan:          newRefreshSubscribePlan(200, autoingest.OnConflictRename),
+		updatedOffset: -1,
+	}
+	cloudService := &mockRefreshSubscribeCloudBridgeService{
+		items: []*cloudbridge.ShareResourceInfo{{
+			Name:      "created-before",
+			ID:        "cloud-created",
+			ShareId:   88,
+			ShareTime: time.Unix(100, 0),
+			IsTop:     1,
+		}},
+	}
+	logService := &mockRefreshSubscribeLogService{}
+	storageService := &mockRefreshSubscribeStorageFacadeService{
+		ids: []int64{55},
+	}
+	virtualService := &mockRefreshSubscribeVirtualFileService{
+		existing: &models.VirtualFile{ID: 33, Name: "created-before", CloudId: "cloud-created"},
+	}
+	taskEngine := &mockRefreshSubscribeTaskEngine{}
+	handler := NewHandler(
+		taskEngine,
+		cloudService,
+		planService,
+		logService,
+		storageService,
+		virtualService,
+	)
+
+	err := runRefreshSubscribeHandlerWithRequest(t, handler, topic.AutoIngestRefreshSubscribeRequest{
+		PlanId:  planService.plan.ID,
+		IsRetry: true,
+	})
+	if err != nil {
+		t.Fatalf("refresh subscribe: %v", err)
+	}
+
+	if storageService.Count() != 1 {
+		t.Fatalf("expected existing mount validation before retry scan, got %d calls", storageService.Count())
+	}
+
+	createReqs := storageService.Requests()
+	if len(createReqs) != 1 {
+		t.Fatalf("expected one validation request, got %d", len(createReqs))
+	}
+
+	if createReqs[0].FileId != "cloud-created" || createReqs[0].CreatorUserID != planService.plan.UserID || !createReqs[0].AllowExisting {
+		t.Fatalf("unexpected validation request: %+v", createReqs[0])
+	}
+
+	scanReqs := taskEngine.ScanRequests(t)
+	if len(scanReqs) != 1 || scanReqs[0].FileId != 55 {
+		t.Fatalf("expected retry scan to use verified mount id 55, got %+v", scanReqs)
+	}
+
+	if planService.updatedOffset != 200 {
+		t.Fatalf("expected offset unchanged at 200, got %d", planService.updatedOffset)
+	}
+}
+
+func TestRefreshSubscribeRetryPastOffsetSkipsCloudMismatch(t *testing.T) {
+	planService := &mockRefreshSubscribePlanService{
+		plan:          newRefreshSubscribePlan(200, autoingest.OnConflictRename),
+		updatedOffset: -1,
+	}
+	cloudService := &mockRefreshSubscribeCloudBridgeService{
+		items: []*cloudbridge.ShareResourceInfo{{
+			Name:      "created-before",
+			ID:        "cloud-created",
+			ShareId:   88,
+			ShareTime: time.Unix(100, 0),
+			IsTop:     1,
+		}},
+	}
+	logService := &mockRefreshSubscribeLogService{}
+	storageService := &mockRefreshSubscribeStorageFacadeService{}
+	virtualService := &mockRefreshSubscribeVirtualFileService{
+		existing: &models.VirtualFile{ID: 33, Name: "created-before", CloudId: "other-cloud"},
+	}
+	taskEngine := &mockRefreshSubscribeTaskEngine{}
+	handler := NewHandler(
+		taskEngine,
+		cloudService,
+		planService,
+		logService,
+		storageService,
+		virtualService,
+	)
+
+	err := runRefreshSubscribeHandlerWithRequest(t, handler, topic.AutoIngestRefreshSubscribeRequest{
+		PlanId:  planService.plan.ID,
+		IsRetry: true,
+	})
+	if err != nil {
+		t.Fatalf("refresh subscribe: %v", err)
+	}
+
+	if storageService.Count() != 0 {
+		t.Fatalf("expected cloud mismatch not to validate storage, got %d calls", storageService.Count())
+	}
+
+	if taskEngine.Count() != 0 {
+		t.Fatalf("expected cloud mismatch not to enqueue retry scan, got %d", taskEngine.Count())
+	}
+
+	if planService.updatedOffset != 200 {
+		t.Fatalf("expected offset unchanged at 200, got %d", planService.updatedOffset)
+	}
+}
+
+func TestRefreshSubscribeRetryPastOffsetSkipsForbiddenExistingMount(t *testing.T) {
+	planService := &mockRefreshSubscribePlanService{
+		plan:          newRefreshSubscribePlan(200, autoingest.OnConflictRename),
+		updatedOffset: -1,
+	}
+	cloudService := &mockRefreshSubscribeCloudBridgeService{
+		items: []*cloudbridge.ShareResourceInfo{{
+			Name:      "created-before",
+			ID:        "cloud-created",
+			ShareId:   88,
+			ShareTime: time.Unix(100, 0),
+			IsTop:     1,
+		}},
+	}
+	logService := &mockRefreshSubscribeLogService{}
+	storageService := &mockRefreshSubscribeStorageFacadeService{
+		errs: []error{storagefacade.ErrExistingPathForbidden},
+	}
+	virtualService := &mockRefreshSubscribeVirtualFileService{
+		existing: &models.VirtualFile{ID: 33, Name: "created-before", CloudId: "cloud-created"},
+	}
+	taskEngine := &mockRefreshSubscribeTaskEngine{}
+	handler := NewHandler(
+		taskEngine,
+		cloudService,
+		planService,
+		logService,
+		storageService,
+		virtualService,
+	)
+
+	err := runRefreshSubscribeHandlerWithRequest(t, handler, topic.AutoIngestRefreshSubscribeRequest{
+		PlanId:  planService.plan.ID,
+		IsRetry: true,
+	})
+	if err != nil {
+		t.Fatalf("refresh subscribe: %v", err)
+	}
+
+	if storageService.Count() != 1 {
+		t.Fatalf("expected one existing mount validation, got %d calls", storageService.Count())
+	}
+
+	if taskEngine.Count() != 0 {
+		t.Fatalf("expected forbidden existing mount not to enqueue retry scan, got %d", taskEngine.Count())
+	}
+
+	if planService.updatedOffset != 200 {
+		t.Fatalf("expected offset unchanged at 200, got %d", planService.updatedOffset)
+	}
+}
+
 func TestRefreshSubscribeSkipsExistingSameCloudIDWithoutRetryScanWhenOtherItemFails(t *testing.T) {
 	planService := &mockRefreshSubscribePlanService{
 		plan:          newRefreshSubscribePlan(100, autoingest.OnConflictRename),
@@ -1247,7 +1411,11 @@ func TestRefreshSubscribeDuplicateCreateScansExistingAndAdvancesOffset(t *testin
 	}
 	logService := &mockRefreshSubscribeLogService{}
 	storageService := &mockRefreshSubscribeStorageFacadeService{
-		err: errors.New("UNIQUE constraint failed: virtual_files.parent_id, virtual_files.name"),
+		errs: []error{
+			errors.New("UNIQUE constraint failed: virtual_files.parent_id, virtual_files.name"),
+			nil,
+		},
+		ids: []int64{0, 55},
 	}
 	virtualService := &mockRefreshSubscribeVirtualFileService{
 		queryFiles: []*models.VirtualFile{
@@ -1278,8 +1446,8 @@ func TestRefreshSubscribeDuplicateCreateScansExistingAndAdvancesOffset(t *testin
 		t.Fatalf("unexpected existing scan request: %+v", scanReqs[0])
 	}
 
-	if storageService.Count() != 1 {
-		t.Fatalf("expected one create attempt, got %d", storageService.Count())
+	if storageService.Count() != 2 {
+		t.Fatalf("expected create attempt and existing mount validation, got %d", storageService.Count())
 	}
 
 	if virtualService.queryCalls != 2 {
@@ -1292,6 +1460,126 @@ func TestRefreshSubscribeDuplicateCreateScansExistingAndAdvancesOffset(t *testin
 
 	if planService.addDelta != 0 {
 		t.Fatalf("expected duplicate existing item not counted as newly added, got %d", planService.addDelta)
+	}
+}
+
+func TestRefreshSubscribeDuplicateCreateRenamesWhenExistingMountForbidden(t *testing.T) {
+	shareTime := time.Unix(200, 0)
+	createdFileID := int64(779)
+	planService := &mockRefreshSubscribePlanService{
+		plan:          newRefreshSubscribePlan(100, autoingest.OnConflictRename),
+		updatedOffset: -1,
+	}
+	cloudService := &mockRefreshSubscribeCloudBridgeService{
+		items: []*cloudbridge.ShareResourceInfo{{
+			Name:      "movie",
+			ID:        "cloud-1",
+			ShareId:   88,
+			ShareTime: shareTime,
+			IsTop:     1,
+		}},
+	}
+	logService := &mockRefreshSubscribeLogService{}
+	storageService := &mockRefreshSubscribeStorageFacadeService{
+		errs: []error{
+			errors.New("UNIQUE constraint failed: virtual_files.parent_id, virtual_files.name"),
+			storagefacade.ErrExistingPathForbidden,
+			nil,
+		},
+		ids: []int64{
+			0,
+			0,
+			createdFileID,
+		},
+	}
+	virtualService := &mockRefreshSubscribeVirtualFileService{
+		queryFiles: []*models.VirtualFile{
+			nil,
+			{ID: 55, Name: "movie", CloudId: "cloud-1"},
+			nil,
+		},
+	}
+	taskEngine := &mockRefreshSubscribeTaskEngine{}
+
+	if err := runRefreshSubscribeHandlerWithTaskEngine(t, taskEngine, planService, cloudService, logService, storageService, virtualService); err != nil {
+		t.Fatalf("refresh subscribe: %v", err)
+	}
+
+	createReqs := storageService.Requests()
+	if len(createReqs) != 3 {
+		t.Fatalf("expected create, validation, and renamed create requests, got %d", len(createReqs))
+	}
+
+	if createReqs[0].LocalPath != "/subscriptions/movie" || createReqs[1].LocalPath != "/subscriptions/movie" {
+		t.Fatalf("expected duplicate create and validation on original path, got %s and %s", createReqs[0].LocalPath, createReqs[1].LocalPath)
+	}
+
+	if createReqs[2].LocalPath == createReqs[0].LocalPath || !strings.HasPrefix(path.Base(createReqs[2].LocalPath), "movie_") {
+		t.Fatalf("expected renamed create path after forbidden existing mount, got %s", createReqs[2].LocalPath)
+	}
+
+	if planService.updatedOffset != shareTime.Unix() {
+		t.Fatalf("expected offset advanced after renamed duplicate succeeds, got %d", planService.updatedOffset)
+	}
+
+	if planService.addDelta != 1 || planService.failedDelta != 0 {
+		t.Fatalf("expected renamed duplicate counted as one add and no failures, add=%d failed=%d", planService.addDelta, planService.failedDelta)
+	}
+
+	scanReqs := taskEngine.ScanRequests(t)
+	if len(scanReqs) != 1 || scanReqs[0].FileId != createdFileID {
+		t.Fatalf("expected scan for renamed created file %d, got %+v", createdFileID, scanReqs)
+	}
+}
+
+func TestRefreshSubscribeDuplicateCreateAbandonsWhenExistingMountForbidden(t *testing.T) {
+	shareTime := time.Unix(200, 0)
+	planService := &mockRefreshSubscribePlanService{
+		plan:          newRefreshSubscribePlan(100, autoingest.OnConflictAbandon),
+		updatedOffset: -1,
+	}
+	cloudService := &mockRefreshSubscribeCloudBridgeService{
+		items: []*cloudbridge.ShareResourceInfo{{
+			Name:      "movie",
+			ID:        "cloud-1",
+			ShareId:   88,
+			ShareTime: shareTime,
+			IsTop:     1,
+		}},
+	}
+	logService := &mockRefreshSubscribeLogService{}
+	storageService := &mockRefreshSubscribeStorageFacadeService{
+		errs: []error{
+			errors.New("UNIQUE constraint failed: virtual_files.parent_id, virtual_files.name"),
+			storagefacade.ErrExistingPathForbidden,
+		},
+	}
+	virtualService := &mockRefreshSubscribeVirtualFileService{
+		queryFiles: []*models.VirtualFile{
+			nil,
+			{ID: 55, Name: "movie", CloudId: "cloud-1"},
+		},
+	}
+	taskEngine := &mockRefreshSubscribeTaskEngine{}
+
+	if err := runRefreshSubscribeHandlerWithTaskEngine(t, taskEngine, planService, cloudService, logService, storageService, virtualService); err != nil {
+		t.Fatalf("refresh subscribe: %v", err)
+	}
+
+	if storageService.Count() != 2 {
+		t.Fatalf("expected duplicate create and existing mount validation, got %d", storageService.Count())
+	}
+
+	if taskEngine.Count() != 0 {
+		t.Fatalf("expected forbidden duplicate abandon not to enqueue scan, got %d", taskEngine.Count())
+	}
+
+	if planService.updatedOffset != shareTime.Unix() {
+		t.Fatalf("expected abandoned duplicate conflict to advance offset, got %d", planService.updatedOffset)
+	}
+
+	if planService.addDelta != 0 || planService.failedDelta != 0 {
+		t.Fatalf("expected abandoned duplicate conflict not counted as add/fail, add=%d failed=%d", planService.addDelta, planService.failedDelta)
 	}
 }
 
@@ -1312,7 +1600,11 @@ func TestRefreshSubscribeDuplicateCreateDoesNotAdvanceOffsetWhenExistingScanFail
 	}
 	logService := &mockRefreshSubscribeLogService{}
 	storageService := &mockRefreshSubscribeStorageFacadeService{
-		err: errors.New("duplicate key value violates unique constraint \"virtual_files_parent_name_unique\""),
+		errs: []error{
+			errors.New("duplicate key value violates unique constraint \"virtual_files_parent_name_unique\""),
+			nil,
+		},
+		ids: []int64{0, 55},
 	}
 	virtualService := &mockRefreshSubscribeVirtualFileService{
 		queryFiles: []*models.VirtualFile{
