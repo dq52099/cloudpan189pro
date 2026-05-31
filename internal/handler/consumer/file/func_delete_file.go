@@ -157,6 +157,13 @@ func (h *handler) HandleBatchDelete() taskcontext.HandlerFunc {
 					continue
 				}
 
+				if err := h.clearMountFiles(ctx.GetContext(), targetFileID); err != nil {
+					h.logger.Error("清理残留虚拟文件失败", zap.Int64("fid", targetFileID), zap.Error(err))
+					recordFailed()
+
+					continue
+				}
+
 				deleteReq := access.mountPointBatchDeleteRequest(id)
 				if err := h.mountPointService.BatchDelete(ctx.GetContext(), deleteReq); err != nil {
 					if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -169,12 +176,7 @@ func (h *handler) HandleBatchDelete() taskcontext.HandlerFunc {
 					h.logger.Debug("后台删除挂载点记录已不存在", zap.Int64("id", id), zap.Error(err))
 				}
 
-				if err := h.clearMountFiles(ctx.GetContext(), targetFileID); err != nil {
-					h.logger.Error("清理残留虚拟文件失败", zap.Int64("fid", targetFileID), zap.Error(err))
-					recordFailed()
-				} else {
-					recordCompleted()
-				}
+				recordCompleted()
 
 				continue
 			}
@@ -315,6 +317,12 @@ func (h *handler) HandleDelete() taskcontext.HandlerFunc {
 				return err
 			}
 
+			if err := h.clearMountFiles(ctx.GetContext(), targetFileID); err != nil {
+				h.logger.Error("清理残留虚拟文件失败", zap.Int64("fid", targetFileID), zap.Error(err))
+
+				return err
+			}
+
 			deleteReq := access.mountPointBatchDeleteRequest(targetFileID)
 			if err := h.mountPointService.BatchDelete(ctx.GetContext(), deleteReq); err != nil {
 				if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -324,12 +332,6 @@ func (h *handler) HandleDelete() taskcontext.HandlerFunc {
 				}
 
 				h.logger.Debug("后台删除挂载点记录已不存在", zap.Int64("id", targetFileID), zap.Error(err))
-			}
-
-			if err := h.clearMountFiles(ctx.GetContext(), targetFileID); err != nil {
-				h.logger.Error("清理残留虚拟文件失败", zap.Int64("fid", targetFileID), zap.Error(err))
-
-				return err
 			}
 
 			if tracker != nil {
@@ -384,17 +386,6 @@ func (h *handler) deleteVirtualFileTree(ctx appContext.Context, fileInfo *models
 	targetFileID := fileInfo.ID
 
 	if fileInfo.IsTop || fileInfo.TopId == fileInfo.ID {
-		deleteReq := access.mountPointBatchDeleteRequest(targetFileID)
-		if err := h.mountPointService.BatchDelete(ctx, deleteReq); err != nil {
-			if !errors.Is(err, gorm.ErrRecordNotFound) {
-				h.logger.Error("后台删除挂载点记录失败", zap.Int64("id", targetFileID), zap.Error(err))
-
-				return err
-			}
-
-			h.logger.Debug("后台删除挂载点记录已不存在", zap.Int64("id", targetFileID), zap.Error(err))
-		}
-
 		// 清理挂载点下的子文件 (触发 deleteStrmIterator)
 		if err := h.clearMountFiles(ctx, targetFileID); err != nil {
 			h.logger.Error("清理挂载点子文件失败", zap.Int64("fid", targetFileID), zap.Error(err))
@@ -406,6 +397,17 @@ func (h *handler) deleteVirtualFileTree(ctx appContext.Context, fileInfo *models
 			h.logger.Error("删除根虚拟文件失败", zap.Int64("fid", targetFileID), zap.Error(err))
 
 			return err
+		}
+
+		deleteReq := access.mountPointBatchDeleteRequest(targetFileID)
+		if err := h.mountPointService.BatchDelete(ctx, deleteReq); err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				h.logger.Error("后台删除挂载点记录失败", zap.Int64("id", targetFileID), zap.Error(err))
+
+				return err
+			}
+
+			h.logger.Debug("后台删除挂载点记录已不存在", zap.Int64("id", targetFileID), zap.Error(err))
 		}
 
 		return nil

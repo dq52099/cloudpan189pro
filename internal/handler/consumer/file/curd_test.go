@@ -20,9 +20,18 @@ type mockBatchDeleteVirtualFileService struct {
 	filesByID        map[int64]*models.VirtualFile
 	deletedIDs       []int64
 	batchDeletedIDs  []int64
+	callLog          *[]string
+}
+
+func appendTestCall(callLog *[]string, name string) {
+	if callLog != nil {
+		*callLog = append(*callLog, name)
+	}
 }
 
 func (m *mockBatchDeleteVirtualFileService) List(ctx appContext.Context, req *virtualfileSvi.ListRequest) ([]*models.VirtualFile, error) {
+	appendTestCall(m.callLog, "virtual-list")
+
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
@@ -47,6 +56,8 @@ func (m *mockBatchDeleteVirtualFileService) Delete(
 	id int64,
 	hooks ...virtualfileSvi.DeleteHook,
 ) error {
+	appendTestCall(m.callLog, "virtual-delete")
+
 	if err := m.deleteErrByID[id]; err != nil {
 		return err
 	}
@@ -61,6 +72,8 @@ func (m *mockBatchDeleteVirtualFileService) BatchDelete(
 	ids []int64,
 	hooks ...virtualfileSvi.BatchDeleteHook,
 ) ([]int64, error) {
+	appendTestCall(m.callLog, "virtual-batch-delete")
+
 	for _, id := range ids {
 		if err := m.deleteErrByID[id]; err != nil {
 			return nil, err

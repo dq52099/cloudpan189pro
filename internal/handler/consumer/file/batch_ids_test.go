@@ -72,6 +72,7 @@ type mockBatchModifyTokenMountPointService struct {
 	batchDeleteRequests    []*mountPointSvi.BatchDeleteRequest
 	refreshTimeUpdates     []int64
 	lastStateUpdates       []int64
+	callLog                *[]string
 }
 
 func (m *mockBatchModifyTokenMountPointService) Query(ctx appContext.Context, fileID int64) (*models.MountPoint, error) {
@@ -105,6 +106,8 @@ func (m *mockBatchModifyTokenMountPointService) QueryByID(ctx appContext.Context
 }
 
 func (m *mockBatchModifyTokenMountPointService) BatchDelete(ctx appContext.Context, req *mountPointSvi.BatchDeleteRequest) error {
+	appendTestCall(m.callLog, "mount-delete")
+
 	copiedReq := &mountPointSvi.BatchDeleteRequest{
 		FileIds:       append([]int64(nil), req.FileIds...),
 		CreatorUserID: req.CreatorUserID,
@@ -1263,6 +1266,116 @@ func TestHandleDeleteReturnsMountPointDeleteFailure(t *testing.T) {
 	}
 }
 
+func TestHandleDeleteKeepsMountPointWhenTopClearMountFilesFails(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := filetasklog.NewService(tDB)
+	clearErr := errors.New("clear mount files failed")
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		listErr: clearErr,
+		filesByID: map[int64]*models.VirtualFile{
+			10: {ID: 10, TopId: 10, IsTop: true, Name: "top"},
+		},
+		childrenByParent: map[int64][]*models.VirtualFile{},
+		deleteErrByID:    map[int64]error{},
+	}
+	mountPointService := &mockBatchModifyTokenMountPointService{}
+
+	handler := NewHandler(
+		zap.NewNop(),
+		virtualFileService,
+		nil,
+		nil,
+		mountPointService,
+		logService,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	req := topic.FileDeleteRequest{FileId: 10}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.HandleDelete())
+	err = processor.Process(stdctx.Background(), payload)
+
+	if !errors.Is(err, clearErr) {
+		t.Fatalf("expected clear mount files error, got %v", err)
+	}
+
+	if len(mountPointService.batchDeleteRequests) != 0 {
+		t.Fatalf("expected mount point kept when virtual file cleanup fails, got %+v", mountPointService.batchDeleteRequests)
+	}
+
+	if len(virtualFileService.deletedIDs) != 0 {
+		t.Fatalf("expected root virtual file kept when child cleanup fails, got %v", virtualFileService.deletedIDs)
+	}
+}
+
+func TestHandleDeleteDeletesTopMountPointAfterVirtualFiles(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := filetasklog.NewService(tDB)
+	callLog := make([]string, 0)
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		filesByID: map[int64]*models.VirtualFile{
+			10: {ID: 10, TopId: 10, IsTop: true, Name: "top"},
+		},
+		childrenByParent: map[int64][]*models.VirtualFile{},
+		deleteErrByID:    map[int64]error{},
+		callLog:          &callLog,
+	}
+	mountPointService := &mockBatchModifyTokenMountPointService{
+		callLog: &callLog,
+	}
+
+	oldMediaConfig := shared.MediaConfig
+	shared.MediaConfig = nil
+
+	defer func() {
+		shared.MediaConfig = oldMediaConfig
+	}()
+
+	handler := NewHandler(
+		zap.NewNop(),
+		virtualFileService,
+		nil,
+		nil,
+		mountPointService,
+		logService,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	req := topic.FileDeleteRequest{FileId: 10}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.HandleDelete())
+	if err = processor.Process(stdctx.Background(), payload); err != nil {
+		t.Fatalf("process delete: %v", err)
+	}
+
+	wantCalls := []string{"virtual-list", "virtual-delete", "mount-delete"}
+	if !slices.Equal(callLog, wantCalls) {
+		t.Fatalf("expected call order %v, got %v", wantCalls, callLog)
+	}
+
+	if !slices.Equal(virtualFileService.deletedIDs, []int64{10}) {
+		t.Fatalf("expected root virtual file deleted, got %v", virtualFileService.deletedIDs)
+	}
+
+	if len(mountPointService.batchDeleteRequests) != 1 {
+		t.Fatalf("expected one mount point delete, got %+v", mountPointService.batchDeleteRequests)
+	}
+}
+
 func TestHandleDeleteReturnsClearMountFilesFailureWhenFileMissing(t *testing.T) {
 	tDB := setupBatchDeleteTaskLogTestDB(t)
 	logService := filetasklog.NewService(tDB)
@@ -1273,13 +1386,14 @@ func TestHandleDeleteReturnsClearMountFilesFailureWhenFileMissing(t *testing.T) 
 		childrenByParent: map[int64][]*models.VirtualFile{},
 		deleteErrByID:    map[int64]error{},
 	}
+	mountPointService := &mockBatchModifyTokenMountPointService{}
 
 	handler := NewHandler(
 		zap.NewNop(),
 		virtualFileService,
 		nil,
 		nil,
-		&mockBatchModifyTokenMountPointService{},
+		mountPointService,
 		logService,
 		nil,
 		nil,
@@ -1307,6 +1421,10 @@ func TestHandleDeleteReturnsClearMountFilesFailureWhenFileMissing(t *testing.T) 
 
 	if log.Status != models.StatusFailed {
 		t.Fatalf("expected task status failed, got %q", log.Status)
+	}
+
+	if len(mountPointService.batchDeleteRequests) != 0 {
+		t.Fatalf("expected mount point kept when residual file cleanup fails, got %+v", mountPointService.batchDeleteRequests)
 	}
 }
 
