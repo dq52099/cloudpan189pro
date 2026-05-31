@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -212,11 +213,13 @@ func (m *mockRefreshSubscribePlanService) IncrFailedCount(ctx context.Context, i
 type mockRefreshSubscribeLogService struct {
 	autoingestlog.Service
 
-	levels []autoingest.LogLevel
+	levels   []autoingest.LogLevel
+	contents []string
 }
 
 func (m *mockRefreshSubscribeLogService) Create(ctx context.Context, planID int64, level autoingest.LogLevel, content string) (int64, error) {
 	m.levels = append(m.levels, level)
+	m.contents = append(m.contents, content)
 
 	return int64(len(m.levels)), nil
 }
@@ -716,6 +719,95 @@ func TestRefreshSubscribeDoesNotAdvanceOffsetWhenCreateFails(t *testing.T) {
 
 	if storageService.Count() != 2 {
 		t.Fatalf("expected initial create and one retry, got %d", storageService.Count())
+	}
+}
+
+func TestRefreshSubscribeLogsPathQueryFailure(t *testing.T) {
+	planService := &mockRefreshSubscribePlanService{
+		plan:          newRefreshSubscribePlan(100, autoingest.OnConflictRename),
+		updatedOffset: -1,
+	}
+	cloudService := &mockRefreshSubscribeCloudBridgeService{
+		items: []*cloudbridge.ShareResourceInfo{{
+			Name:      "query-fail",
+			ID:        "cloud-1",
+			ShareId:   88,
+			ShareTime: time.Unix(200, 0),
+			IsTop:     1,
+		}},
+	}
+	logService := &mockRefreshSubscribeLogService{}
+	storageService := &mockRefreshSubscribeStorageFacadeService{}
+	virtualService := &mockRefreshSubscribeVirtualFileService{err: errors.New("query failed")}
+
+	if err := runRefreshSubscribeHandler(t, planService, cloudService, logService, storageService, virtualService); err != nil {
+		t.Fatalf("refresh subscribe: %v", err)
+	}
+
+	if planService.updatedOffset != 100 {
+		t.Fatalf("expected offset kept at 100 after path query failure, got %d", planService.updatedOffset)
+	}
+
+	if planService.failedDelta != 1 {
+		t.Fatalf("expected one failed item, got %d", planService.failedDelta)
+	}
+
+	if storageService.Count() != 0 {
+		t.Fatalf("expected no storage create after path query failure, got %d", storageService.Count())
+	}
+
+	if len(logService.contents) != 1 || !strings.Contains(logService.contents[0], "查询虚拟文件路径失败") {
+		t.Fatalf("expected path query failure log, got %#v", logService.contents)
+	}
+}
+
+func TestRefreshSubscribeRetryLogsExistingScanEnqueueFailure(t *testing.T) {
+	planService := &mockRefreshSubscribePlanService{
+		plan:          newRefreshSubscribePlan(100, autoingest.OnConflictRename),
+		updatedOffset: -1,
+	}
+	cloudService := &mockRefreshSubscribeCloudBridgeService{
+		items: []*cloudbridge.ShareResourceInfo{{
+			Name:      "created-before",
+			ID:        "cloud-created",
+			ShareId:   88,
+			ShareTime: time.Unix(200, 0),
+			IsTop:     1,
+		}},
+	}
+	logService := &mockRefreshSubscribeLogService{}
+	storageService := &mockRefreshSubscribeStorageFacadeService{}
+	virtualService := &mockRefreshSubscribeVirtualFileService{
+		existing: &models.VirtualFile{ID: 55, Name: "created-before", CloudId: "cloud-created"},
+	}
+	taskEngine := &mockRefreshSubscribeTaskEngine{err: errors.New("queue failed")}
+	handler := NewHandler(
+		taskEngine,
+		cloudService,
+		planService,
+		logService,
+		storageService,
+		virtualService,
+	)
+
+	err := runRefreshSubscribeHandlerWithRequest(t, handler, topic.AutoIngestRefreshSubscribeRequest{
+		PlanId:  planService.plan.ID,
+		IsRetry: true,
+	})
+	if err != nil {
+		t.Fatalf("refresh subscribe: %v", err)
+	}
+
+	if planService.updatedOffset != 100 {
+		t.Fatalf("expected offset kept at 100 after retry enqueue failure, got %d", planService.updatedOffset)
+	}
+
+	if planService.failedDelta != 1 {
+		t.Fatalf("expected one failed item, got %d", planService.failedDelta)
+	}
+
+	if len(logService.contents) != 1 || !strings.Contains(logService.contents[0], "下发已存在文件扫描任务失败") {
+		t.Fatalf("expected existing scan enqueue failure log, got %#v", logService.contents)
 	}
 }
 

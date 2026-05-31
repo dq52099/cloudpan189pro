@@ -265,6 +265,24 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 			)
 		}
 
+		recordFailureLog := func(fullPath string, message string, err error) {
+			if h.autoIngestLogService == nil {
+				return
+			}
+
+			logMessage := message
+			if err != nil {
+				logMessage = fmt.Sprintf("%s: %s", message, err.Error())
+			}
+
+			if _, logErr := h.autoIngestLogService.Create(ctx.GetContext(),
+				req.PlanId, autoingest.LogLevelError,
+				fmt.Sprintf("新增入库失败：%s, 错误信息：%s", fullPath, logMessage),
+			); logErr != nil {
+				logger.Error("创建入库日志失败", zap.Error(logErr))
+			}
+		}
+
 		var (
 			wg               sync.WaitGroup
 			itemChan         = make(chan pendingItem, len(pendingItems))
@@ -304,6 +322,8 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 
 							failedRecorded = true
 
+							recordFailureLog(fullPath, "查询虚拟文件路径失败", err)
+
 							break
 						}
 
@@ -319,6 +339,8 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 										mu.Unlock()
 
 										failedRecorded = true
+
+										recordFailureLog(fullPath, "下发已存在文件扫描任务失败", err)
 
 										break
 									}
@@ -383,6 +405,8 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 
 									failedRecorded = true
 
+									recordFailureLog(fullPath, "唯一约束冲突后查询目标路径失败", queryErr)
+
 									break
 								}
 
@@ -396,6 +420,8 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 										mu.Unlock()
 
 										failedRecorded = true
+
+										recordFailureLog(fullPath, "下发已存在文件扫描任务失败", err)
 
 										break
 									}
@@ -426,6 +452,8 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 
 								failedRecorded = true
 
+								recordFailureLog(fullPath, "唯一约束冲突但目标路径不存在", err)
+
 								break
 							}
 
@@ -442,12 +470,7 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 
 							failedRecorded = true
 
-							if _, logErr := h.autoIngestLogService.Create(ctx.GetContext(),
-								req.PlanId, autoingest.LogLevelError,
-								fmt.Sprintf("新增入库失败：%s, 错误信息：%s", fullPath, err.Error()),
-							); logErr != nil {
-								logger.Error("创建入库日志失败", zap.Error(logErr))
-							}
+							recordFailureLog(fullPath, "入库失败", err)
 
 							break
 						}
@@ -464,12 +487,7 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 
 							failedRecorded = true
 
-							if _, logErr := h.autoIngestLogService.Create(ctx.GetContext(),
-								req.PlanId, autoingest.LogLevelError,
-								fmt.Sprintf("新增入库失败：%s, 错误信息：序列化文件扫描任务失败: %s", fullPath, err.Error()),
-							); logErr != nil {
-								logger.Error("创建入库日志失败", zap.Error(logErr))
-							}
+							recordFailureLog(fullPath, "序列化文件扫描任务失败", err)
 
 							break
 						}
@@ -487,12 +505,7 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 
 							failedRecorded = true
 
-							if _, logErr := h.autoIngestLogService.Create(ctx.GetContext(),
-								req.PlanId, autoingest.LogLevelError,
-								fmt.Sprintf("新增入库失败：%s, 错误信息：下发文件扫描任务失败: %s", fullPath, err.Error()),
-							); logErr != nil {
-								logger.Error("创建入库日志失败", zap.Error(logErr))
-							}
+							recordFailureLog(fullPath, "下发文件扫描任务失败", err)
 
 							break
 						}
