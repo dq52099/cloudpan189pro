@@ -11,6 +11,7 @@ type selectListRequest struct {
 	CurrentPage int    `form:"currentPage,default=1" binding:"omitempty,min=1" example:"1"`
 	PageSize    int    `form:"pageSize,default=10" binding:"omitempty,min=1" example:"10"`
 	NoPaginate  bool   `form:"noPaginate" binding:"omitempty" example:"false"`
+	Keyword     string `form:"keyword" example:"电影"`
 	Path        string `form:"path" example:"/aaa"`
 	Name        string `form:"name" example:"挂载点名称"`
 }
@@ -39,6 +40,7 @@ type selectListResponse struct {
 // @Param currentPage query int false "当前页码，默认为1" default(1)
 // @Param pageSize query int false "每页大小，默认为10" default(10)
 // @Param noPaginate query bool false "是否不分页" default(false)
+// @Param keyword query string false "名称或路径关键词（OR 模糊匹配）" example("电影")
 // @Param path query string false "路径过滤（模糊匹配）" example("/aaa")
 // @Param name query string false "名称过滤（模糊匹配）" example("挂载点")
 // @Success 200 {object} httpcontext.Response{data=selectListResponse} "获取简化列表成功"
@@ -77,6 +79,7 @@ func (h *handler) SelectList() httpcontext.HandlerFunc {
 			CurrentPage:  req.CurrentPage,
 			PageSize:     req.PageSize,
 			NoPaginate:   req.NoPaginate,
+			Keyword:      req.Keyword,
 			FullPath:     req.Path,
 			Name:         req.Name,
 			UserID:       userID,

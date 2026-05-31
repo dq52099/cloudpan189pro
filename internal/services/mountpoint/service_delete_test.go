@@ -271,6 +271,63 @@ func TestListNonAdminAppliesFiltersToAllAccessibleSources(t *testing.T) {
 	}
 }
 
+func TestListKeywordMatchesNameOrFullPath(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	svc := NewService(tDB, nil, nil, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	nameMatch := createMountPoint(t, tDB.db, 3021, 10, "movie-name")
+	pathMatch := createMountPoint(t, tDB.db, 3022, 10, "plain-name")
+	noMatch := createMountPoint(t, tDB.db, 3023, 10, "music-name")
+
+	if err := tDB.db.Model(pathMatch).Update("full_path", "/media/movie-path").Error; err != nil {
+		t.Fatalf("update path match full path: %v", err)
+	}
+
+	if err := tDB.db.Model(nameMatch).Update("full_path", "/media/name-only").Error; err != nil {
+		t.Fatalf("update name match full path: %v", err)
+	}
+
+	if err := tDB.db.Model(noMatch).Update("full_path", "/media/music").Error; err != nil {
+		t.Fatalf("update no match full path: %v", err)
+	}
+
+	req := &ListRequest{
+		Keyword:    "movie",
+		NoPaginate: true,
+		IsAdmin:    true,
+	}
+
+	list, err := svc.List(ctx, req)
+	if err != nil {
+		t.Fatalf("list mount points by keyword: %v", err)
+	}
+
+	got := map[int64]bool{}
+	for _, item := range list {
+		got[item.FileId] = true
+	}
+
+	for _, expected := range []int64{nameMatch.FileId, pathMatch.FileId} {
+		if !got[expected] {
+			t.Fatalf("expected keyword to match file %d, got %+v", expected, got)
+		}
+	}
+
+	if got[noMatch.FileId] {
+		t.Fatalf("expected keyword to exclude file %d, got %+v", noMatch.FileId, got)
+	}
+
+	count, err := svc.Count(ctx, &ListRequest{Keyword: "movie", IsAdmin: true})
+	if err != nil {
+		t.Fatalf("count mount points by keyword: %v", err)
+	}
+
+	if count != 2 {
+		t.Fatalf("expected keyword count 2, got %d", count)
+	}
+}
+
 func TestGetAccessibleMountPointIDsRejectsInvalidNonAdminUserID(t *testing.T) {
 	tDB := setupMountPointTestDB(t)
 	svc := NewService(tDB, nil, nil, nil)

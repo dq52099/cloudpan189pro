@@ -97,6 +97,7 @@ export interface StorageSelectListQuery {
   currentPage?: number
   pageSize?: number
   noPaginate?: boolean
+  keyword?: string // 名称或路径关键词（OR 模糊）
   path?: string // 路径过滤（模糊）
   name?: string // 名称过滤（模糊）
 }

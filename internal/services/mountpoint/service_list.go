@@ -20,6 +20,7 @@ type ListRequest struct {
 	CurrentPage       int     `form:"currentPage,omitempty,default=1" binding:"omitempty,min=1" example:"1"` // 当前页码，默认为1
 	PageSize          int     `form:"pageSize,omitempty,default=10" binding:"omitempty,min=1" example:"10"`  // 每页大小，默认为10
 	NoPaginate        bool    `form:"noPaginate" binding:"omitempty" example:"false"`                        // 是否不分页，默认false
+	Keyword           string  `form:"keyword" binding:"omitempty" example:"电影"`                              // 名称或完整路径模糊搜索，可选
 	Name              string  `form:"name" binding:"omitempty" example:"挂载点名称"`                              // 挂载点名称模糊搜索，可选
 	FullPath          string  `form:"fullPath" binding:"omitempty" example:"/path/to/mount"`                 // 完整路径模糊搜索，可选
 	FileId            *int64  `form:"fileId" binding:"omitempty" example:"1"`                                // 文件ID
@@ -87,6 +88,11 @@ func (s *service) getListQuery(ctx context.Context, req *ListRequest) (*gorm.DB,
 
 	if !req.IsAdmin && req.UserID <= 0 {
 		return nil, errInvalidMountPointUserID
+	}
+
+	if req.Keyword != "" {
+		keyword := "%" + req.Keyword + "%"
+		query = query.Where("(name LIKE ? OR full_path LIKE ?)", keyword, keyword)
 	}
 
 	if req.Name != "" {

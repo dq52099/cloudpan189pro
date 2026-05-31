@@ -787,6 +787,63 @@ func TestSelectListReturnsErrorWhenGroupBindingsFail(t *testing.T) {
 	}
 }
 
+func TestSelectListPassesKeywordAsNameOrPathSearch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mountPointService := &mockListMountPointService{list: []*models.MountPoint{{
+		ID:            1,
+		FileId:        1001,
+		Name:          "movies",
+		FullPath:      "/media/movies",
+		TokenId:       0,
+		CreatorUserID: 10,
+	}}}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(10))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.GET("/select_list", wrapper.Wrap(NewHandler(
+		nil,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		&mockListGroup2FileService{},
+		&mockListUserMountPointTokenService{},
+	).SelectList()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/select_list?keyword=movie&currentPage=2&pageSize=20", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if mountPointService.lastListReq == nil {
+		t.Fatal("expected mount point list request")
+	}
+
+	if mountPointService.lastListReq.Keyword != "movie" {
+		t.Fatalf("expected keyword movie, got %q", mountPointService.lastListReq.Keyword)
+	}
+
+	if mountPointService.lastListReq.Name != "" || mountPointService.lastListReq.FullPath != "" {
+		t.Fatalf("expected keyword search not to also force name/path AND filters, got name=%q path=%q", mountPointService.lastListReq.Name, mountPointService.lastListReq.FullPath)
+	}
+
+	if mountPointService.lastCountReq == nil || mountPointService.lastCountReq.Keyword != "movie" {
+		t.Fatalf("expected count request to use keyword, got %+v", mountPointService.lastCountReq)
+	}
+}
+
 func TestSelectListReturnsErrorWhenUserTokenLookupFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

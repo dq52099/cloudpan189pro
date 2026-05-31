@@ -268,8 +268,7 @@ const buildParams = (noPaginate = false) => ({
   currentPage: pagination.page,
   pageSize: pagination.pageSize,
   noPaginate,
-  name: searchKeyword.value || undefined,
-  path: searchKeyword.value || undefined,
+  keyword: searchKeyword.value.trim() || undefined,
 })
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
