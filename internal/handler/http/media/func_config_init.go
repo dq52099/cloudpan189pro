@@ -39,12 +39,23 @@ func (h *handler) ConfigInit() httpcontext.HandlerFunc {
 			return
 		}
 
+		baseURL, err := normalizeMediaBaseURL(req.BaseURL)
+		if err != nil {
+			ctx.AbortWithInvalidParams(err)
+
+			return
+		}
+
+		if !h.ensureMediaConfigService(ctx, codeConfigInitFailed) {
+			return
+		}
+
 		iReq := &mediaconfig.InitRequest{
 			Enable:              req.Enable,
 			StoragePath:         req.StoragePath,
 			AutoClean:           *req.AutoClean,
 			ConflictPolicy:      req.ConflictPolicy,
-			BaseURL:             req.BaseURL,
+			BaseURL:             baseURL,
 			IncludedSuffixes:    req.IncludedSuffixes,
 			AutoRebuildEnable:   req.AutoRebuildEnable,
 			AutoRebuildInterval: req.AutoRebuildInterval,

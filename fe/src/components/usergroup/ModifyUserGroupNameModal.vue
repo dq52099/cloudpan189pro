@@ -168,7 +168,7 @@ const handleSubmit = async () => {
 
     if (response.code === 200) {
       message.success('修改用户组名称成功')
-      showModal.value = false
+      emit('update:show', false)
       emit('success')
     } else {
       message.error(response.msg || '修改用户组名称失败')
@@ -182,8 +182,10 @@ const handleSubmit = async () => {
       return
     }
 
-    console.error('修改用户组名称失败:', error)
-    message.error(getErrorMessage(error, '修改用户组名称失败'))
+    const errorMessage = getErrorMessage(error, '修改用户组名称失败')
+
+    console.error('修改用户组名称失败:', errorMessage)
+    message.error(errorMessage)
   } finally {
     if (isCurrentOperation(currentOperation)) {
       loading.value = false

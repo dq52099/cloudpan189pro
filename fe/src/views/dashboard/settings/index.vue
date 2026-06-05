@@ -16,7 +16,7 @@
               maxlength="50"
               show-count
               :disabled="savingTitle"
-              style="width: 320px"
+              class="setting-input"
               @keyup.enter="handleSaveTitle"
             />
             <n-button
@@ -47,7 +47,7 @@
               placeholder="http://example.com"
               clearable
               :disabled="savingBaseURL"
-              style="width: 320px"
+              class="setting-input"
             />
             <n-button
               size="small"
@@ -79,7 +79,7 @@
       <div class="setting-item">
         <div class="item-left">
           <div class="item-title">用户认证</div>
-          <div class="item-desc">开启后访问 WebDAV 需要用户登录认证</div>
+          <div class="item-desc">开启后文件浏览和后台管理都需要用户登录认证</div>
         </div>
         <div class="item-right">
           <n-switch
@@ -106,6 +106,34 @@
             :disabled="savingLocalProxy"
             @update:value="handleToggleLocalProxy"
           />
+        </div>
+      </div>
+
+      <div class="setting-item">
+        <div class="item-left">
+          <div class="item-title">本地代理地址</div>
+          <div class="item-desc">HTTP 代理地址，可留空</div>
+        </div>
+        <div class="item-right">
+          <div class="right-inline">
+            <n-input
+              v-model:value="additionForm.localProxyURL"
+              placeholder="http://127.0.0.1:7890"
+              clearable
+              :disabled="savingLocalProxyURL"
+              class="setting-input"
+              @keyup.enter="handleSaveLocalProxyURL"
+            />
+            <n-button
+              size="small"
+              type="primary"
+              :loading="savingLocalProxyURL"
+              :disabled="savingLocalProxyURL"
+              @click="handleSaveLocalProxyURL"
+            >
+              保存
+            </n-button>
+          </div>
         </div>
       </div>
 
@@ -143,7 +171,7 @@
               :marks="threadCountMarks"
               :format-tooltip="formatThreadTooltip"
               :disabled="savingThreadCount"
-              style="width: 340px"
+              class="setting-slider"
               @change="handleThreadCountChange"
             />
             <n-button
@@ -175,7 +203,7 @@
               :marks="chunkSizeMarks"
               :format-tooltip="formatChunkTooltip"
               :disabled="savingChunkSize"
-              style="width: 340px"
+              class="setting-slider"
               @change="handleChunkSizeChange"
             />
             <n-button
@@ -207,7 +235,7 @@
               :marks="taskThreadMarks"
               :format-tooltip="formatTaskThreadTooltip"
               :disabled="savingTaskThreads"
-              style="width: 340px"
+              class="setting-slider"
               @change="handleTaskThreadChange"
             />
             <n-button
@@ -237,7 +265,7 @@
               :max="32"
               :step="1"
               :disabled="savingWorkerCount"
-              style="width: 340px"
+              class="setting-slider"
               @change="handleWorkerCountChange"
             />
             <n-button
@@ -300,7 +328,7 @@
             :autosize="{ minRows: 3, maxRows: 6 }"
             placeholder=".mp4, .mkv, .avi"
             :disabled="savingWebdavAllowedSuffixes"
-            style="width: 420px"
+            class="suffix-input"
           />
           <div class="right-inline suffix-actions">
             <n-button
@@ -330,7 +358,7 @@
 import { ref, reactive, watchEffect, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { NInput, NButton, NText, useMessage, NSlider, NSwitch } from 'naive-ui'
-import { useAuthStore, useSystemStore } from '@/stores'
+import { useAuthStore, useSystemStore, useUserStore } from '@/stores'
 import {
   modifySystemTitle,
   modifySystemBaseURL,
@@ -342,12 +370,15 @@ import {
 } from '@/api/setting'
 import { getErrorMessage } from '@/utils/api'
 import { formatFileSize } from '@/utils/format'
+import { buildLoginRedirectPath } from '@/utils/redirect'
+import { normalizeHttpBaseURL } from '@/utils/url'
 
 const message = useMessage()
 const router = useRouter()
 
 const systemStore = useSystemStore()
 const authStore = useAuthStore()
+const userStore = useUserStore()
 const systemInfo = systemStore.get()
 let isSettingsMounted = false
 
@@ -373,6 +404,7 @@ const defaultWebdavAllowedSuffixes = [
   '.wmv',
   '.flv',
   '.webm',
+  '.m3u8',
   '.m4v',
   '.mpg',
   '.mpeg',
@@ -523,6 +555,51 @@ watchEffect(() => {
 // ===== 用户认证开关 =====
 const enableAuth = ref<boolean>(systemInfo.enableAuth || false)
 const savingEnableAuth = ref(false)
+const resolveSavedEnableAuth = (
+  refreshResult: Awaited<ReturnType<typeof refreshSystemInfoAfterSave>>,
+  fallback: boolean
+) => {
+  if (refreshResult?.code === 200 && refreshResult.data) {
+    return refreshResult.data.enableAuth
+  }
+
+  return fallback
+}
+
+const verifySessionAfterAuthEnabled = async () => {
+  const redirectPath = buildLoginRedirectPath(router.currentRoute.value.fullPath)
+  const token = await authStore.doRefreshToken(true)
+  if (!isSettingsMounted) return
+
+  if (!token) {
+    await router.replace(redirectPath)
+
+    return
+  }
+
+  try {
+    const user = await userStore.refresh()
+    if (!isSettingsMounted) return
+
+    if (!user) {
+      authStore.logout()
+      await router.replace(redirectPath)
+
+      return
+    }
+
+    if (!user.isAdmin) {
+      await router.replace('/@dashboard')
+    }
+  } catch (err) {
+    if (!isSettingsMounted) return
+
+    console.error('开启认证后校验登录状态失败:', getErrorMessage(err, '开启认证后校验登录状态失败'))
+    authStore.logout()
+    await router.replace(redirectPath)
+  }
+}
+
 const handleToggleEnableAuth = async (val: boolean) => {
   if (savingEnableAuth.value || !isSettingsMounted) return
 
@@ -539,14 +616,17 @@ const handleToggleEnableAuth = async (val: boolean) => {
     }
 
     message.success('设置已保存')
-    await refreshSystemInfoAfterSave()
+    const refreshResult = await refreshSystemInfoAfterSave()
     if (!isSettingsMounted) return
 
-    const nextEnableAuth = systemStore.get().enableAuth
+    const nextEnableAuth = resolveSavedEnableAuth(refreshResult, val)
+    if (!systemStore.patchCached({ enableAuth: nextEnableAuth })) {
+      systemInfo.enableAuth = nextEnableAuth
+    }
     enableAuth.value = nextEnableAuth
 
-    if (!authStore.isLogin) {
-      router.replace('/@login')
+    if (nextEnableAuth) {
+      await verifySessionAfterAuthEnabled()
     }
   } catch (err) {
     if (!isSettingsMounted) return
@@ -570,6 +650,7 @@ const additionLoaded = ref(false)
 
 // 单字段保存的 loading 状态
 const savingLocalProxy = ref(false)
+const savingLocalProxyURL = ref(false)
 const savingMultipleStream = ref(false)
 const savingThreadCount = ref(false)
 const savingChunkSize = ref(false)
@@ -611,6 +692,7 @@ const areAdditionPayloadsEqual = (
 ) => {
   return (
     a.localProxy === b.localProxy &&
+    a.localProxyURL === b.localProxyURL &&
     a.multipleStream === b.multipleStream &&
     a.multipleStreamThreadCount === b.multipleStreamThreadCount &&
     a.multipleStreamChunkSize === b.multipleStreamChunkSize &&
@@ -628,6 +710,7 @@ const isAdditionPayloadUnchanged = (payload: ModifySettingAdditionRequest) => {
 
   return (
     (payload.localProxy === undefined || payload.localProxy === saved.localProxy) &&
+    (payload.localProxyURL === undefined || payload.localProxyURL === saved.localProxyURL) &&
     (payload.multipleStream === undefined || payload.multipleStream === saved.multipleStream) &&
     (payload.multipleStreamThreadCount === undefined ||
       payload.multipleStreamThreadCount === saved.multipleStreamThreadCount) &&
@@ -650,6 +733,7 @@ const commitAdditionPayload = (payload: ModifySettingAdditionRequest) => {
     : cloneAddition(additionForm)
 
   if (payload.localProxy !== undefined) saved.localProxy = payload.localProxy
+  if (payload.localProxyURL !== undefined) saved.localProxyURL = payload.localProxyURL
   if (payload.multipleStream !== undefined) saved.multipleStream = payload.multipleStream
   if (payload.multipleStreamThreadCount !== undefined) {
     saved.multipleStreamThreadCount = payload.multipleStreamThreadCount
@@ -677,6 +761,7 @@ const rollbackAdditionPayload = (payload: ModifySettingAdditionRequest) => {
   if (!saved) return
 
   if (payload.localProxy !== undefined) additionForm.localProxy = saved.localProxy
+  if (payload.localProxyURL !== undefined) additionForm.localProxyURL = saved.localProxyURL
   if (payload.multipleStream !== undefined) additionForm.multipleStream = saved.multipleStream
   if (payload.multipleStreamThreadCount !== undefined) {
     additionForm.multipleStreamThreadCount = saved.multipleStreamThreadCount
@@ -827,6 +912,16 @@ const handleToggleLocalProxy = (val: boolean) => {
     () => savingLocalProxy.value
   )
 }
+
+const handleSaveLocalProxyURL = () => {
+  additionForm.localProxyURL = (additionForm.localProxyURL || '').trim()
+  saveAdditionField(
+    { localProxyURL: additionForm.localProxyURL },
+    (v) => (savingLocalProxyURL.value = v),
+    () => savingLocalProxyURL.value
+  )
+}
+
 const handleToggleMultipleStream = (val: boolean) => {
   saveAdditionField(
     { multipleStream: val },
@@ -960,16 +1055,13 @@ const autoDetectBaseURL = () => {
 const handleSaveBaseURL = async () => {
   if (savingBaseURL.value) return
 
-  const newBaseURL = (form.baseURL || '').trim()
+  const newBaseURL = normalizeHttpBaseURL(form.baseURL)
   if (newBaseURL.length === 0) {
-    message.warning('请输入基础 URL')
-    return
-  }
-  if (!/^https?:\/\/.+/.test(newBaseURL)) {
-    message.warning('基础 URL 必须以 http:// 或 https:// 开头')
+    message.warning('基础 URL 必须是有效的 http/https 地址')
     return
   }
 
+  form.baseURL = newBaseURL
   const previousBaseURL = systemInfo.baseURL || ''
 
   savingBaseURL.value = true
@@ -1102,9 +1194,11 @@ onUnmounted(() => {
 
 /* 左侧文案 */
 .item-left {
-  flex: 0 0 560px;
+  flex: 1 1 360px;
   display: flex;
   flex-direction: column;
+  max-width: min(560px, 100%);
+  min-width: 0;
 }
 
 .item-title {
@@ -1125,6 +1219,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  min-width: 0;
 }
 
 .item-right-column {
@@ -1137,6 +1232,20 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+  max-width: 100%;
+}
+
+.setting-input {
+  width: min(320px, 100%);
+}
+
+.setting-slider {
+  width: min(340px, 100%);
+  min-width: 220px;
+}
+
+.suffix-input {
+  width: min(420px, 100%);
 }
 
 .suffix-actions {
@@ -1184,6 +1293,7 @@ onUnmounted(() => {
 
   .item-right {
     justify-content: flex-start;
+    width: 100%;
   }
 
   .item-right-column {
@@ -1192,6 +1302,23 @@ onUnmounted(() => {
 
   .suffix-actions {
     justify-content: flex-start;
+  }
+
+  .right-inline {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .right-inline :deep(.n-button),
+  .setting-input,
+  .setting-slider,
+  .suffix-input {
+    width: 100%;
+  }
+
+  .setting-slider {
+    min-width: 0;
   }
 }
 </style>

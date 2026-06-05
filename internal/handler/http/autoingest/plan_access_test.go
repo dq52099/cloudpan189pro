@@ -375,6 +375,61 @@ func TestUpdatePlanPassesOwnerToServiceUpdate(t *testing.T) {
 	}
 }
 
+func TestUpdatePlanNormalizesParentPath(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	planService := &mockPlanAccessService{
+		plans: map[int64]*models.AutoIngestPlan{
+			11: {ID: 11, UserID: 100, SourceType: autoingest.SourceTypeSubscribe},
+		},
+	}
+
+	router := newPlanAccessRouter(NewHandler(nil, planService, nil, nil).UpdatePlan())
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/action", strings.NewReader(`{"id":11,"parentPath":"/media//%E4%B8%AD%E6%96%87%20/a%3ab"}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if len(planService.updatedFields) != 1 {
+		t.Fatalf("expected one update field set, got %d", len(planService.updatedFields))
+	}
+
+	fields := fieldsToMap(planService.updatedFields[0])
+	if fields["parent_path"] != "/media/中文/a_b" {
+		t.Fatalf("expected normalized parent path, got %+v", fields)
+	}
+}
+
+func TestUpdatePlanRejectsInvalidParentPath(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	planService := &mockPlanAccessService{
+		plans: map[int64]*models.AutoIngestPlan{
+			11: {ID: 11, UserID: 100, SourceType: autoingest.SourceTypeSubscribe},
+		},
+	}
+
+	router := newPlanAccessRouter(NewHandler(nil, planService, nil, nil).UpdatePlan())
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/action", strings.NewReader(`{"id":11,"parentPath":"/bad/%2F/path"}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if len(planService.updatedIDs) != 0 {
+		t.Fatalf("expected invalid parent path not to update, got %v", planService.updatedIDs)
+	}
+}
+
 func TestPlanActionsReturnNotFoundWhenQueryMissing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

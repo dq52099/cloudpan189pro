@@ -50,6 +50,10 @@ func (h *handler) enqueueAutoIngestRetryTask(ctx *httpcontext.Context, planID in
 		return fmt.Errorf("序列化自动入库重试任务失败: %w", err)
 	}
 
+	if isNilDependency(h.taskEngine) {
+		return errors.New("任务引擎未初始化")
+	}
+
 	if err := h.taskEngine.PushMessage(ctx.GetContext(), taskReq.Topic(), body); err != nil {
 		return fmt.Errorf("下发自动入库重试任务失败: %w", err)
 	}

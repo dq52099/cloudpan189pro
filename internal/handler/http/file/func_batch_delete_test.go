@@ -285,6 +285,59 @@ func TestBatchDeleteRejectsInvalidIDBeforeDeleteAndQueueing(t *testing.T) {
 	}
 }
 
+func TestBatchDeleteReturnsQueryErrorWhenVirtualFileServiceMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	mountPointService := &mockBatchDeleteMountPointService{}
+
+	router := newBatchDeleteTestRouter(taskEngine, nil, mountPointService, 100, false)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_delete", strings.NewReader(`{"ids":[11]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertFileHTTPError(t, recorder, http.StatusBadRequest, busCodeFileQueryError)
+
+	if len(mountPointService.queries) != 0 {
+		t.Fatalf("expected missing virtual file service to stop before mount point query, got %v", mountPointService.queries)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no queued tasks without virtual file service, got %d", len(taskEngine.payloads))
+	}
+}
+
+func TestBatchDeleteReturnsQueryErrorWhenVirtualFileServiceTypedNil(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+
+	var virtualFileService *mockBatchDeleteVirtualFileService
+
+	mountPointService := &mockBatchDeleteMountPointService{}
+
+	router := newBatchDeleteTestRouter(taskEngine, virtualFileService, mountPointService, 100, false)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_delete", strings.NewReader(`{"ids":[11]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertFileHTTPError(t, recorder, http.StatusBadRequest, busCodeFileQueryError)
+
+	if len(mountPointService.queries) != 0 {
+		t.Fatalf("expected typed nil virtual file service to stop before mount point query, got %v", mountPointService.queries)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no queued tasks without virtual file service, got %d", len(taskEngine.payloads))
+	}
+}
+
 func TestBatchDeleteReturnsNotFoundWhenFileMissing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -315,6 +368,90 @@ func TestBatchDeleteReturnsNotFoundWhenFileMissing(t *testing.T) {
 
 	if len(taskEngine.payloads) != 0 {
 		t.Fatalf("expected no queued tasks for missing file, got %d", len(taskEngine.payloads))
+	}
+}
+
+func TestBatchDeleteReturnsNotFoundWhenFileQueryReturnsNil(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		files: map[int64]*models.VirtualFile{
+			11: nil,
+		},
+	}
+	mountPointService := &mockBatchDeleteMountPointService{}
+
+	router := newBatchDeleteTestRouter(taskEngine, virtualFileService, mountPointService, 100, false)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_delete", strings.NewReader(`{"ids":[11]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if len(mountPointService.queries) != 0 {
+		t.Fatalf("expected nil file to stop before mount point query, got %v", mountPointService.queries)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no queued tasks for nil file, got %d", len(taskEngine.payloads))
+	}
+}
+
+func TestBatchDeleteReturnsQueryErrorWhenMountPointServiceMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		files: map[int64]*models.VirtualFile{
+			11: {ID: 11, TopId: 1000, Name: "a.mkv"},
+		},
+	}
+
+	router := newBatchDeleteTestRouter(taskEngine, virtualFileService, nil, 100, false)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_delete", strings.NewReader(`{"ids":[11]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertFileHTTPError(t, recorder, http.StatusBadRequest, busCodeQueryTopIdError)
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no queued tasks without mount point service, got %d", len(taskEngine.payloads))
+	}
+}
+
+func TestBatchDeleteReturnsQueryErrorWhenMountPointServiceTypedNil(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		files: map[int64]*models.VirtualFile{
+			11: {ID: 11, TopId: 1000, Name: "a.mkv"},
+		},
+	}
+
+	var mountPointService *mockBatchDeleteMountPointService
+
+	router := newBatchDeleteTestRouter(taskEngine, virtualFileService, mountPointService, 100, false)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_delete", strings.NewReader(`{"ids":[11]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertFileHTTPError(t, recorder, http.StatusBadRequest, busCodeQueryTopIdError)
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no queued tasks without mount point service, got %d", len(taskEngine.payloads))
 	}
 }
 
@@ -351,6 +488,102 @@ func TestBatchDeleteDoesNotMutateDataWhenQueueFails(t *testing.T) {
 
 	if len(taskEngine.payloads) != 0 {
 		t.Fatalf("expected no queued tasks for queue failure, got %d", len(taskEngine.payloads))
+	}
+}
+
+func TestBatchDeleteReturnsBatchErrorWhenTaskEngineMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		files: map[int64]*models.VirtualFile{
+			11: {ID: 11, TopId: 1000, Name: "a.mkv"},
+		},
+	}
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			1000: {FileId: 1000, CreatorUserID: 100},
+		},
+	}
+
+	router := newBatchDeleteTestRouter(nil, virtualFileService, mountPointService, 100, false)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_delete", strings.NewReader(`{"ids":[11]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertFileHTTPError(t, recorder, http.StatusBadRequest, busCodeBatchDeleteError)
+
+	if mountPointService.request != nil {
+		t.Fatalf("did not expect immediate mount point batch delete without task engine, got %+v", mountPointService.request)
+	}
+}
+
+func TestBatchDeleteReturnsBatchErrorWhenTaskEngineTypedNil(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var taskEngine *mockBatchDeleteTaskEngine
+
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		files: map[int64]*models.VirtualFile{
+			11: {ID: 11, TopId: 1000, Name: "a.mkv"},
+		},
+	}
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			1000: {FileId: 1000, CreatorUserID: 100},
+		},
+	}
+
+	router := newBatchDeleteTestRouter(taskEngine, virtualFileService, mountPointService, 100, false)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_delete", strings.NewReader(`{"ids":[11]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertFileHTTPError(t, recorder, http.StatusBadRequest, busCodeBatchDeleteError)
+
+	if mountPointService.request != nil {
+		t.Fatalf("did not expect immediate mount point batch delete with typed nil task engine, got %+v", mountPointService.request)
+	}
+}
+
+func TestBatchDeleteRejectsNilMountPointWithoutQueueingTask(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		files: map[int64]*models.VirtualFile{
+			11: {ID: 11, TopId: 1000, Name: "a.mkv"},
+		},
+	}
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			1000: nil,
+		},
+	}
+
+	router := newBatchDeleteTestRouter(taskEngine, virtualFileService, mountPointService, 100, false)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_delete", strings.NewReader(`{"ids":[11]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected forbidden, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if got, want := mountPointService.queries, []int64{1000}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected mount point query %v, got %v", want, got)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no queued task for nil mount point, got %d", len(taskEngine.payloads))
 	}
 }
 

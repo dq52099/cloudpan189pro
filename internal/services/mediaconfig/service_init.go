@@ -58,9 +58,12 @@ func (s *service) Init(ctx context.Context, req *InitRequest) error {
 		req.AutoRebuildInterval = 24
 	}
 
-	if req.AutoRebuildCron == "" {
-		req.AutoRebuildCron = "0 2 * * *"
+	autoRebuildCron, err := normalizeAutoRebuildCron(req.AutoRebuildCron)
+	if err != nil {
+		return err
 	}
+
+	req.AutoRebuildCron = autoRebuildCron
 
 	newCfg := &models.MediaConfig{
 		ID:                  1,
@@ -85,7 +88,7 @@ func (s *service) Init(ctx context.Context, req *InitRequest) error {
 		return createErr
 	}
 
-	shared.MediaConfig = newCfg
+	shared.SetMediaConfig(newCfg)
 
 	return nil
 }

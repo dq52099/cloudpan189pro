@@ -16,7 +16,7 @@
         </div>
 
         <div v-else-if="qrcodeUrl" class="qrcode-container">
-          <n-qr-code :value="qrcodeUrl" :size="200" style="width: 220px; height: 220px" />
+          <n-qr-code :value="qrcodeUrl" :size="200" class="qrcode-code" />
           <div class="qrcode-info">
             <n-icon size="20" color="#18a058">
               <CheckmarkCircleOutline />
@@ -70,7 +70,7 @@
             size="small"
             :disabled="isBusy"
             @click="initQrcode"
-            style="margin-left: 8px"
+            class="expired-action"
           >
             重新生成
           </n-button>
@@ -255,8 +255,10 @@ const initQrcode = () => {
         return
       }
 
-      console.error('初始化二维码失败:', error)
-      statusMessage.value = getErrorMessage(error, '二维码生成失败，请重试')
+      const errorMessage = getErrorMessage(error, '二维码生成失败，请重试')
+
+      console.error('初始化二维码失败:', errorMessage)
+      statusMessage.value = errorMessage
       statusType.value = 'error'
       qrcodeFormatInvalid.value = false
       qrcodeUrl.value = ''
@@ -359,8 +361,10 @@ const handleCheckLogin = () => {
         return
       }
 
-      console.error('检查二维码状态失败:', error)
-      message.error(getErrorMessage(error, '检查登录状态失败'))
+      const errorMessage = getErrorMessage(error, '检查登录状态失败')
+
+      console.error('检查二维码状态失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isCurrentOperation(currentOperation)) {
@@ -444,6 +448,12 @@ onUnmounted(() => {
   gap: 12px;
 }
 
+.qrcode-code {
+  width: min(220px, 100%);
+  max-width: 100%;
+  height: auto;
+}
+
 .qrcode-info {
   display: flex;
   align-items: center;
@@ -503,10 +513,15 @@ onUnmounted(() => {
 .expired {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   color: #d03050;
   font-size: 14px;
   margin-top: 12px;
+}
+
+.expired-action {
+  margin-left: 0;
 }
 
 .status-message {

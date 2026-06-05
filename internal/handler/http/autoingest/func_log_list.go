@@ -52,7 +52,11 @@ func (h *handler) LogList() httpcontext.HandlerFunc {
 		}
 
 		userID := ctx.GetInt64(consts.CtxKeyUserId)
+
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
+		if !h.ensurePlanService(ctx, codeLogListFailed) {
+			return
+		}
 
 		// 仅列出当前用户可见的计划作为 planName 映射，避免越权暴露其他用户的计划名
 		planList, err := h.planService.List(ctx.GetContext(), &autoingestplanSvi.ListRequest{
@@ -66,7 +70,13 @@ func (h *handler) LogList() httpcontext.HandlerFunc {
 			return
 		}
 
-		planNameMap := lo.SliceToMap(planList, func(item *models.AutoIngestPlan) (int64, string) { return item.ID, item.Name })
+		planList = compactAutoIngestPlans(planList)
+
+		planNameMap := make(map[int64]string, len(planList))
+		for _, item := range planList {
+			planNameMap[item.ID] = item.Name
+		}
+
 		visiblePlanIDs := lo.Keys(planNameMap)
 
 		if !isAdmin {
@@ -97,6 +107,10 @@ func (h *handler) LogList() httpcontext.HandlerFunc {
 			}
 		}
 
+		if !h.ensureLogService(ctx, codeLogListFailed) {
+			return
+		}
+
 		list, err := h.logService.List(ctx.GetContext(), req)
 		if err != nil {
 			ctx.Fail(codeLogListFailed.WithError(err))
@@ -113,6 +127,10 @@ func (h *handler) LogList() httpcontext.HandlerFunc {
 
 		var dtoList = make([]*logDTO, 0, len(list))
 		for _, item := range list {
+			if item == nil {
+				continue
+			}
+
 			planName := "计划不存在"
 
 			if _planName, ok := planNameMap[item.PlanId]; ok {

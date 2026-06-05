@@ -141,12 +141,20 @@ func (e *workEngine) getContentType(filename string) string {
 		return "audio/mp4"
 	case ".mp4":
 		return "video/mp4"
+	case ".m4v":
+		return "video/x-m4v"
 	case ".avi":
 		return "video/x-msvideo"
 	case ".mkv":
 		return "video/x-matroska"
+	case ".m3u8":
+		return "application/vnd.apple.mpegurl"
 	case ".mov":
 		return "video/quicktime"
+	case ".mpg", ".mpeg", ".m2v", ".m1v", ".mpv":
+		return "video/mpeg"
+	case ".ts", ".mts", ".m2ts", ".m2t":
+		return "video/mp2t"
 	case ".wmv":
 		return "video/x-ms-wmv"
 	case ".flv":

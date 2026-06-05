@@ -1,11 +1,14 @@
 package cloudtoken
 
 import (
+	"time"
+
 	"github.com/pkg/errors"
 	"github.com/xxcheng123/cloudpan189-interface/client"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"go.uber.org/zap"
+	"gorm.io/datatypes"
 )
 
 var loginQuery = client.LoginQuery
@@ -32,17 +35,21 @@ func (s *service) CheckQrcode(ctx context.Context, req *CheckQrcodeRequest) (err
 		return errInvalidCloudTokenUserID
 	}
 
+	var oldToken *models.CloudToken
+
 	if req.ID != 0 {
-		if _, err := s.QueryAccessible(ctx, req.ID, req.UserID, req.IsAdmin); err != nil {
+		oldToken, err = s.QueryAccessible(ctx, req.ID, req.UserID, req.IsAdmin)
+		if err != nil {
 			return err
 		}
 	}
 
 	respData, err := loginQuery(req.UUID)
 	if err != nil {
-		ctx.Error("登录查询失败", zap.Error(err))
+		safeErr := sanitizeCloudTokenLogError(err)
+		ctx.Error("登录查询失败", zap.String("error", safeErr))
 
-		return errors.Wrap(err, "登录查询失败")
+		return errors.Errorf("登录查询失败: %s", safeErr)
 	}
 
 	if req.ID != 0 {
@@ -51,6 +58,16 @@ func (s *service) CheckQrcode(ctx context.Context, req *CheckQrcodeRequest) (err
 			"status":       1,
 			"access_token": respData.AccessToken,
 			"expires_in":   respData.ExpiresIn,
+			"addition": func() datatypes.JSONMap {
+				addition := oldToken.Addition
+				if addition == nil {
+					addition = make(map[string]interface{})
+				}
+
+				addition[models.CloudTokenAdditionTokenIssuedAt] = time.Now().UnixMilli()
+
+				return addition
+			}(),
 		}
 
 		query := s.getDB(ctx).Where("id = ?", req.ID)
@@ -76,8 +93,10 @@ func (s *service) CheckQrcode(ctx context.Context, req *CheckQrcodeRequest) (err
 			AccessToken: respData.AccessToken,
 			ExpiresIn:   respData.ExpiresIn,
 			LoginType:   models.LoginTypeScan,
-			Addition:    map[string]interface{}{},
-			UserID:      req.UserID,
+			Addition: map[string]interface{}{
+				models.CloudTokenAdditionTokenIssuedAt: time.Now().UnixMilli(),
+			},
+			UserID: req.UserID,
 		}
 
 		if err = s.getDB(ctx).Create(cloudToken).Error; err != nil {

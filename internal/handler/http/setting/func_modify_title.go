@@ -31,6 +31,10 @@ func (h *handler) ModifyTitle() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureSettingService(ctx, codeModifyTitleFailed) {
+			return
+		}
+
 		if err := h.settingService.Update(ctx.GetContext(),
 			utils.WithField("title", req.Title),
 		); err != nil {

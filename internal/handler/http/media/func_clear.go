@@ -24,10 +24,20 @@ import (
 // @Router /api/media/clear [post]
 func (h *handler) Clear() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
+		if !h.ensureMediaConfigService(ctx, codeMediaNotEnabled) {
+			return
+		}
+
 		// 检查媒体功能是否启用
 		cfg, err := h.mediaConfigService.Query(ctx.GetContext())
 		if err != nil {
 			ctx.Fail(codeMediaNotEnabled.WithError(err))
+
+			return
+		}
+
+		if cfg == nil {
+			ctx.Fail(codeMediaNotEnabled)
 
 			return
 		}
@@ -40,6 +50,10 @@ func (h *handler) Clear() httpcontext.HandlerFunc {
 
 		// 推送清理任务到消息队列
 		taskReq := &topic.MediaClearRequest{}
+
+		if !h.ensureTaskEngine(ctx, codeClearFailed) {
+			return
+		}
 
 		body, err := json.Marshal(taskReq)
 		if err != nil {

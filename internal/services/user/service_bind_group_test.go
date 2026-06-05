@@ -3,6 +3,8 @@ package user
 import (
 	stdctx "context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -13,6 +15,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	"gorm.io/gorm"
 )
 
@@ -62,6 +65,7 @@ func setupUserTestDB(t *testing.T) *userTestDB {
 		&models.CloudToken{},
 		&models.MountPoint{},
 		&models.VirtualFile{},
+		&models.Group2File{},
 		&models.UserMountPointToken{},
 		&models.AutoIngestPlan{},
 		&models.AutoIngestLog{},
@@ -113,7 +117,9 @@ func TestAddRejectsInvalidRequest(t *testing.T) {
 	}{
 		{name: "nil request", req: nil, wantErr: errInvalidUsername},
 		{name: "empty username", req: &AddRequest{Password: "password"}, wantErr: errInvalidUsername},
+		{name: "blank username", req: &AddRequest{Username: "   ", Password: "password"}, wantErr: errInvalidUsername},
 		{name: "empty password", req: &AddRequest{Username: "new-user"}, wantErr: errInvalidUserPassword},
+		{name: "blank password", req: &AddRequest{Username: "new-user", Password: "   "}, wantErr: errInvalidUserPassword},
 	}
 
 	for _, tt := range tests {
@@ -200,6 +206,34 @@ func TestQueryByUsernameUsesExactUsername(t *testing.T) {
 	_, err = svc.QueryByUsername(ctx, " "+user.Username+" ")
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("expected spaced username to preserve exact matching, got %v", err)
+	}
+}
+
+func TestQueryByUsernameMasksUsernameInErrorLog(t *testing.T) {
+	tDB := setupUserTestDB(t)
+	svc := NewService(tDB)
+
+	core, logs := observer.New(zap.ErrorLevel)
+	ctx := context.NewContext(stdctx.Background(), context.WithLogger(zap.New(core)))
+	username := "sensitive-user@example.com"
+
+	_, err := svc.QueryByUsername(ctx, username)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected record not found, got %v", err)
+	}
+
+	entries := logs.FilterMessage("用户查询失败").All()
+	if len(entries) != 1 {
+		t.Fatalf("expected one user query failure log, got %d", len(entries))
+	}
+
+	logText := entries[0].Message + fmt.Sprint(entries[0].Context)
+	if strings.Contains(logText, username) {
+		t.Fatalf("expected raw username to be masked from log %s", logText)
+	}
+
+	if !strings.Contains(logText, utils.MaskSecret(username)) {
+		t.Fatalf("expected masked username in log %s", logText)
 	}
 }
 
@@ -626,6 +660,98 @@ func TestDelCleansOwnedResourcesAndReferences(t *testing.T) {
 
 	assertCount(t, tDB.db, &models.User{}, "id = ?", 1, otherUser.ID)
 	assertCount(t, tDB.db, &models.VirtualFile{}, "id = ?", 1, otherMountPoint.FileId)
+}
+
+func TestDelCleansOwnedMountPointGroup2FileBindingsOnly(t *testing.T) {
+	tDB := setupUserTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	createUser(t, tDB.db, "founder", 0)
+	user := createUser(t, tDB.db, "delete-with-group-file-bindings", 0)
+	otherUser := createUser(t, tDB.db, "other-group-file-owner", 0)
+	group := createUserGroup(t, tDB.db, 100, "media-users")
+
+	ownedMountPoint := &models.MountPoint{
+		FileId:        3101,
+		OsType:        models.OsTypeFolder,
+		CreatorUserID: user.ID,
+		Name:          "owned-group-files",
+		FullPath:      "/owned-group-files",
+	}
+	if err := tDB.db.Create(ownedMountPoint).Error; err != nil {
+		t.Fatalf("create owned mount point: %v", err)
+	}
+
+	otherMountPoint := &models.MountPoint{
+		FileId:        4101,
+		OsType:        models.OsTypeFolder,
+		CreatorUserID: otherUser.ID,
+		Name:          "other-group-files",
+		FullPath:      "/other-group-files",
+	}
+	if err := tDB.db.Create(otherMountPoint).Error; err != nil {
+		t.Fatalf("create other mount point: %v", err)
+	}
+
+	virtualFiles := []*models.VirtualFile{
+		{
+			ID:       ownedMountPoint.FileId,
+			TopId:    ownedMountPoint.FileId,
+			IsTop:    true,
+			IsDir:    true,
+			Name:     "owned-group-files",
+			OsType:   models.OsTypeFolder,
+			ParentId: 0,
+		},
+		{
+			ID:       3102,
+			TopId:    ownedMountPoint.FileId,
+			IsDir:    true,
+			Name:     "owned-child",
+			OsType:   models.OsTypeFolder,
+			ParentId: ownedMountPoint.FileId,
+		},
+		{
+			ID:       otherMountPoint.FileId,
+			TopId:    otherMountPoint.FileId,
+			IsTop:    true,
+			IsDir:    true,
+			Name:     "other-group-files",
+			OsType:   models.OsTypeFolder,
+			ParentId: 0,
+		},
+		{
+			ID:       4102,
+			TopId:    otherMountPoint.FileId,
+			IsDir:    true,
+			Name:     "other-child",
+			OsType:   models.OsTypeFolder,
+			ParentId: otherMountPoint.FileId,
+		},
+	}
+	if err := tDB.db.Create(&virtualFiles).Error; err != nil {
+		t.Fatalf("create virtual files: %v", err)
+	}
+
+	groupFileBindings := []*models.Group2File{
+		{GroupId: group.ID, FileId: ownedMountPoint.FileId},
+		{GroupId: group.ID, FileId: 3102},
+		{GroupId: group.ID, FileId: otherMountPoint.FileId},
+		{GroupId: group.ID, FileId: 4102},
+	}
+	if err := tDB.db.Create(&groupFileBindings).Error; err != nil {
+		t.Fatalf("create group file bindings: %v", err)
+	}
+
+	if err := svc.Del(ctx, &DelRequest{ID: user.ID}); err != nil {
+		t.Fatalf("delete user: %v", err)
+	}
+
+	assertCount(t, tDB.db, &models.Group2File{}, "file_id IN ?", 0, []int64{ownedMountPoint.FileId, 3102})
+	assertCount(t, tDB.db, &models.Group2File{}, "file_id IN ?", 2, []int64{otherMountPoint.FileId, 4102})
+	assertCount(t, tDB.db, &models.VirtualFile{}, "id IN ?", 0, []int64{ownedMountPoint.FileId, 3102})
+	assertCount(t, tDB.db, &models.VirtualFile{}, "id IN ?", 2, []int64{otherMountPoint.FileId, 4102})
 }
 
 func TestDelIgnoresAlreadyDeletedUserMountPointTokenRelations(t *testing.T) {

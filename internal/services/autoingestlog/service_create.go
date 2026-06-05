@@ -12,7 +12,7 @@ func (s *service) Create(ctx context.Context, planID int64, level autoingest.Log
 	log := &models.AutoIngestLog{
 		PlanId:  planID,
 		Level:   level,
-		Content: content,
+		Content: sanitizeAutoIngestLogContent(content),
 	}
 
 	if err := s.getDB(ctx).Create(log).Error; err != nil {

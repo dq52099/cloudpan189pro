@@ -35,6 +35,10 @@ func (s *service) BatchBindFiles(ctx context.Context, groupId int64, fileIds []i
 				if err := ensureVirtualFilesExist(tx, uniqueFileIDs); err != nil {
 					return err
 				}
+
+				if err := ensureMountPointFilesExist(tx, uniqueFileIDs); err != nil {
+					return err
+				}
 			}
 
 			// 删除所有旧绑定
@@ -105,6 +109,19 @@ func ensureVirtualFilesExist(tx *gorm.DB, fileIDs []int64) error {
 
 	if count != int64(len(fileIDs)) {
 		return pkgErrors.Wrap(gorm.ErrRecordNotFound, "部分文件不存在")
+	}
+
+	return nil
+}
+
+func ensureMountPointFilesExist(tx *gorm.DB, fileIDs []int64) error {
+	var count int64
+	if err := tx.Model(new(models.MountPoint)).Distinct("file_id").Where("file_id IN ?", fileIDs).Count(&count).Error; err != nil {
+		return err
+	}
+
+	if count != int64(len(fileIDs)) {
+		return pkgErrors.Wrap(gorm.ErrRecordNotFound, "用户组只能绑定存储挂载点")
 	}
 
 	return nil

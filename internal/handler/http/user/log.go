@@ -13,6 +13,10 @@ func (h *handler) RecordLog(eventType loginlog.Event) httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
 		ctx.Next()
 
+		if !h.hasLoginLogService(ctx) {
+			return
+		}
+
 		status := loginlog.StatusSuccess
 		reason := ""
 

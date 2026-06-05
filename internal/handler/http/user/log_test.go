@@ -85,6 +85,32 @@ func TestRecordLogKeepsRefreshTokenEventType(t *testing.T) {
 	}
 }
 
+func TestRecordLogSkipsTypedNilLoginLogService(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var loginLogService *recordLogLoginLogServiceStub
+
+	handler := NewHandler(nil, nil, loginLogService)
+
+	router := gin.New()
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.GET(
+		"/record",
+		wrapper.Wrap(handler.RecordLog(loginlog.EventLogin)),
+		wrapper.Wrap(func(ctx *httpcontext.Context) {
+			ctx.Success()
+		}),
+	)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/record", nil)
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 type recordLogLoginLogServiceStub struct {
 	err          error
 	createCalled bool

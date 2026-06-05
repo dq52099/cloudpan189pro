@@ -19,6 +19,8 @@ export interface ShareResourceInfo {
   userId: string
   isFolder: boolean
   accessCode: string
+  shareUrl: string
+  isTop: number
 }
 
 // 家庭云信息接口
@@ -91,6 +93,7 @@ export interface ShareInfo {
   id: string
   name: string
   shareId: number
+  shareMode: number
   shareTime: string
   isFolder: boolean
   accessCode: string

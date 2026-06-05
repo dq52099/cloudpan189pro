@@ -253,6 +253,71 @@ func TestBatchRefreshSkipsMountPointsOwnedByOtherUsers(t *testing.T) {
 	}
 }
 
+func TestBatchRefreshSkipsNilMountPointWithoutPanic(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: nil,
+			22: {FileId: 2201, FullPath: "/series", CreatorUserID: 100},
+		},
+	}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/batch_refresh", wrapper.Wrap(NewHandler(
+		taskEngine,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		&mockBatchDeleteFileTaskLogService{},
+		nil,
+		nil,
+		nil,
+		nil,
+	).BatchRefresh()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_refresh", strings.NewReader(`{"ids":[11,22]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if got, want := mountPointService.queries, []int64{11, 22}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected mount point queries %v, got %v", want, got)
+	}
+
+	if len(taskEngine.payloads) != 1 {
+		t.Fatalf("expected only non-nil mount point to be queued, got %d", len(taskEngine.payloads))
+	}
+
+	if taskEngine.paths[0] != "/series" {
+		t.Fatalf("expected queued path /series, got %v", taskEngine.paths[0])
+	}
+
+	var response struct {
+		Data batchRefreshResponse `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Data.Total != 2 || response.Data.Success != 1 || response.Data.Failed != 1 {
+		t.Fatalf("unexpected response data: %+v", response.Data)
+	}
+}
+
 func TestBatchRefreshReturnsNotFoundWhenAllDeduplicatedIDsMissingOrUnauthorized(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -327,6 +392,59 @@ func TestBatchRefreshReturnsNotFoundWhenAllDeduplicatedIDsMissingOrUnauthorized(
 
 	if logCount != 0 {
 		t.Fatalf("expected no task logs, got %d", logCount)
+	}
+}
+
+func TestBatchRefreshMissingDispatchDependenciesReturnFailedDispatchCounts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: {FileId: 1101, FullPath: "/movies", CreatorUserID: 100},
+			22: nil,
+		},
+	}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/batch_refresh", wrapper.Wrap(NewHandler(
+		nil,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	).BatchRefresh()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_refresh", strings.NewReader(`{"ids":[11,22]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Data batchRefreshResponse `json:"data"`
+	}
+
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Data.Total != 2 || response.Data.Success != 0 || response.Data.Failed != 2 {
+		t.Fatalf("unexpected response data: %+v", response.Data)
 	}
 }
 

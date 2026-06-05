@@ -138,8 +138,10 @@ export function useSubscribeResource(
         return false
       }
 
-      console.error('获取资源列表失败:', error)
-      message.error(getErrorMessage(error, '获取资源列表失败'))
+      const errorMessage = getErrorMessage(error, '获取资源列表失败')
+
+      console.error('获取资源列表失败:', errorMessage)
+      message.error(errorMessage)
       return false
     } finally {
       if (isActive() && currentRequest === resourceListRequestVersion) {
@@ -225,8 +227,10 @@ export function useSubscribeResource(
         return false
       }
 
-      console.error('获取全部资源失败:', error)
-      message.error(getErrorMessage(error, '获取全部资源失败'))
+      const errorMessage = getErrorMessage(error, '获取全部资源失败')
+
+      console.error('获取全部资源失败:', errorMessage)
+      message.error(errorMessage)
       return false
     } finally {
       if (isActive() && currentRequest === allResourcesRequestVersion) {

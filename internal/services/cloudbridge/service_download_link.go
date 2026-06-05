@@ -3,12 +3,14 @@ package cloudbridge
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/pkg/errors"
 
 	"github.com/xxcheng123/cloudpan189-interface/client"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/shared"
 	"go.uber.org/zap"
 )
@@ -19,14 +21,40 @@ const (
 	shareDownloadFormat  = "share_download_link:%d:%s"
 )
 
+var cloudbridgeLogURLPattern = regexp.MustCompile(`(?i)(?:[a-z][a-z0-9+.-]*://|/)[^\s"'<>]+`)
+
+func sanitizeCloudbridgeError(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	message := err.Error()
+	message = cloudbridgeLogURLPattern.ReplaceAllStringFunc(message, utils.RedactURLForLog)
+
+	return utils.RedactSensitiveText(message)
+}
+
+func logCloudbridgeError(ctx context.Context, message string, err error, fields ...zap.Field) error {
+	return logAndReturnCloudbridgeError(ctx, message, message, err, fields...)
+}
+
+func logAndReturnCloudbridgeError(ctx context.Context, logMessage string, returnMessage string, err error, fields ...zap.Field) error {
+	safeErr := sanitizeCloudbridgeError(err)
+	fields = append(fields, zap.String("error", safeErr))
+	ctx.Error(logMessage, fields...)
+
+	return fmt.Errorf("%s: %s", returnMessage, safeErr)
+}
+
+func logAndReturnDownloadLinkError(ctx context.Context, message string, fileId string, err error) (string, error) {
+	return "", logCloudbridgeError(ctx, message, err, zap.String("file_id", fileId))
+}
+
 func (s *service) PersonDownloadLink(ctx context.Context, token AuthToken, fileId string) (string, error) {
 	return s.loadOrFetch(ctx, fmt.Sprintf(personDownloadFormat, fileId), func() (string, error) {
 		link, err := client.New().WithClient(ctx.HTTPClient()).WithToken(token).GetFileDownload(ctx, client.String(fileId))
 		if err != nil {
-			ctx.Error("获取个人文件下载地址失败",
-				zap.String("file_id", fileId), zap.Error(err))
-
-			return "", err
+			return logAndReturnDownloadLinkError(ctx, "获取个人文件下载地址失败", fileId, err)
 		}
 
 		return link.FileDownloadUrl, nil
@@ -37,10 +65,7 @@ func (s *service) FamilyDownloadLink(ctx context.Context, token AuthToken, famil
 	return s.loadOrFetch(ctx, fmt.Sprintf(familyDownloadFormat, familyId, fileId), func() (string, error) {
 		link, err := client.New().WithClient(ctx.HTTPClient()).WithToken(token).FamilyGetFileDownload(ctx, client.String(familyId), client.String(fileId))
 		if err != nil {
-			ctx.Error("获取家庭文件下载地址失败",
-				zap.String("file_id", fileId), zap.Error(err))
-
-			return "", err
+			return logAndReturnDownloadLinkError(ctx, "获取家庭文件下载地址失败", fileId, err)
 		}
 
 		return link.FileDownloadUrl, nil
@@ -53,10 +78,7 @@ func (s *service) ShareDownloadLink(ctx context.Context, token AuthToken, shareI
 			req.ShareId = shareId
 		})
 		if err != nil {
-			ctx.Error("获取分享文件下载地址失败",
-				zap.String("file_id", fileId), zap.Error(err))
-
-			return "", err
+			return logAndReturnDownloadLinkError(ctx, "获取分享文件下载地址失败", fileId, err)
 		}
 
 		return link.FileDownloadUrl, nil
@@ -65,6 +87,7 @@ func (s *service) ShareDownloadLink(ctx context.Context, token AuthToken, shareI
 
 var (
 	noFollowRedirectHttpClient = &http.Client{
+		Timeout: 30 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")
 
@@ -75,13 +98,26 @@ var (
 
 // fetchRealDownloadLink 获取真实的下载地址 自带的跳转域名有泄露 token 风险
 func (s *service) fetchRealDownloadLink(ctx context.Context, link string) (string, error) {
-	resp, err := noFollowRedirectHttpClient.Get(link)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
 	if err != nil {
-		ctx.Error("请求云盘下载链接失败",
-			zap.String("downloadUrl", link),
-			zap.Error(err))
+		safeErr := sanitizeCloudbridgeError(err)
+		ctx.Error("创建云盘下载链接请求失败",
+			zap.String("downloadUrl", utils.RedactURLForLog(link)),
+			zap.String("error", safeErr))
 
-		return "", err
+		return "", fmt.Errorf("创建云盘下载链接请求失败: %s", safeErr)
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")
+
+	resp, err := noFollowRedirectHttpClient.Do(req)
+	if err != nil {
+		safeErr := sanitizeCloudbridgeError(err)
+		ctx.Error("请求云盘下载链接失败",
+			zap.String("downloadUrl", utils.RedactURLForLog(link)),
+			zap.String("error", safeErr))
+
+		return "", fmt.Errorf("请求云盘下载链接失败: %s", safeErr)
 	}
 
 	defer func() {
@@ -126,7 +162,7 @@ func (s *service) loadOrFetch(ctx context.Context, cacheKey string, fn func() (s
 
 	shared.ShareCache.Set(cacheKey, realLink, time.Minute*2)
 
-	ctx.Debug("真实获取个人文件下载地址", zap.String("file_id", cacheKey), zap.String("download_link", realLink))
+	ctx.Debug("真实获取个人文件下载地址", zap.String("file_id", cacheKey), zap.String("download_link", utils.RedactURLForLog(realLink)))
 
 	return realLink, nil
 }

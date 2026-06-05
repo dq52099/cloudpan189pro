@@ -52,7 +52,7 @@ func (s *serviceContext) Close() {
 		logger = zap.NewNop()
 	}
 
-	if s.taskEngine != nil && s.taskEngine.IsRunning() {
+	if !isNilDependency(s.taskEngine) && s.taskEngine.IsRunning() {
 		if err := s.taskEngine.Stop(); err != nil {
 			logger.Warn("停止任务引擎失败", zap.Error(err))
 		}
@@ -125,11 +125,12 @@ func newServiceContext(c *configs.RuntimeConfig) (ServiceContext, error) {
 	taskEngine := initTaskEngine(logger, c.TaskEngine)
 
 	// 如果数据库中设置了 WorkerCount，优先使用数据库值
-	if shared.SettingAddition.WorkerCount > 0 {
-		if err := taskEngine.SetWorkerCount(shared.SettingAddition.WorkerCount); err != nil {
+	settingAddition := shared.GetSettingAddition()
+	if settingAddition.WorkerCount > 0 {
+		if err := taskEngine.SetWorkerCount(settingAddition.WorkerCount); err != nil {
 			logger.Warn("从数据库设置工作流数失败", zap.Error(err))
 		} else {
-			logger.Info("已从数据库加载工作流数", zap.Int("workerCount", shared.SettingAddition.WorkerCount))
+			logger.Info("已从数据库加载工作流数", zap.Int("workerCount", settingAddition.WorkerCount))
 		}
 	}
 

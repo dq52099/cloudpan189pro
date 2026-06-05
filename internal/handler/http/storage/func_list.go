@@ -93,6 +93,25 @@ func nextAutoRefreshTime(item *models.MountPoint, now time.Time) *time.Time {
 	return &nextAt
 }
 
+func compactMountPoints(list []*models.MountPoint) []*models.MountPoint {
+	if len(list) == 0 {
+		return list
+	}
+
+	writeIndex := 0
+
+	for _, item := range list {
+		if item == nil {
+			continue
+		}
+
+		list[writeIndex] = item
+		writeIndex++
+	}
+
+	return list[:writeIndex]
+}
+
 // List 获取存储挂载点列表
 // @Summary 获取存储挂载点列表
 // @Description 分页获取存储挂载点列表，支持按路径过滤
@@ -129,6 +148,10 @@ func (h *handler) List() httpcontext.HandlerFunc {
 		if userGroupId > 0 {
 			var err error
 
+			if !h.ensureGroup2FileService(ctx, busCodeStorageQueryMountPointError) {
+				return
+			}
+
 			groupFileIds, err = h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
 			if err != nil {
 				ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
@@ -145,6 +168,10 @@ func (h *handler) List() httpcontext.HandlerFunc {
 		)
 
 		taskLogMapList := make(map[int64][]*models.FileTaskLog)
+
+		if !h.ensureMountPointService(ctx, busCodeStorageQueryMountPointError) {
+			return
+		}
 
 		// 当 CurrentPage/PageSize 为 0 时使用默认值，避免后续 slice 越界
 		if req.CurrentPage <= 0 {
@@ -165,6 +192,10 @@ func (h *handler) List() httpcontext.HandlerFunc {
 		}
 
 		if req.TaskLogStatus != "" {
+			if !h.ensureFileTaskLogService(ctx, busCodeStorageQueryFileTaskLogError) {
+				return
+			}
+
 			fileIDList, taskLogErr := h.fileTaskLogService.ListLatestFileIDsByStatus(ctx.GetContext(), req.TaskLogStatus)
 			if taskLogErr != nil {
 				ctx.Fail(busCodeStorageQueryFileTaskLogError.WithError(taskLogErr))
@@ -209,6 +240,8 @@ func (h *handler) List() httpcontext.HandlerFunc {
 			}
 		}
 
+		list = compactMountPoints(list)
+
 		// 获取当前用户对这些挂载点的令牌绑定
 		mountPointIds := make([]int64, 0, len(list))
 		fileIdList := make([]int64, 0, len(list))
@@ -226,6 +259,10 @@ func (h *handler) List() httpcontext.HandlerFunc {
 
 		if len(mountPointIds) > 0 {
 			var err error
+
+			if !h.ensureUserMountPointTokenService(ctx, busCodeStorageQueryMountPointError) {
+				return
+			}
 
 			userTokenMap, err = h.userMountPointTokenService.GetUserTokens(ctx.GetContext(), userID, mountPointIds)
 			if err != nil {
@@ -262,6 +299,10 @@ func (h *handler) List() httpcontext.HandlerFunc {
 			cloudTokenList = lo.Uniq(cloudTokenList)
 
 			if len(cloudTokenList) > 0 {
+				if !h.ensureCloudTokenService(ctx, busCodeStorageQueryCloudTokenError) {
+					return
+				}
+
 				tokenList, err := h.cloudTokenService.List(ctx.GetContext(), &cloudtokenSvi.ListRequest{
 					IdList:     cloudTokenList,
 					NoPaginate: true,
@@ -274,7 +315,14 @@ func (h *handler) List() httpcontext.HandlerFunc {
 					return
 				}
 
-				tokenMap = lo.SliceToMap(tokenList, func(item *models.CloudToken) (int64, string) { return item.ID, item.Name })
+				tokenMap = make(map[int64]string, len(tokenList))
+				for _, item := range tokenList {
+					if item == nil {
+						continue
+					}
+
+					tokenMap[item.ID] = item.Name
+				}
 			} else {
 				tokenMap = make(map[int64]string)
 			}
@@ -283,6 +331,10 @@ func (h *handler) List() httpcontext.HandlerFunc {
 		// 补查日志：如果 taskLogMapList 为空（说明走了else分支），则需要查当前页的日志
 		if len(taskLogMapList) == 0 && len(list) > 0 {
 			if len(fileIdList) > 0 {
+				if !h.ensureFileTaskLogService(ctx, busCodeStorageQueryFileTaskLogError) {
+					return
+				}
+
 				taskLogList, err := h.fileTaskLogService.List(ctx.GetContext(), &filetasklogSvi.ListRequest{
 					PageSize:    200,
 					CurrentPage: 1,
@@ -297,6 +349,10 @@ func (h *handler) List() httpcontext.HandlerFunc {
 				taskLogMapList = make(map[int64][]*models.FileTaskLog)
 
 				for _, taskLog := range taskLogList {
+					if taskLog == nil {
+						continue
+					}
+
 					if taskLog.FileId == 0 {
 						continue
 					}
@@ -311,6 +367,10 @@ func (h *handler) List() httpcontext.HandlerFunc {
 			fileCountMap = make(map[int64]int64)
 
 			if len(fileIdList) > 0 {
+				if !h.ensureVirtualFileService(ctx, busCodeStorageQueryFileCountError) {
+					return
+				}
+
 				fileCountList, err := h.virtualFileService.GroupCountByTopId(ctx.GetContext(), &virtualfile.GroupCountByTopIdRequest{
 					TopIdList: fileIdList,
 				})
@@ -320,7 +380,13 @@ func (h *handler) List() httpcontext.HandlerFunc {
 					return
 				}
 
-				fileCountMap = lo.SliceToMap(fileCountList, func(item *virtualfile.GroupCountByTopId) (int64, int64) { return item.TopId, item.Count })
+				for _, item := range fileCountList {
+					if item == nil {
+						continue
+					}
+
+					fileCountMap[item.TopId] = item.Count
+				}
 			}
 		}
 

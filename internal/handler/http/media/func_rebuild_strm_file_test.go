@@ -23,13 +23,18 @@ import (
 
 type mockRebuildMediaConfigService struct {
 	mediaconfigSvi.Service
-	cfg *models.MediaConfig
-	err error
+	cfg       *models.MediaConfig
+	err       error
+	returnNil bool
 }
 
 func (m *mockRebuildMediaConfigService) Query(ctx appContext.Context) (*models.MediaConfig, error) {
 	if m.err != nil {
 		return nil, m.err
+	}
+
+	if m.returnNil {
+		return nil, nil
 	}
 
 	if m.cfg != nil {
@@ -114,6 +119,46 @@ func TestRebuildStrmFileReturnsNotFoundWhenConfigMissing(t *testing.T) {
 	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
 	router.POST("/rebuild", wrapper.Wrap(NewHandler(
 		&mockRebuildMediaConfigService{err: gorm.ErrRecordNotFound},
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		taskEngine,
+	).RebuildStrmFile()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/rebuild", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response httpcontext.Response
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.Code != codeConfigNotInit.GetCode() {
+		t.Fatalf("expected business code %d, got %d", codeConfigNotInit.GetCode(), response.Code)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no rebuild task, got %d", len(taskEngine.payloads))
+	}
+}
+
+func TestRebuildStrmFileReturnsNotFoundWhenConfigQueryReturnsNil(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockRebuildTaskEngine{}
+	router := gin.New()
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/rebuild", wrapper.Wrap(NewHandler(
+		&mockRebuildMediaConfigService{returnNil: true},
 		nil,
 		nil,
 		nil,
@@ -377,6 +422,61 @@ func TestRebuildStrmFileCountsMissingMountPointsAsFailed(t *testing.T) {
 
 	if mountPointService.req == nil || !mountPointService.req.NoPaginate || !mountPointService.req.IsAdmin {
 		t.Fatalf("expected admin no-paginate mount point request, got %+v", mountPointService.req)
+	}
+}
+
+func TestRebuildStrmFileSkipsNilMountPointsInScopedRebuild(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockRebuildTaskEngine{}
+	mountPointService := &mockRebuildMountPointService{list: []*models.MountPoint{
+		nil,
+		{ID: 7, FileId: 11, FullPath: "/movie"},
+	}}
+	router := gin.New()
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/rebuild", wrapper.Wrap(NewHandler(
+		&mockRebuildMediaConfigService{},
+		nil,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		taskEngine,
+	).RebuildStrmFile()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/rebuild", strings.NewReader(`{"mountPointIds":[7,22]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Data rebuildStrmResponse `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.Data.Total != 2 || response.Data.Success != 1 || response.Data.Failed != 1 {
+		t.Fatalf("expected total=2 success=1 failed=1, got %+v", response.Data)
+	}
+
+	if len(taskEngine.payloads) != 1 {
+		t.Fatalf("expected one rebuild task, got %d", len(taskEngine.payloads))
+	}
+
+	var payload topic.MediaRebuildStrmFileByMountPointRequest
+	if err := json.Unmarshal(taskEngine.payloads[0], &payload); err != nil {
+		t.Fatalf("decode task payload: %v", err)
+	}
+
+	if payload.MountPointFileId != 11 || payload.MountPointPath != "/movie" {
+		t.Fatalf("expected payload to use mount point file id and path, got %+v", payload)
 	}
 }
 

@@ -3,15 +3,15 @@
     v-model:show="visible"
     preset="dialog"
     title="绑定存储"
-    style="width: 900px"
+    style="width: min(900px, calc(100vw - 32px))"
     :closable="!submitting"
     :mask-closable="!submitting"
     :close-on-esc="!submitting"
   >
     <div class="bind-files-modal">
       <div class="search-section">
-        <n-space justify="space-between" style="width: 100%">
-          <n-space>
+        <n-space justify="space-between" class="search-toolbar">
+          <n-space class="search-controls">
             <n-input
               v-model:value="searchKeyword"
               placeholder="搜索存储挂载点..."
@@ -26,7 +26,7 @@
             <n-button type="primary" :disabled="submitting" @click="handleSearch">搜索</n-button>
           </n-space>
 
-          <n-space>
+          <n-space class="selection-actions">
             <n-button @click="selectCurrentPage" :disabled="storageList.length === 0 || submitting">
               全选当前页
             </n-button>
@@ -401,8 +401,10 @@ const loadBindFiles = async (
   } catch (error) {
     if (!isCurrentOperation(version, userGroupId)) return
 
-    console.error('获取已绑定文件失败:', error)
-    message.error(getErrorMessage(error, '获取已绑定存储失败'))
+    const errorMessage = getErrorMessage(error, '获取已绑定存储失败')
+
+    console.error('获取已绑定文件失败:', errorMessage)
+    message.error(errorMessage)
   } finally {
     if (isCurrentOperation(version, userGroupId)) {
       loadingBindFiles.value = false
@@ -441,8 +443,10 @@ const fetchStorageList = async (
   } catch (error) {
     if (!isCurrentStorageListRequest(version, userGroupId, currentRequestId)) return
 
-    console.error('获取存储列表失败:', error)
-    message.error(getErrorMessage(error, '获取存储列表失败'))
+    const errorMessage = getErrorMessage(error, '获取存储列表失败')
+
+    console.error('获取存储列表失败:', errorMessage)
+    message.error(errorMessage)
   } finally {
     if (isCurrentStorageListRequest(version, userGroupId, currentRequestId)) {
       loading.value = false
@@ -538,8 +542,10 @@ const selectAllSearchResults = async () => {
   } catch (error) {
     if (!isCurrentOperation(version, userGroupId)) return
 
-    console.error('获取全部存储失败:', error)
-    message.error(getErrorMessage(error, '获取全部存储失败'))
+    const errorMessage = getErrorMessage(error, '获取全部存储失败')
+
+    console.error('获取全部存储失败:', errorMessage)
+    message.error(errorMessage)
   } finally {
     if (isCurrentOperation(version, userGroupId)) {
       selectingAll.value = false
@@ -607,8 +613,9 @@ const handleConfirm = async () => {
 
     if (response.code === 200) {
       message.success(fileIds.length === 0 ? '存储绑定已清空' : '存储绑定成功')
+      submitting.value = false
       invalidateOperation()
-      visible.value = false
+      emit('update:show', false)
       emit('success')
     } else {
       message.error(response.msg || '存储绑定失败')
@@ -616,8 +623,10 @@ const handleConfirm = async () => {
   } catch (error) {
     if (!isCurrentOperation(version, userGroupId)) return
 
-    console.error('存储绑定失败:', error)
-    message.error(getErrorMessage(error, '存储绑定失败'))
+    const errorMessage = getErrorMessage(error, '存储绑定失败')
+
+    console.error('存储绑定失败:', errorMessage)
+    message.error(errorMessage)
   } finally {
     if (isCurrentOperation(version, userGroupId)) {
       submitting.value = false
@@ -628,7 +637,7 @@ const handleConfirm = async () => {
 
 <style scoped>
 .bind-files-modal {
-  max-height: 680px;
+  max-height: min(680px, calc(100vh - 180px));
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -637,6 +646,19 @@ const handleConfirm = async () => {
 .search-section {
   margin-bottom: 16px;
   flex-shrink: 0;
+}
+
+.search-toolbar {
+  width: 100%;
+}
+
+.search-controls {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.search-controls :deep(.n-input) {
+  width: min(320px, 100%);
 }
 
 .file-list-section {
@@ -651,6 +673,8 @@ const handleConfirm = async () => {
   justify-content: center;
   margin-top: 16px;
   flex-shrink: 0;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .selected-section {
@@ -700,5 +724,39 @@ const handleConfirm = async () => {
 .file-list-section::-webkit-scrollbar-thumb:hover,
 .selected-files::-webkit-scrollbar-thumb:hover {
   background: var(--n-scrollbar-color-pressed);
+}
+
+@media (width <= 640px) {
+  .bind-files-modal {
+    max-height: calc(100vh - 160px);
+  }
+
+  .search-toolbar,
+  .search-controls,
+  .selection-actions {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .search-controls :deep(.n-input),
+  .search-controls :deep(.n-button),
+  .selection-actions :deep(.n-button) {
+    width: 100%;
+  }
+
+  .file-list-section {
+    min-height: 260px;
+  }
+
+  .pagination-section {
+    justify-content: flex-start;
+  }
+
+  .selected-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
 }
 </style>

@@ -11,6 +11,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/shared"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 func (h *handler) ClearFile() taskcontext.HandlerFunc {
@@ -30,6 +31,12 @@ func (h *handler) ClearFile() taskcontext.HandlerFunc {
 			logger.Error("查询文件失败", zap.Error(err), zap.Int64("file_id", req.FileId))
 
 			return err
+		}
+
+		if vf == nil {
+			logger.Error("查询文件为空", zap.Error(gorm.ErrRecordNotFound), zap.Int64("file_id", req.FileId))
+
+			return gorm.ErrRecordNotFound
 		}
 
 		logger.Debug("开始清理文件", zap.Int64("file_id", vf.ID))
@@ -58,9 +65,10 @@ func (h *handler) ClearFile() taskcontext.HandlerFunc {
 
 		_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklog.WithTotalCounter(1))
 
-		if shared.MediaConfig != nil && shared.MediaConfig.Enable && shared.MediaConfig.AutoClean {
+		mediaConfig := shared.GetMediaConfig()
+		if mediaConfig != nil && mediaConfig.Enable && mediaConfig.AutoClean {
 			defer func() {
-				_ = h.mediaFileService.ClearEmptyDir(ctx.GetContext(), shared.MediaConfig.StoragePath)
+				h.clearMediaEmptyDir(ctx.GetContext(), mediaConfig.StoragePath)
 			}()
 		}
 

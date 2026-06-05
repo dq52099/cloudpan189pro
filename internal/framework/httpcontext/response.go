@@ -51,6 +51,8 @@ func (c *Context) Fail(busErr BusinessError) {
 		msg = busErr.Error()
 	}
 
+	msg = sanitizeResponseMessage(msg)
+
 	c.errMsg = msg
 
 	c.AbortWithStatusJSON(busErr.GetHTTPCode(), Response{
@@ -85,4 +87,8 @@ func (c *Context) WithError(err error) *Context {
 
 func (c *Context) GetErrorMsg() string {
 	return c.errMsg
+}
+
+func sanitizeResponseMessage(message string) string {
+	return sanitizeLoggedText(message)
 }

@@ -46,6 +46,7 @@ func (a *subscriptionShareAdapter) GetShareInfo(ctx context.Context, shareCode s
 		Name:       info.Name,
 		IsFolder:   info.IsFolder,
 		ShareId:    info.ShareId,
+		ShareMode:  info.ShareMode,
 		ID:         info.ID,
 		AccessCode: info.AccessCode,
 	}, nil

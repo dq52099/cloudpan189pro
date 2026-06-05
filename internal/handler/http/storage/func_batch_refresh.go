@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
@@ -71,10 +72,20 @@ func (h *handler) BatchRefresh() httpcontext.HandlerFunc {
 		mountPoints := make(map[int64]mpInfo, len(requestIDs))
 		validIDs := make([]int64, 0, len(requestIDs))
 
+		if !h.ensureMountPointService(ctx, busCodeStorageQueryMountPointError) {
+			return
+		}
+
 		for _, id := range requestIDs {
 			mp, err := h.mountPointService.QueryByID(ctx.GetContext(), id)
 			if err != nil {
 				ctx.GetContext().Warn("查询挂载点失败，跳过", zap.Int64("id", id), zap.Error(err))
+
+				continue
+			}
+
+			if mp == nil {
+				ctx.GetContext().Warn("查询挂载点为空，跳过", zap.Int64("id", id))
 
 				continue
 			}
@@ -99,20 +110,28 @@ func (h *handler) BatchRefresh() httpcontext.HandlerFunc {
 		}
 
 		// 创建任务日志，父任务只记录本次请求的派发结果，扫描进度由子任务记录。
-		tracker, logErr := h.fileTaskLogService.Create(
-			ctx.GetContext(),
-			fmt.Sprintf("批量%s", refreshType),
-			fmt.Sprintf("批量%s %d 个挂载点", refreshType, len(requestIDs)),
-			filetasklogSvi.WithDesc(fmt.Sprintf("ID列表: %v, 去重后: %v, 类型: %s", req.IDs, requestIDs, refreshType)),
-		)
-		if logErr != nil {
-			ctx.GetContext().Warn("创建批量刷新任务日志失败", zap.Error(logErr))
-		} else if tracker != nil {
-			_ = h.fileTaskLogService.Running(ctx.GetContext(), tracker)
-			_ = h.fileTaskLogService.FlushCount(
-				ctx.GetContext(), tracker,
-				filetasklogSvi.WithTotalCounter(len(requestIDs)),
+		var tracker *filetasklogSvi.Tracker
+
+		if !h.hasFileTaskLogService() {
+			ctx.GetContext().Warn("文件任务日志服务未初始化，跳过批量刷新父任务日志")
+		} else {
+			var logErr error
+
+			tracker, logErr = h.fileTaskLogService.Create(
+				ctx.GetContext(),
+				fmt.Sprintf("批量%s", refreshType),
+				fmt.Sprintf("批量%s %d 个挂载点", refreshType, len(requestIDs)),
+				filetasklogSvi.WithDesc(fmt.Sprintf("ID列表: %v, 去重后: %v, 类型: %s", req.IDs, requestIDs, refreshType)),
 			)
+			if logErr != nil {
+				ctx.GetContext().Warn("创建批量刷新任务日志失败", zap.Error(logErr))
+			} else if tracker != nil {
+				_ = h.fileTaskLogService.Running(ctx.GetContext(), tracker)
+				_ = h.fileTaskLogService.FlushCount(
+					ctx.GetContext(), tracker,
+					filetasklogSvi.WithTotalCounter(len(requestIDs)),
+				)
+			}
 		}
 
 		successCount := 0
@@ -129,6 +148,12 @@ func (h *handler) BatchRefresh() httpcontext.HandlerFunc {
 			body, err := json.Marshal(taskReq)
 			if err != nil {
 				ctx.GetContext().Warn("序列化刷新任务失败", zap.Int64("id", id), zap.Error(err))
+
+				continue
+			}
+
+			if !h.hasTaskEngine() {
+				ctx.GetContext().Warn("推送刷新任务失败，跳过", zap.Int64("id", id), zap.Error(errors.New("任务引擎未初始化")))
 
 				continue
 			}

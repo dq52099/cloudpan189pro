@@ -135,7 +135,12 @@ func Start(svc bootstrap.ServiceContext, extServices *bootstrap.ExtensionService
 		openaiService = extServices.OpenAI
 	}
 
-	subscriptionHTTPHandler := subscriptionHandler.NewHandler(db, tmdbService, doubanService, storageFacadeService, cloudBridgeService, svc.GetLogger("subscription-http"), openaiService)
+	var subscriptionHTTPHandler *subscriptionHandler.Handler
+	if extServices != nil && extServices.SubscriptionConfigUpdater != nil {
+		subscriptionHTTPHandler = subscriptionHandler.NewHandler(db, tmdbService, doubanService, storageFacadeService, cloudBridgeService, svc.GetLogger("subscription-http"), openaiService, extServices.SubscriptionConfigUpdater)
+	} else {
+		subscriptionHTTPHandler = subscriptionHandler.NewHandler(db, tmdbService, doubanService, storageFacadeService, cloudBridgeService, svc.GetLogger("subscription-http"), openaiService)
+	}
 
 	// 为订阅服务注入挂载和分享信息服务（实际挂载能力）
 	if extServices != nil && extServices.Subscription != nil {

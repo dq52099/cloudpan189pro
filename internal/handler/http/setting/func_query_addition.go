@@ -2,7 +2,9 @@ package setting
 
 import (
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	"gorm.io/gorm"
 )
 
 type _ = models.SettingAddition
@@ -20,6 +22,10 @@ type _ = models.SettingAddition
 // @Router /api/setting/addition [get]
 func (h *handler) Addition() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
+		if !h.ensureSettingService(ctx, codeQueryFailed) {
+			return
+		}
+
 		setting, err := h.settingService.Query(ctx.GetContext())
 		if err != nil {
 			ctx.Fail(codeQueryFailed.WithError(err))
@@ -27,6 +33,15 @@ func (h *handler) Addition() httpcontext.HandlerFunc {
 			return
 		}
 
-		ctx.Success(setting.Addition)
+		if setting == nil {
+			ctx.Fail(codeQueryFailed.WithError(gorm.ErrRecordNotFound))
+
+			return
+		}
+
+		addition := setting.Addition
+		addition.LocalProxyURL = utils.RedactURLForLog(addition.LocalProxyURL)
+
+		ctx.Success(addition)
 	}
 }

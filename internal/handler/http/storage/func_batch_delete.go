@@ -61,6 +61,10 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 
 		validMountPoints := make([]*models.MountPoint, 0, len(requestIDs))
 
+		if !h.ensureMountPointService(ctx, busCodeStorageQueryMountPointError) {
+			return
+		}
+
 		for _, id := range requestIDs {
 			mountPoint, err := h.mountPointService.QueryByID(ctx.GetContext(), id)
 			if err != nil {
@@ -68,6 +72,13 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 
 				continue
 			}
+
+			if mountPoint == nil {
+				ctx.GetContext().Debug("查询挂载点为空，跳过", zap.Int64("id", id))
+
+				continue
+			}
+
 			// 检查权限：管理员或创建者可以删除
 			if !isAdmin && mountPoint.CreatorUserID != userID {
 				ctx.GetContext().Debug("无权限删除该挂载点，跳过", zap.Int64("id", id), zap.Int64("creator_user_id", mountPoint.CreatorUserID))
@@ -85,27 +96,35 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 		}
 
 		// 创建任务日志
-		tracker, logErr := h.fileTaskLogService.Create(
-			ctx.GetContext(),
-			"批量删除",
-			fmt.Sprintf("批量删除 %d 个挂载点", len(validMountPoints)),
-			filetasklogSvi.WithDesc(fmt.Sprintf("请求ID数量: %d, 去重后: %d, 授权通过: %d", len(req.IDs), len(requestIDs), len(validMountPoints))),
-		)
-		if logErr != nil {
-			ctx.GetContext().Warn("创建批量删除任务日志失败", zap.Error(logErr))
-		} else if tracker != nil {
-			_ = h.fileTaskLogService.Running(ctx.GetContext(), tracker)
+		var tracker *filetasklogSvi.Tracker
 
-			_ = h.fileTaskLogService.FlushCount(
-				ctx.GetContext(), tracker,
-				filetasklogSvi.WithTotalCounter(len(requestIDs)),
+		if !h.hasFileTaskLogService() {
+			ctx.GetContext().Warn("文件任务日志服务未初始化，跳过批量删除父任务日志")
+		} else {
+			var logErr error
+
+			tracker, logErr = h.fileTaskLogService.Create(
+				ctx.GetContext(),
+				"批量删除",
+				fmt.Sprintf("批量删除 %d 个挂载点", len(validMountPoints)),
+				filetasklogSvi.WithDesc(fmt.Sprintf("请求ID数量: %d, 去重后: %d, 授权通过: %d", len(req.IDs), len(requestIDs), len(validMountPoints))),
 			)
+			if logErr != nil {
+				ctx.GetContext().Warn("创建批量删除任务日志失败", zap.Error(logErr))
+			} else if tracker != nil {
+				_ = h.fileTaskLogService.Running(ctx.GetContext(), tracker)
 
-			if missingOrUnauthorized := len(requestIDs) - len(validMountPoints); missingOrUnauthorized > 0 {
 				_ = h.fileTaskLogService.FlushCount(
 					ctx.GetContext(), tracker,
-					filetasklogSvi.WithFailedCounter(missingOrUnauthorized),
+					filetasklogSvi.WithTotalCounter(len(requestIDs)),
 				)
+
+				if missingOrUnauthorized := len(requestIDs) - len(validMountPoints); missingOrUnauthorized > 0 {
+					_ = h.fileTaskLogService.FlushCount(
+						ctx.GetContext(), tracker,
+						filetasklogSvi.WithFailedCounter(missingOrUnauthorized),
+					)
+				}
 			}
 		}
 
@@ -122,6 +141,16 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 			body, err := json.Marshal(taskReq)
 			if err != nil {
 				ctx.GetContext().Warn("序列化删除任务失败", zap.Int64("file_id", mountPoint.FileId), zap.Error(err))
+
+				if tracker != nil {
+					_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithFailedCounter(1))
+				}
+
+				continue
+			}
+
+			if !h.hasTaskEngine() {
+				ctx.GetContext().Warn("推送删除任务失败，跳过", zap.Int64("file_id", mountPoint.FileId), zap.Error(errors.New("任务引擎未初始化")))
 
 				if tracker != nil {
 					_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithFailedCounter(1))

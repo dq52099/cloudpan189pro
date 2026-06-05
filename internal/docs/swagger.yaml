@@ -420,6 +420,8 @@ definitions:
         type: string
       shareId:
         type: integer
+      shareMode:
+        type: integer
       shareTime:
         type: string
     type: object
@@ -438,6 +440,8 @@ definitions:
       shareId:
         type: integer
       shareTime:
+        type: string
+      shareUrl:
         type: string
       userId:
         type: string
@@ -462,6 +466,30 @@ definitions:
     required:
     - uuid
     type: object
+  cloudtoken.cloudTokenResponse:
+    properties:
+      addition:
+        additionalProperties: true
+        type: object
+      createdAt:
+        type: string
+      expiresIn:
+        type: integer
+      id:
+        type: integer
+      loginType:
+        type: integer
+      name:
+        type: string
+      status:
+        type: integer
+      updatedAt:
+        type: string
+      userId:
+        type: integer
+      username:
+        type: string
+    type: object
   cloudtoken.deleteRequest:
     properties:
       id:
@@ -480,7 +508,7 @@ definitions:
       data:
         description: 云盘令牌列表数据
         items:
-          $ref: '#/definitions/models.CloudToken'
+          $ref: '#/definitions/cloudtoken.cloudTokenResponse'
         type: array
       pageSize:
         description: 每页大小
@@ -510,6 +538,7 @@ definitions:
       id:
         description: 云盘令牌ID，可选
         example: 1
+        minimum: 1
         type: integer
       name:
         description: 令牌名称，可选
@@ -949,6 +978,7 @@ definitions:
         type: boolean
       autoRebuildInterval:
         example: 24
+        minimum: 1
         type: integer
       baseURL:
         example: http://localhost:12395
@@ -1043,35 +1073,6 @@ definitions:
       userId:
         description: 所属用户ID
         type: integer
-    type: object
-  models.CloudToken:
-    properties:
-      accessToken:
-        type: string
-      addition:
-        description: 附属参数
-        type: object
-      createdAt:
-        type: string
-      expiresIn:
-        type: integer
-      id:
-        type: integer
-      loginType:
-        description: '1: 扫码登录 2: 密码登录'
-        type: integer
-      name:
-        type: string
-      status:
-        description: '状态 1:正常 2: 登录失败'
-        type: integer
-      updatedAt:
-        type: string
-      userId:
-        description: 所属用户ID
-        type: integer
-      username:
-        type: string
     type: object
   models.FileTaskLog:
     properties:
@@ -1705,8 +1706,9 @@ definitions:
   storage.deleteRequest:
     properties:
       id:
-        description: 挂载点文件ID
+        description: 挂载点表主键
         example: 1
+        minimum: 1
         type: integer
     required:
     - id
@@ -1734,7 +1736,7 @@ definitions:
   storage.modifyTokenRequest:
     properties:
       id:
-        description: 挂载点文件ID
+        description: 挂载点表主键
         example: 1001
         minimum: 1
         type: integer
@@ -1753,8 +1755,9 @@ definitions:
         example: true
         type: boolean
       id:
-        description: 挂载点文件ID
+        description: 挂载点表主键
         example: 1001
+        minimum: 1
         type: integer
     required:
     - id
@@ -1994,9 +1997,9 @@ definitions:
         description: 任务唯一ID
         type: string
       payload:
-        items:
-          type: integer
-        type: array
+        description: 载荷数据，JSON 中为 base64 字符串
+        format: base64
+        type: string
       receiveAt:
         description: 接收时间
         type: string
@@ -2021,6 +2024,8 @@ definitions:
   taskengine.TaskStats:
     properties:
       completedTasks:
+        type: integer
+      cancelledTasks:
         type: integer
       failedTasks:
         type: integer
@@ -2115,7 +2120,10 @@ definitions:
       mountPath:
         type: string
       userID:
+        minimum: 1
         type: integer
+    required:
+    - userID
     type: object
   telegram.sendMessageReq:
     properties:
@@ -2148,13 +2156,12 @@ definitions:
   topic.BatchParseTextRequest:
     properties:
       cloudToken:
-        description: 需要用到token去查询信息
+        description: 解析个人文件夹ID时使用的令牌
         type: integer
       content:
         description: 文本内容
         type: string
     required:
-    - cloudToken
     - content
     type: object
   user.addRequest:
@@ -3235,7 +3242,7 @@ paths:
             - $ref: '#/definitions/httpcontext.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/models.CloudToken'
+                  $ref: '#/definitions/cloudtoken.cloudTokenResponse'
               type: object
         "400":
           description: 查询云盘令牌失败，code=5007
@@ -4878,7 +4885,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 解析文本内容（如分享链接），验证CloudToken，返回资源的真实名称和ID，但不创建挂载
+      description: 解析文本内容（如分享链接、订阅号、文件夹ID），仅在解析个人文件夹ID时验证CloudToken，返回资源的真实名称和ID，但不创建挂载
       parameters:
       - description: Bearer token
         in: header
@@ -4998,7 +5005,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 通过请求体 id 指定挂载点文件ID，删除对应的存储挂载点，同时清理相关文件
+      description: 通过请求体 id 指定挂载点表主键，删除对应的存储挂载点，同时清理相关文件
       parameters:
       - description: Bearer token
         in: header
@@ -5094,7 +5101,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 通过请求体 id 指定挂载点文件ID，用户绑定自己的令牌到挂载点（不影响其他用户）
+      description: 通过请求体 id 指定挂载点表主键，用户绑定自己的令牌到挂载点（不影响其他用户）
       parameters:
       - description: Bearer token
         in: header
@@ -5137,7 +5144,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 通过请求体 id 指定挂载点文件ID，触发文件扫描任务重新同步文件信息
+      description: 通过请求体 id 指定挂载点表主键，触发文件扫描任务重新同步文件信息
       parameters:
       - description: Bearer token
         in: header
@@ -5202,6 +5209,11 @@ paths:
         in: query
         name: noPaginate
         type: boolean
+      - description: 名称或路径关键词（OR 模糊匹配）
+        example: '"电影"'
+        in: query
+        name: keyword
+        type: string
       - description: 路径过滤（模糊匹配）
         example: '"/aaa"'
         in: query

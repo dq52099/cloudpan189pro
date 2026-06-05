@@ -26,9 +26,11 @@ import (
 //   - 每个挂载点同一时刻只允许一个扫描任务处于派发窗口内。
 type RefreshFileScheduler struct {
 	running           bool
+	stopping          bool
 	mu                sync.Mutex
 	ctx               context.Context
 	cancel            context.CancelFunc
+	done              chan struct{}
 	mountPointService mountpoint.Service
 	taskEngine        taskengine.TaskEngine
 	firstRunSkipped   bool
@@ -56,15 +58,30 @@ func (s *RefreshFileScheduler) Start(ctx context.Context) error {
 	}
 	defer s.mu.Unlock()
 
-	if s.running {
+	shouldStart, err := shouldStartScheduler(s.running, s.stopping)
+	if err != nil {
+		return err
+	}
+
+	if !shouldStart {
 		return nil
 	}
 
-	s.ctx, s.cancel = context.WithCancel(ctx)
+	if isNilDependency(s.mountPointService) {
+		return ErrSchedulerMountPointServiceMissing
+	}
 
-	s.running = true
+	if isNilDependency(s.taskEngine) {
+		return ErrSchedulerTaskEngineMissing
+	}
+
+	s.ctx, s.cancel = context.WithCancel(ctx)
+	s.firstRunSkipped = false
+	done := markSchedulerRunStarted(&s.running, &s.stopping, &s.done)
 
 	gopool.Go(func() {
+		defer finishSchedulerRun(&s.mu, &s.running, &s.stopping, &s.cancel, &s.done, done)
+
 		s.loop()
 
 		ctx.Info("文件刷新执行器已停止~")
@@ -74,15 +91,12 @@ func (s *RefreshFileScheduler) Start(ctx context.Context) error {
 }
 
 func (s *RefreshFileScheduler) Stop() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if !s.running {
+	cancel, done, ok := beginSchedulerStop(&s.mu, &s.running, &s.stopping, &s.cancel, &s.done)
+	if !ok {
 		return
 	}
 
-	s.cancel()
-	s.running = false
+	waitSchedulerStop(cancel, done)
 }
 
 // loop 主循环。启动延迟后按 ticker 周期触发 tick。
@@ -117,12 +131,12 @@ func (s *RefreshFileScheduler) tick() {
 	defer func() {
 		if r := recover(); r != nil {
 			s.ctx.Error("文件刷新执行器发生异常",
-				zap.Any("panic", r),
+				zap.String("panic", sanitizeSchedulerPanicValue(r)),
 				zap.String("stack", string(debug.Stack())))
 		}
 	}()
 
-	if !shared.SettingAddition.EnableStorageAutoRefresh {
+	if !shared.GetSettingAddition().EnableStorageAutoRefresh {
 		return
 	}
 
@@ -139,6 +153,12 @@ func (s *RefreshFileScheduler) tick() {
 	activeIds := make(map[int64]struct{}, len(mountPoints))
 
 	for _, mp := range mountPoints {
+		if mp == nil {
+			s.ctx.Warn("自动刷新挂载点列表包含空记录，跳过")
+
+			continue
+		}
+
 		activeIds[mp.FileId] = struct{}{}
 		s.dispatchIfDue(mp, now)
 	}
@@ -202,6 +222,7 @@ func (s *RefreshFileScheduler) dispatchIfDue(mp *models.MountPoint, now time.Tim
 			zap.Int64("mount_point_id", mp.ID),
 			zap.Int64("file_id", mp.FileId),
 			zap.String("full_path", mp.FullPath),
+			zap.Int("refresh_interval_min", interval),
 			zap.Error(err))
 
 		return

@@ -1,9 +1,12 @@
 package bootstrap
 
 import (
+	"errors"
 	"os"
+	"strings"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/configs"
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/douban"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/openai"
@@ -16,12 +19,45 @@ import (
 
 // ExtensionServices 扩展服务集合
 type ExtensionServices struct {
-	Telegram        telegram.Service
-	TMDB            tmdb.Service
-	Douban          douban.Service
-	OpenAI          openai.Service
-	Subscription    subscription.Service
-	TelegramSetting *models.TelegramSetting
+	Telegram                  telegram.Service
+	TMDB                      tmdb.Service
+	Douban                    douban.Service
+	OpenAI                    openai.Service
+	Subscription              subscription.Service
+	SubscriptionConfig        subscription.SubscriptionConfig
+	SubscriptionConfigUpdater SubscriptionConfigUpdater
+	TelegramSetting           *models.TelegramSetting
+}
+
+type SubscriptionConfigUpdater interface {
+	UpdateConfig(subscription.SubscriptionConfig)
+}
+
+type subscriptionConfigUpdaterGroup []SubscriptionConfigUpdater
+
+func (g subscriptionConfigUpdaterGroup) UpdateConfig(config subscription.SubscriptionConfig) {
+	for _, updater := range g {
+		if updater != nil {
+			updater.UpdateConfig(config)
+		}
+	}
+}
+
+func (ext *ExtensionServices) AddSubscriptionConfigUpdater(updater SubscriptionConfigUpdater) {
+	if ext == nil || updater == nil {
+		return
+	}
+
+	if ext.SubscriptionConfigUpdater == nil {
+		ext.SubscriptionConfigUpdater = updater
+
+		return
+	}
+
+	ext.SubscriptionConfigUpdater = subscriptionConfigUpdaterGroup{
+		ext.SubscriptionConfigUpdater,
+		updater,
+	}
 }
 
 // InitExtensionServices 初始化扩展服务
@@ -61,7 +97,19 @@ func InitExtensionServices(db *gorm.DB, logger *zap.Logger, cfg *configs.Config)
 		proxyType = envProxyType
 	}
 
-	ext.Telegram = telegram.NewService(botToken, chatID, proxyURL, proxyType, apiURL, logger.Named("telegram"))
+	if envAPIURL := os.Getenv("TG_API_URL"); envAPIURL != "" {
+		apiURL = envAPIURL
+	}
+
+	telegramEnabled := telegramSetting.Enable || os.Getenv("TG_BOT_TOKEN") != ""
+	ext.Telegram = telegram.NewServiceWithConfig(telegram.Config{
+		BotToken:  botToken,
+		ChatID:    chatID,
+		ProxyURL:  proxyURL,
+		ProxyType: proxyType,
+		APIURL:    apiURL,
+		Enable:    telegramEnabled,
+	}, logger.Named("telegram"))
 
 	// 3. 初始化 TMDB 服务
 	tmdbAPIKey := os.Getenv("TMDB_API_KEY")
@@ -74,9 +122,12 @@ func InitExtensionServices(db *gorm.DB, logger *zap.Logger, cfg *configs.Config)
 
 	// 5. 初始化 OpenAI 服务
 	// 优先级：环境变量 > 配置文件
-	openaiAPIKey := cfg.OpenAI.APIKey
-	openaiBaseURL := cfg.OpenAI.BaseURL
-	openaiModel := cfg.OpenAI.Model
+	var openaiAPIKey, openaiBaseURL, openaiModel string
+	if cfg != nil && cfg.OpenAI != nil {
+		openaiAPIKey = cfg.OpenAI.APIKey
+		openaiBaseURL = cfg.OpenAI.BaseURL
+		openaiModel = cfg.OpenAI.Model
+	}
 
 	if envToken := os.Getenv("OPENAI_API_KEY"); envToken != "" {
 		openaiAPIKey = envToken
@@ -93,15 +144,59 @@ func InitExtensionServices(db *gorm.DB, logger *zap.Logger, cfg *configs.Config)
 	ext.OpenAI = openai.NewService(logger.Named("openai"), openaiAPIKey, openaiBaseURL, openaiModel)
 
 	// 6. 初始化 Subscription 服务
-	// 优先级：环境变量 > 配置文件
-	panSearchURL := "https://tg.252035.xyz"
+	subscriptionConfig := resolveSubscriptionExtensionConfig(db, logger, cfg)
+	ext.SubscriptionConfig = *subscriptionConfig
+	ext.Subscription = subscription.NewService(db, logger.Named("subscription"), subscriptionConfig)
+	ext.AddSubscriptionConfigUpdater(ext.Subscription)
+
+	// 7. 设置依赖关系
+	ext.Subscription.SetTelegramService(ext.Telegram)
+	ext.Subscription.SetTMDBService(ext.TMDB)
+	ext.Subscription.SetDoubanService(ext.Douban)
+	ext.Subscription.SetOpenAIService(ext.OpenAI)
+
+	return ext, nil
+}
+
+func resolveSubscriptionExtensionConfig(db *gorm.DB, logger *zap.Logger, cfg *configs.Config) *subscription.SubscriptionConfig {
+	// 优先级：环境变量 > 数据库配置 > 配置文件 > 代码默认值
+	panSearchURL := subscription.DefaultPanSearchURL
+	enabled := false
 	enableTMDB := true
 	enableDouban := true
+	cronExpression := consts.DefaultSubscriptionCronExpression
 
-	if cfg.Subscription != nil {
-		panSearchURL = cfg.Subscription.PanSearchURL
+	if cfg != nil && cfg.Subscription != nil {
+		enabled = cfg.Subscription.Enabled
+
+		if cfg.Subscription.PanSearchURL != "" {
+			panSearchURL = cfg.Subscription.PanSearchURL
+		}
+
+		if strings.TrimSpace(cfg.Subscription.CronExpression) != "" {
+			cronExpression = strings.TrimSpace(cfg.Subscription.CronExpression)
+		}
+
 		enableTMDB = cfg.Subscription.EnableTMDB
 		enableDouban = cfg.Subscription.EnableDouban
+	}
+
+	if db != nil {
+		var subscriptionSetting SystemSetting
+		if err := db.Where("name = ?", "subscription_config").First(&subscriptionSetting).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			if logger != nil {
+				logger.Warn("读取订阅配置失败，将使用配置文件或环境变量", zap.Error(err))
+			}
+		} else if subscriptionSetting.ID != 0 {
+			if subscriptionSetting.Value.PanSearchURL != "" {
+				panSearchURL = subscriptionSetting.Value.PanSearchURL
+			}
+
+			cronExpression = strings.TrimSpace(subscriptionSetting.Value.CronExpression)
+			enabled = subscriptionSetting.Value.Enabled
+			enableTMDB = subscriptionSetting.Value.EnableTMDB
+			enableDouban = subscriptionSetting.Value.EnableDouban
+		}
 	}
 
 	if envURL := os.Getenv("PAN_SEARCH_URL"); envURL != "" {
@@ -116,20 +211,25 @@ func InitExtensionServices(db *gorm.DB, logger *zap.Logger, cfg *configs.Config)
 		enableDouban = envDouban == "true"
 	}
 
-	subscriptionConfig := &subscription.SubscriptionConfig{
-		PanSearchURL: panSearchURL,
-		EnableTMDB:   enableTMDB,
-		EnableDouban: enableDouban,
+	if envCron := strings.TrimSpace(os.Getenv("SUBSCRIPTION_CRON")); envCron != "" {
+		cronExpression = envCron
 	}
-	ext.Subscription = subscription.NewService(db, logger.Named("subscription"), subscriptionConfig)
 
-	// 7. 设置依赖关系
-	ext.Subscription.SetTelegramService(ext.Telegram)
-	ext.Subscription.SetTMDBService(ext.TMDB)
-	ext.Subscription.SetDoubanService(ext.Douban)
-	ext.Subscription.SetOpenAIService(ext.OpenAI)
+	if envEnabled := os.Getenv("SUBSCRIPTION_ENABLED"); envEnabled != "" {
+		enabled = envEnabled == "true"
+	}
 
-	return ext, nil
+	if cronExpression == "" {
+		cronExpression = consts.DefaultSubscriptionCronExpression
+	}
+
+	return &subscription.SubscriptionConfig{
+		Enabled:        enabled,
+		PanSearchURL:   panSearchURL,
+		EnableTMDB:     enableTMDB,
+		EnableDouban:   enableDouban,
+		CronExpression: cronExpression,
+	}
 }
 
 // StartTelegramBot 启动 Telegram Bot 轮询

@@ -33,8 +33,8 @@
               <n-input
                 v-model:value="subscribeUserIdInput"
                 :disabled="parsing || submitting || (parsedLocked && !!parsedSubscribeUserId)"
-                placeholder="请输入订阅号ID"
-                style="flex: 1; min-width: 160px"
+                placeholder="请输入订阅号ID或订阅号链接"
+                class="subscribe-id-input"
               />
               <!-- 解析/编辑按钮互斥显示 -->
               <n-button
@@ -74,9 +74,7 @@
             <n-tag type="success" size="small" bordered>
               已解析：{{ parsedUserName || '-' }}（ID: {{ parsedSubscribeUserId }}）
             </n-tag>
-            <n-tag size="small" style="margin-left: 6px" bordered>
-              已分享文件数：{{ parsedShareTotal ?? '-' }}
-            </n-tag>
+            <n-tag size="small" bordered> 已分享文件数：{{ parsedShareTotal ?? '-' }} </n-tag>
           </div>
         </template>
       </n-form>
@@ -247,6 +245,7 @@ import {
   normalizeCreateSubscribePlanResponse,
   normalizeGetSubscribeUserResponse,
 } from '@/utils/responseGuards'
+import { normalizeCloud189SubscribeUserInput } from '@/utils/subscribeUser'
 
 const message = useMessage()
 
@@ -427,7 +426,8 @@ const handleParseSubscribe = () => {
     return
   }
 
-  if (!subscribeUserIdInput.value) {
+  const subscribeUserId = normalizeCloud189SubscribeUserInput(subscribeUserIdInput.value)
+  if (!subscribeUserId) {
     message.error('请输入订阅号ID')
     return
   }
@@ -438,7 +438,7 @@ const handleParseSubscribe = () => {
 
   const currentOperation = operationVersion
   const currentRequestId = ++parseRequestId
-  const subscribeUserId = subscribeUserIdInput.value
+  subscribeUserIdInput.value = subscribeUserId
   parsing.value = true
   getSubscribeUser({
     subscribeUser: subscribeUserId,
@@ -484,8 +484,10 @@ const handleParseSubscribe = () => {
         return
       }
 
-      console.error('解析订阅号失败:', err)
-      message.error(getErrorMessage(err, '解析失败'))
+      const errorMessage = getErrorMessage(err, '解析失败')
+
+      console.error('解析订阅号失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isCurrentParseRequest(currentRequestId, currentOperation)) {
@@ -597,8 +599,10 @@ const handleSubmit = () => {
             return
           }
 
-          console.error('创建入库计划失败:', err)
-          message.error(getErrorMessage(err, '创建失败'))
+          const errorMessage = getErrorMessage(err, '创建失败')
+
+          console.error('创建入库计划失败:', errorMessage)
+          message.error(errorMessage)
         })
         .finally(() => {
           if (isCurrentSubmitRequest(currentRequestId, currentOperation)) {
@@ -657,6 +661,11 @@ onUnmounted(() => {
   min-width: 0;
   width: 100%;
   box-sizing: border-box;
+}
+
+.subscribe-id-input {
+  flex: 1 1 180px;
+  min-width: 0;
 }
 
 .parsed-summary {

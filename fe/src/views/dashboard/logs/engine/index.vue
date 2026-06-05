@@ -2,19 +2,14 @@
   <div class="engine-logs-page">
     <!-- 头部区域 -->
     <div class="header">
-      <div class="header-left">
-        <h2></h2>
-      </div>
-      <div class="header-right">
-        <n-button @click="handleRefresh">
-          <template #icon>
-            <n-icon>
-              <RefreshOutline />
-            </n-icon>
-          </template>
-          刷新
-        </n-button>
-      </div>
+      <n-button :loading="state.loading" @click="handleRefresh">
+        <template #icon>
+          <n-icon>
+            <RefreshOutline />
+          </n-icon>
+        </template>
+        刷新
+      </n-button>
     </div>
 
     <!-- 引擎状态卡片 -->
@@ -55,6 +50,10 @@
           <div class="stat-item">
             <div class="stat-value failed">{{ state.engineData.stats.failedTasks }}</div>
             <div class="stat-label">失败</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value cancelled">{{ state.engineData.stats.cancelledTasks }}</div>
+            <div class="stat-label">已取消</div>
           </div>
         </div>
       </n-card>
@@ -139,7 +138,7 @@
       v-model:show="state.showTaskDetailModal"
       preset="card"
       title="任务详情"
-      style="width: 800px"
+      style="width: min(800px, calc(100vw - 32px))"
     >
       <div v-if="state.currentTask" class="task-detail">
         <n-descriptions :column="2" label-placement="left" bordered>
@@ -167,7 +166,7 @@
             {{ state.currentTask.endAt ? formatDateTime(state.currentTask.endAt) : '未结束' }}
           </n-descriptions-item>
           <n-descriptions-item label="载荷大小">
-            {{ state.currentTask.payload?.length || 0 }} 字节
+            {{ getPayloadSize(state.currentTask.payload) }} 字节
           </n-descriptions-item>
         </n-descriptions>
 
@@ -218,7 +217,7 @@
           class="task-payload"
         >
           <h4>载荷数据</h4>
-          <n-code :code="formatPayload(state.currentTask.payload)" language="json" />
+          <pre class="log-code-block">{{ formatPayload(state.currentTask.payload) }}</pre>
         </div>
       </div>
     </n-modal>
@@ -238,7 +237,6 @@ import {
   NDescriptions,
   NDescriptionsItem,
   NDivider,
-  NCode,
   NAlert,
   useMessage,
 } from 'naive-ui'
@@ -246,14 +244,8 @@ import { RefreshOutline, PlayCircleOutline, StopCircleOutline } from '@vicons/io
 import { getTaskEngineList } from '@/api/taskstate'
 import { formatDateTime } from '@/utils/time'
 import { getErrorMessage } from '@/utils/api'
-import type { TaskEngineListResponse } from '@/api/taskstate'
-
-type NormalizedTaskEngineListResponse = {
-  isRunning: boolean
-  stats: Models.TaskStats
-  pendingTasks: Models.TaskInfo[]
-  runningTasks: Models.TaskInfo[]
-}
+import { isCompleteTaskStats, normalizeTaskEngineListResponse } from '@/utils/responseGuards'
+import type { NormalizedTaskEngineListResponse, TaskEngineListResponse } from '@/api/taskstate'
 
 // 数据状态
 const state = reactive({
@@ -273,55 +265,14 @@ let engineStatusRequestId = 0
 let engineStatusRequestInFlight = false
 let hasEngineStatsContractWarning = false
 
-const defaultTaskStats = (): Models.TaskStats => ({
-  totalTasks: 0,
-  pendingTasks: 0,
-  runningTasks: 0,
-  completedTasks: 0,
-  failedTasks: 0,
-})
-
-const isFiniteNumber = (value: unknown): value is number => {
-  return typeof value === 'number' && Number.isFinite(value)
-}
-
-const isCompleteTaskStats = (value: unknown): value is Models.TaskStats => {
-  if (!value || typeof value !== 'object') {
-    return false
-  }
-
-  const stats = value as Partial<Models.TaskStats>
-
-  return (
-    isFiniteNumber(stats.totalTasks) &&
-    isFiniteNumber(stats.pendingTasks) &&
-    isFiniteNumber(stats.runningTasks) &&
-    isFiniteNumber(stats.completedTasks) &&
-    isFiniteNumber(stats.failedTasks)
-  )
-}
-
-const normalizeTaskEngineData = (
-  data: TaskEngineListResponse
-): NormalizedTaskEngineListResponse => {
-  const stats = isCompleteTaskStats(data.stats) ? data.stats : defaultTaskStats()
-
-  return {
-    isRunning: data.isRunning === true,
-    stats,
-    pendingTasks: Array.isArray(data.pendingTasks) ? data.pendingTasks : [],
-    runningTasks: Array.isArray(data.runningTasks) ? data.runningTasks : [],
-  }
-}
-
-const warnInvalidEngineStatsOnce = (data: TaskEngineListResponse) => {
+const warnInvalidEngineStatsOnce = (data: TaskEngineListResponse, silent: boolean) => {
   if (isCompleteTaskStats(data.stats)) {
     hasEngineStatsContractWarning = false
 
     return
   }
 
-  if (!hasEngineStatsContractWarning) {
+  if (!silent && !hasEngineStatsContractWarning) {
     message.warning('任务引擎统计响应缺失/异常，已用 0 显示')
     hasEngineStatsContractWarning = true
   }
@@ -369,22 +320,37 @@ const fetchEngineStatus = (silent = false) => {
       }
 
       if (response.code === 200 && response.data) {
-        warnInvalidEngineStatsOnce(response.data)
-        state.engineData = normalizeTaskEngineData(response.data)
+        warnInvalidEngineStatsOnce(response.data, silent)
+        const engineData = normalizeTaskEngineListResponse(response.data)
+        if (!engineData) {
+          if (!silent) {
+            message.error('获取执行日志失败：响应数据格式异常')
+          }
+
+          return
+        }
+
+        state.engineData = engineData
         syncCurrentTask()
 
         return
       }
 
-      message.error(response.msg || '获取执行日志失败')
+      if (!silent) {
+        message.error(response.msg || '获取执行日志失败')
+      }
     })
     .catch((error) => {
       if (!isComponentMounted || requestId !== engineStatusRequestId) {
         return
       }
 
-      console.error('获取执行日志失败:', error)
-      message.error(getErrorMessage(error, '获取执行日志失败'))
+      if (!silent) {
+        const errorMessage = getErrorMessage(error, '获取执行日志失败')
+
+        console.error('获取执行日志失败:', errorMessage)
+        message.error(errorMessage)
+      }
     })
     .finally(() => {
       if (isComponentMounted && requestId === engineStatusRequestId) {
@@ -416,6 +382,8 @@ const getTaskStatusTagType = (status: string) => {
       return 'success'
     case 'failed':
       return 'error'
+    case 'cancelled':
+      return 'default'
     default:
       return 'default'
   }
@@ -454,17 +422,65 @@ const formatDuration = (duration: number) => {
   }
 }
 
-// 格式化载荷数据
-const formatPayload = (payload: number[]) => {
+type TaskPayload = Models.TaskInfo['payload']
+
+const getPayloadBytes = (payload: TaskPayload): Uint8Array | null => {
+  if (Array.isArray(payload)) {
+    if (!payload.every((item) => Number.isInteger(item) && item >= 0 && item <= 255)) {
+      return null
+    }
+
+    return Uint8Array.from(payload)
+  }
+
+  if (typeof payload !== 'string') {
+    return null
+  }
+
   try {
-    // 尝试将字节数组转换为字符串
-    const str = String.fromCharCode(...payload)
-    // 尝试解析为JSON
-    const parsed = JSON.parse(str)
+    const binary = atob(payload)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i)
+    }
+
+    return bytes
+  } catch {
+    return null
+  }
+}
+
+const getPayloadSize = (payload: TaskPayload | undefined) => {
+  if (!payload) {
+    return 0
+  }
+
+  const bytes = getPayloadBytes(payload)
+  if (bytes) {
+    return bytes.length
+  }
+
+  return typeof payload === 'string' ? payload.length : payload.length
+}
+
+const decodePayloadText = (bytes: Uint8Array) => {
+  return new TextDecoder().decode(bytes)
+}
+
+// 格式化载荷数据
+const formatPayload = (payload: TaskPayload) => {
+  const bytes = getPayloadBytes(payload)
+  if (!bytes) {
+    return typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2)
+  }
+
+  const text = decodePayloadText(bytes)
+  try {
+    const parsed = JSON.parse(text)
+
     return JSON.stringify(parsed, null, 2)
   } catch {
-    // 如果解析失败，显示原始字节数组
-    return JSON.stringify(payload, null, 2)
+    return text
   }
 }
 
@@ -511,29 +527,19 @@ onUnmounted(() => {
 .header {
   margin-bottom: 20px;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.header-left h2 {
-  margin: 0;
-  color: var(--n-text-color);
-  font-weight: 600;
-}
-
-.header-right {
-  display: flex;
+  justify-content: flex-end;
   align-items: center;
 }
 
 .status-cards {
   display: grid;
-  grid-template-columns: 1fr 2fr;
+  grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr);
   gap: 20px;
   margin-bottom: 20px;
 }
 
 .status-card {
+  min-width: 0;
   background: var(--n-card-color);
   border-radius: 6px;
 }
@@ -547,7 +553,7 @@ onUnmounted(() => {
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 16px;
   text-align: center;
 }
@@ -578,6 +584,10 @@ onUnmounted(() => {
   color: #d03050;
 }
 
+.stat-value.cancelled {
+  color: #8a8f99;
+}
+
 .stat-label {
   font-size: 12px;
   color: var(--n-text-color-2);
@@ -590,6 +600,7 @@ onUnmounted(() => {
 }
 
 .task-list-card {
+  min-width: 0;
   background: var(--n-card-color);
   border-radius: 6px;
 }
@@ -608,6 +619,7 @@ onUnmounted(() => {
 }
 
 .task-item {
+  min-width: 0;
   padding: 16px;
   border-bottom: 1px solid var(--n-divider-color);
   cursor: pointer;
@@ -626,10 +638,16 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   margin-bottom: 8px;
 }
 
 .task-id {
+  min-width: 0;
+  max-width: min(100%, 260px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: monospace;
   font-size: 12px;
   color: var(--n-text-color-2);
@@ -644,14 +662,18 @@ onUnmounted(() => {
 
 .task-topic,
 .task-worker {
+  min-width: 0;
   font-size: 13px;
   color: var(--n-text-color-1);
   margin-bottom: 2px;
+  overflow-wrap: anywhere;
 }
 
 .task-time {
+  min-width: 0;
   font-size: 12px;
   color: var(--n-text-color-2);
+  overflow-wrap: anywhere;
 }
 
 .task-time div {
@@ -659,6 +681,7 @@ onUnmounted(() => {
 }
 
 .task-detail {
+  max-width: 100%;
   max-height: 600px;
   overflow-y: auto;
 }
@@ -686,11 +709,36 @@ onUnmounted(() => {
 
 .processor-error {
   margin-top: 8px;
+  overflow-wrap: anywhere;
 }
 
-.task-payload :deep(.n-code) {
+.log-code-block {
+  max-width: 100%;
   max-height: 200px;
-  overflow-y: auto;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  color: var(--n-text-color);
+  background: var(--n-color-hover);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.task-detail :deep(.n-descriptions) {
+  max-width: 100%;
+}
+
+.task-detail :deep(.n-descriptions-table) {
+  table-layout: fixed;
+}
+
+.task-detail :deep(.n-descriptions-table-content) {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* 响应式设计 */

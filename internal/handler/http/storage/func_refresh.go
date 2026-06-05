@@ -57,6 +57,10 @@ func (h *handler) Refresh() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureTaskEngine(ctx, busCodeStorageAddTaskFailed) {
+			return
+		}
+
 		if err = h.taskEngine.PushMessage(ctx.GetContext().
 			WithValue(consts.CtxKeyFullPath, mountPoint.FullPath).
 			WithValue(consts.CtxKeyInvokeHandlerName, "手动刷新"),

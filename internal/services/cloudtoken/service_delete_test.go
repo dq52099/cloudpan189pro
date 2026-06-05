@@ -4,6 +4,7 @@ import (
 	stdctx "context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -12,9 +13,11 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/bootstrap"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/taskengine"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/autoingest"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -105,6 +108,19 @@ func createAutoIngestPlanWithToken(t *testing.T, db *gorm.DB, userID, tokenID in
 	return plan
 }
 
+func stubLoginInit(t *testing.T, resp *client.UUIDInfoResp, err error) {
+	t.Helper()
+
+	original := loginInit
+	loginInit = func() (*client.UUIDInfoResp, error) {
+		return resp, err
+	}
+
+	t.Cleanup(func() {
+		loginInit = original
+	})
+}
+
 func TestCheckCloudTokenUpdateResultAllowsNoopWhenTokenExists(t *testing.T) {
 	tDB := setupCloudTokenTestDB(t)
 	svc := &service{svc: tDB}
@@ -150,6 +166,48 @@ func TestCheckCloudTokenUpdateResultAllowsIDOnlyNoopWhenTokenExists(t *testing.T
 
 	if err := svc.checkCloudTokenUpdateResult(ctx, &gorm.DB{RowsAffected: 0}, token.ID, 0, true, "令牌不存在"); err != nil {
 		t.Fatalf("expected id-only noop update to pass for existing token, got %v", err)
+	}
+}
+
+func TestInitQrcodeRedactsLoginInitFailure(t *testing.T) {
+	tDB := setupCloudTokenTestDB(t)
+	svc := NewService(tDB)
+
+	core, logs := observer.New(zap.ErrorLevel)
+	ctx := context.NewContext(stdctx.Background(), context.WithLogger(zap.New(core)))
+
+	rawErr := errors.New(`GET "https://proxy-user:proxy-pass@example.test/init?accessToken=query-secret&filename=private-name.mkv#refreshToken=fragment-secret": accessCode=abcd Authorization: Bearer bearer-secret`)
+	stubLoginInit(t, nil, rawErr)
+
+	_, err := svc.InitQrcode(ctx)
+	if err == nil {
+		t.Fatal("expected login init failure")
+	}
+
+	entries := logs.FilterMessage("登录初始化失败").All()
+	if len(entries) != 1 {
+		t.Fatalf("expected one login init failure log, got %d", len(entries))
+	}
+
+	logText := entries[0].Message + fmt.Sprint(entries[0].Context)
+	for _, text := range []string{err.Error(), logText} {
+		for _, leaked := range []string{
+			"proxy-user",
+			"proxy-pass",
+			"query-secret",
+			"private-name.mkv",
+			"fragment-secret",
+			"abcd",
+			"bearer-secret",
+		} {
+			if strings.Contains(text, leaked) {
+				t.Fatalf("expected %q to be redacted from %q", leaked, text)
+			}
+		}
+
+		if !strings.Contains(text, utils.RedactedSecret) {
+			t.Fatalf("expected redacted marker in %q", text)
+		}
 	}
 }
 
@@ -383,6 +441,48 @@ func TestCheckQrcodeAllowsAdminTokenUpdate(t *testing.T) {
 
 	if updated.AccessToken != "admin-access-token" {
 		t.Fatalf("expected admin-updated access token, got %q", updated.AccessToken)
+	}
+}
+
+func TestCheckQrcodeRedactsLoginQueryFailure(t *testing.T) {
+	tDB := setupCloudTokenTestDB(t)
+	svc := NewService(tDB)
+
+	core, logs := observer.New(zap.ErrorLevel)
+	ctx := context.NewContext(stdctx.Background(), context.WithLogger(zap.New(core)))
+
+	rawErr := errors.New(`GET "https://proxy-user:proxy-pass@example.test/login?accessToken=query-secret&filename=private-name.mkv#refreshToken=fragment-secret": accessCode=abcd Authorization: Bearer bearer-secret`)
+	stubLoginQuery(t, nil, rawErr)
+
+	err := svc.CheckQrcode(ctx, &CheckQrcodeRequest{UUID: "uuid", UserID: 10})
+	if err == nil {
+		t.Fatal("expected login query failure")
+	}
+
+	entries := logs.FilterMessage("登录查询失败").All()
+	if len(entries) != 1 {
+		t.Fatalf("expected one login query failure log, got %d", len(entries))
+	}
+
+	logText := entries[0].Message + fmt.Sprint(entries[0].Context)
+	for _, text := range []string{err.Error(), logText} {
+		for _, leaked := range []string{
+			"proxy-user",
+			"proxy-pass",
+			"query-secret",
+			"private-name.mkv",
+			"fragment-secret",
+			"abcd",
+			"bearer-secret",
+		} {
+			if strings.Contains(text, leaked) {
+				t.Fatalf("expected %q to be redacted from %q", leaked, text)
+			}
+		}
+
+		if !strings.Contains(text, utils.RedactedSecret) {
+			t.Fatalf("expected redacted marker in %q", text)
+		}
 	}
 }
 

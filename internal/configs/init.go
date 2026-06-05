@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/joho/godotenv"
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 
 	"github.com/zeromicro/go-zero/core/conf"
 )
@@ -61,6 +62,6 @@ func applyDefaults(cfg *Config) {
 	}
 
 	if cfg.Subscription != nil && cfg.Subscription.CronExpression == "" {
-		cfg.Subscription.CronExpression = "0 8 * * *"
+		cfg.Subscription.CronExpression = consts.DefaultSubscriptionCronExpression
 	}
 }

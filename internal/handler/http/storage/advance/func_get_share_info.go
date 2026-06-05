@@ -1,19 +1,14 @@
 package advance
 
 import (
-	"regexp"
-	"strings"
-
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 )
 
 type getShareInfoRequest struct {
 	ShareCode       string `form:"shareCode" binding:"required"`
 	ShareAccessCode string `form:"shareAccessCode"`
 }
-
-var reShareLink = regexp.MustCompile(`cloud\.189\.cn\/t\/([a-zA-Z0-9]+)`)
-var reAccessCode = regexp.MustCompile(`(?:\S+码|code)[:：]\s*([a-zA-Z0-9]+)`)
 
 // GetShareInfo 获取分享信息
 // @Summary 获取分享信息
@@ -39,40 +34,21 @@ func (h *handler) GetShareInfo() httpcontext.HandlerFunc {
 			return
 		}
 
-		cleanCode := strings.ReplaceAll(req.ShareCode, "（", "(")
-		cleanCode = strings.ReplaceAll(cleanCode, "）", ")")
-		cleanCode = strings.ReplaceAll(cleanCode, "：", ":")
-		cleanCode = strings.TrimSpace(cleanCode)
+		pureShareCode, pureAccessCode := utils.ParseCloud189ShareCode(req.ShareCode, req.ShareAccessCode)
+		if !utils.IsCloud189ShareCode(pureShareCode) {
+			ctx.Fail(codeStorageAdvanceGetShareInfoError.WithMessage("无法从分享链接中提取有效分享码"))
 
-		var pureShareCode, pureAccessCode string
-
-		if req.ShareAccessCode == "" {
-			if codeMatch := reAccessCode.FindStringSubmatch(cleanCode); len(codeMatch) > 1 {
-				pureAccessCode = codeMatch[1]
-			} else {
-				parts := strings.Fields(cleanCode)
-				if len(parts) > 1 {
-					lastPart := strings.Trim(parts[len(parts)-1], "()")
-					if len(lastPart) == 4 {
-						pureAccessCode = lastPart
-					}
-				}
-			}
-		} else {
-			pureAccessCode = req.ShareAccessCode
+			return
 		}
 
-		if matches := reShareLink.FindStringSubmatch(cleanCode); len(matches) > 1 {
-			pureShareCode = matches[1]
-		} else {
-			if idx := strings.Index(cleanCode, "("); idx > -1 {
-				pureShareCode = strings.TrimSpace(cleanCode[:idx])
-			} else {
-				parts := strings.Fields(cleanCode)
-				if len(parts) > 0 {
-					pureShareCode = strings.Trim(parts[0], "()")
-				}
-			}
+		if pureAccessCode != "" && !utils.IsCloud189AccessCode(pureAccessCode) {
+			ctx.Fail(codeStorageAdvanceGetShareInfoError.WithMessage("访问码格式无效"))
+
+			return
+		}
+
+		if !h.ensureCloudBridgeService(ctx, codeStorageAdvanceGetShareInfoError) {
+			return
 		}
 
 		shareInfo, err := h.cloudBridgeService.GetShareInfo(ctx.GetContext(), pureShareCode, pureAccessCode)

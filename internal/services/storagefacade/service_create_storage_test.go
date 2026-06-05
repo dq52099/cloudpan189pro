@@ -3,17 +3,23 @@ package storagefacade
 import (
 	stdctx "context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	mysqlDriver "github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/xxcheng123/cloudpan189-share/internal/bootstrap"
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/datatypes"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/taskengine"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	cloudtokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
+	mountPointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
+	virtualFileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/virtualfile"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -49,6 +55,117 @@ func (t *storageFacadeTestDB) GetHTTPEngine() *gin.Engine {
 }
 
 var _ bootstrap.ServiceContext = (*storageFacadeTestDB)(nil)
+
+type mockCreateStorageMountPointService struct {
+	mountPointSvi.Service
+
+	queryByPathResult *models.MountPoint
+	queryByPathErr    error
+}
+
+func (m *mockCreateStorageMountPointService) QueryByPath(ctx context.Context, filePath string) (*models.MountPoint, error) {
+	return m.queryByPathResult, m.queryByPathErr
+}
+
+type mockCreateStorageVirtualFileService struct {
+	virtualFileSvi.Service
+
+	queryResult *models.VirtualFile
+	queryErr    error
+	queriedIDs  []int64
+}
+
+func (m *mockCreateStorageVirtualFileService) Query(ctx context.Context, fid int64) (*models.VirtualFile, error) {
+	m.queriedIDs = append(m.queriedIDs, fid)
+
+	return m.queryResult, m.queryErr
+}
+
+type mockCreateStorageCloudTokenService struct {
+	cloudtokenSvi.Service
+
+	token   *models.CloudToken
+	err     error
+	queries []int64
+}
+
+func (m *mockCreateStorageCloudTokenService) QueryAccessible(
+	ctx context.Context,
+	id int64,
+	userID int64,
+	isAdmin bool,
+) (*models.CloudToken, error) {
+	m.queries = append(m.queries, id)
+	if m.err != nil {
+		return nil, m.err
+	}
+
+	return m.token, nil
+}
+
+type storageFacadeDuplicateSQLiteCodeError struct {
+	code int
+}
+
+func (e storageFacadeDuplicateSQLiteCodeError) Error() string {
+	return "sqlite constraint error"
+}
+
+func (e storageFacadeDuplicateSQLiteCodeError) Code() int {
+	return e.code
+}
+
+func TestIsUniqueConstraintErrorRecognizesDriverErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "mysql duplicate",
+			err:  &mysqlDriver.MySQLError{Number: 1062, Message: "Duplicate entry"},
+			want: true,
+		},
+		{
+			name: "postgres duplicate",
+			err:  fmt.Errorf("create storage: %w", &pgconn.PgError{Code: "23505", Message: "duplicate key value violates unique constraint"}),
+			want: true,
+		},
+		{
+			name: "sqlite unique constraint code",
+			err:  storageFacadeDuplicateSQLiteCodeError{code: 2067},
+			want: true,
+		},
+		{
+			name: "sqlite primary key constraint code",
+			err:  fmt.Errorf("wrapped: %w", storageFacadeDuplicateSQLiteCodeError{code: 1555}),
+			want: true,
+		},
+		{
+			name: "sqlite text fallback",
+			err:  errors.New("UNIQUE constraint failed: virtual_files.parent_id, virtual_files.name"),
+			want: true,
+		},
+		{
+			name: "non duplicate",
+			err:  errors.New("database is locked"),
+			want: false,
+		},
+		{
+			name: "nil",
+			err:  nil,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isUniqueConstraintError(tt.err); got != tt.want {
+				t.Fatalf("expected %v, got %v for %v", tt.want, got, tt.err)
+			}
+		})
+	}
+}
 
 func setupStorageFacadeTestDB(t *testing.T) *storageFacadeTestDB {
 	t.Helper()
@@ -251,6 +368,258 @@ func TestCreateStorageUsesExistingTransactionContext(t *testing.T) {
 	}
 }
 
+func TestCreateStorageAllowsTokenlessShareAndSubscribeMounts(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	tests := []struct {
+		name      string
+		localPath string
+		osType    string
+		fileID    string
+		addition  datatypes.JSONMap
+	}{
+		{
+			name:      "share",
+			localPath: "/tokenless/share",
+			osType:    models.OsTypeShareFolder,
+			fileID:    "share-file-id",
+			addition: datatypes.JSONMap{
+				consts.FileAdditionKeyShareId:    int64(123),
+				consts.FileAdditionKeyIsFolder:   true,
+				consts.FileAdditionKeyShareMode:  1,
+				consts.FileAdditionKeyAccessCode: "abcd",
+			},
+		},
+		{
+			name:      "subscribe",
+			localPath: "/tokenless/subscribe",
+			osType:    models.OsTypeSubscribe,
+			fileID:    "",
+			addition: datatypes.JSONMap{
+				consts.FileAdditionKeyUpUserId: "up-user",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			id, err := svc.CreateStorage(ctx, &CreateStorageRequest{
+				LocalPath:     tt.localPath,
+				OsType:        tt.osType,
+				CloudToken:    0,
+				FileId:        tt.fileID,
+				Addition:      tt.addition,
+				CreatorUserID: 100,
+			})
+			if err != nil {
+				t.Fatalf("create storage: %v", err)
+			}
+
+			if id <= 0 {
+				t.Fatalf("expected created virtual file id, got %d", id)
+			}
+
+			var mountPoint models.MountPoint
+			if err = tDB.db.Where("full_path = ?", tt.localPath).First(&mountPoint).Error; err != nil {
+				t.Fatalf("query mount point: %v", err)
+			}
+
+			if mountPoint.TokenId != 0 {
+				t.Fatalf("expected token id 0, got %d", mountPoint.TokenId)
+			}
+
+			if mountPoint.OsType != tt.osType {
+				t.Fatalf("expected os type %q, got %q", tt.osType, mountPoint.OsType)
+			}
+		})
+	}
+}
+
+func TestCreateStorageRejectsNegativeCloudToken(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+	svc := NewService(tDB)
+
+	_, err := svc.CreateStorage(context.NewContext(stdctx.Background()), &CreateStorageRequest{
+		LocalPath:     "/invalid-token",
+		OsType:        models.OsTypeShareFolder,
+		CloudToken:    -1,
+		FileId:        "share-file-id",
+		Addition:      datatypes.JSONMap{},
+		CreatorUserID: 100,
+	})
+	if !errors.Is(err, errInvalidCloudToken) {
+		t.Fatalf("expected invalid cloud token error, got %v", err)
+	}
+
+	if count := countStorageFacadeMountPointsByPath(t, tDB.db, "/invalid-token"); count != 0 {
+		t.Fatalf("expected no mount point created, got %d", count)
+	}
+}
+
+func TestCreateStorageNormalizesLocalPathBeforePersisting(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+	svc := NewService(tDB)
+
+	id, err := svc.CreateStorage(context.NewContext(stdctx.Background()), &CreateStorageRequest{
+		LocalPath:     "/media//%E4%B8%AD%E6%96%87%20/a%3ab/",
+		OsType:        models.OsTypeShareFolder,
+		CloudToken:    0,
+		FileId:        "share-file-id",
+		Addition:      datatypes.JSONMap{},
+		CreatorUserID: 100,
+	})
+	if err != nil {
+		t.Fatalf("create storage: %v", err)
+	}
+
+	if id <= 0 {
+		t.Fatalf("expected created virtual file id, got %d", id)
+	}
+
+	var mountPoint models.MountPoint
+	if err = tDB.db.Where("full_path = ?", "/media/中文/a_b").First(&mountPoint).Error; err != nil {
+		t.Fatalf("query normalized mount point: %v", err)
+	}
+
+	if mountPoint.Name != "a_b" {
+		t.Fatalf("expected mount point name a_b, got %q", mountPoint.Name)
+	}
+
+	if count := countStorageFacadeMountPointsByPath(t, tDB.db, "/media//%E4%B8%AD%E6%96%87%20/a%3ab/"); count != 0 {
+		t.Fatalf("expected no raw-path mount point, got %d", count)
+	}
+
+	if count := countStorageFacadeVirtualFilesByNames(t, tDB.db, "media", "中文", "a_b"); count != 3 {
+		t.Fatalf("expected normalized ancestors and top file, got %d virtual files", count)
+	}
+}
+
+func TestCreateStorageAllowsEscapedPercentInNormalizedPath(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+	svc := NewService(tDB)
+
+	id, err := svc.CreateStorage(context.NewContext(stdctx.Background()), &CreateStorageRequest{
+		LocalPath:     "/percent/a%25b",
+		OsType:        models.OsTypeShareFolder,
+		CloudToken:    0,
+		FileId:        "share-file-id",
+		Addition:      datatypes.JSONMap{},
+		CreatorUserID: 100,
+	})
+	if err != nil {
+		t.Fatalf("create storage: %v", err)
+	}
+
+	if id <= 0 {
+		t.Fatalf("expected created virtual file id, got %d", id)
+	}
+
+	var mountPoint models.MountPoint
+	if err = tDB.db.Where("full_path = ?", "/percent/a%25b").First(&mountPoint).Error; err != nil {
+		t.Fatalf("query percent mount point: %v", err)
+	}
+
+	if mountPoint.Name != "a%b" {
+		t.Fatalf("expected mount point name a%%b, got %q", mountPoint.Name)
+	}
+
+	if count := countStorageFacadeVirtualFilesByNames(t, tDB.db, "percent", "a%b"); count != 2 {
+		t.Fatalf("expected percent path ancestor and top file, got %d virtual files", count)
+	}
+}
+
+func TestCreateStorageAllowsDoubleEscapedSeparatorText(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+	svc := NewService(tDB)
+
+	id, err := svc.CreateStorage(context.NewContext(stdctx.Background()), &CreateStorageRequest{
+		LocalPath:     "/literal/a%252Fb",
+		OsType:        models.OsTypeShareFolder,
+		CloudToken:    0,
+		FileId:        "share-file-id",
+		Addition:      datatypes.JSONMap{},
+		CreatorUserID: 100,
+	})
+	if err != nil {
+		t.Fatalf("create storage: %v", err)
+	}
+
+	if id <= 0 {
+		t.Fatalf("expected created virtual file id, got %d", id)
+	}
+
+	var mountPoint models.MountPoint
+	if err = tDB.db.Where("full_path = ?", "/literal/a%252Fb").First(&mountPoint).Error; err != nil {
+		t.Fatalf("query literal encoded separator mount point: %v", err)
+	}
+
+	if mountPoint.Name != "a%2Fb" {
+		t.Fatalf("expected mount point name a%%2Fb, got %q", mountPoint.Name)
+	}
+
+	if count := countStorageFacadeVirtualFilesByNames(t, tDB.db, "literal", "a%2Fb"); count != 2 {
+		t.Fatalf("expected literal encoded separator ancestor and top file, got %d virtual files", count)
+	}
+}
+
+func TestCreateStorageTrimsCloudResourceID(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+	svc := NewService(tDB)
+
+	id, err := svc.CreateStorage(context.NewContext(stdctx.Background()), &CreateStorageRequest{
+		LocalPath:     "/trimmed-cloud-id",
+		OsType:        models.OsTypeShareFolder,
+		CloudToken:    0,
+		FileId:        " cloud-id ",
+		Addition:      datatypes.JSONMap{},
+		CreatorUserID: 100,
+	})
+	if err != nil {
+		t.Fatalf("create storage: %v", err)
+	}
+
+	var file models.VirtualFile
+	if err = tDB.db.First(&file, id).Error; err != nil {
+		t.Fatalf("query created virtual file: %v", err)
+	}
+
+	if file.CloudId != "cloud-id" {
+		t.Fatalf("expected trimmed cloud id, got %q", file.CloudId)
+	}
+}
+
+func TestCreateStorageRejectsNormalizedEquivalentExistingPath(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	_, err := svc.CreateStorage(ctx, &CreateStorageRequest{
+		LocalPath:     "/normalized/a:b",
+		OsType:        models.OsTypeShareFolder,
+		CloudToken:    0,
+		FileId:        "share-file-id",
+		Addition:      datatypes.JSONMap{},
+		CreatorUserID: 100,
+	})
+	if err != nil {
+		t.Fatalf("create first storage: %v", err)
+	}
+
+	_, err = svc.CreateStorage(ctx, &CreateStorageRequest{
+		LocalPath:     "/normalized/a_b",
+		OsType:        models.OsTypeShareFolder,
+		CloudToken:    0,
+		FileId:        "share-file-id",
+		Addition:      datatypes.JSONMap{},
+		CreatorUserID: 100,
+	})
+	if !errors.Is(err, ErrPathAlreadyExists) {
+		t.Fatalf("expected normalized duplicate path error, got %v", err)
+	}
+}
+
 func TestCreateStorageAllowExistingRejectsPlainVirtualFile(t *testing.T) {
 	tDB := setupStorageFacadeTestDB(t)
 	createStorageFacadeVirtualDir(t, tDB.db, 0, "taken")
@@ -325,6 +694,242 @@ func TestCreateStorageAllowExistingReturnsExistingMountPointRoot(t *testing.T) {
 	}
 }
 
+func TestCreateStorageAllowExistingReturnsNotFoundWhenExistingRootFileIsNil(t *testing.T) {
+	virtualFileService := &mockCreateStorageVirtualFileService{}
+	svc := &service{
+		mountPointService: &mockCreateStorageMountPointService{
+			queryByPathResult: &models.MountPoint{
+				ID:            200,
+				FileId:        100,
+				FullPath:      "/exists",
+				TokenId:       0,
+				CreatorUserID: 7,
+			},
+		},
+		virtualFileService: virtualFileService,
+	}
+
+	_, err := svc.createStorageInTransaction(
+		context.NewContext(stdctx.Background()),
+		&CreateStorageRequest{
+			LocalPath:     "/exists",
+			OsType:        models.OsTypeFolder,
+			CloudToken:    0,
+			FileId:        "cloud-id",
+			Addition:      datatypes.JSONMap{},
+			AllowExisting: true,
+			CreatorUserID: 7,
+		},
+		[]string{"exists"},
+	)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected record not found for nil existing root file, got %v", err)
+	}
+
+	if len(virtualFileService.queriedIDs) != 1 || virtualFileService.queriedIDs[0] != 100 {
+		t.Fatalf("expected existing root file 100 to be queried, got %v", virtualFileService.queriedIDs)
+	}
+}
+
+func TestCreateStorageAllowExistingReturnsNormalizedEquivalentMountPoint(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	firstID, err := svc.CreateStorage(ctx, &CreateStorageRequest{
+		LocalPath:     "/normalized-existing/a:b",
+		OsType:        models.OsTypeFolder,
+		CloudToken:    0,
+		FileId:        "cloud-id",
+		Addition:      datatypes.JSONMap{},
+		CreatorUserID: 100,
+	})
+	if err != nil {
+		t.Fatalf("create first storage: %v", err)
+	}
+
+	secondID, err := svc.CreateStorage(ctx, &CreateStorageRequest{
+		LocalPath:     "/normalized-existing/a_b",
+		OsType:        models.OsTypeFolder,
+		CloudToken:    0,
+		FileId:        "cloud-id",
+		Addition:      datatypes.JSONMap{},
+		CreatorUserID: 100,
+		AllowExisting: true,
+	})
+	if err != nil {
+		t.Fatalf("reuse normalized-equivalent mount point: %v", err)
+	}
+
+	if secondID != firstID {
+		t.Fatalf("expected existing file id %d, got %d", firstID, secondID)
+	}
+
+	if count := countStorageFacadeMountPointsByPath(t, tDB.db, "/normalized-existing/a_b"); count != 1 {
+		t.Fatalf("expected one normalized mount point, got %d", count)
+	}
+
+	if count := countStorageFacadeMountPointsByPath(t, tDB.db, "/normalized-existing/a:b"); count != 0 {
+		t.Fatalf("expected no raw-equivalent mount point, got %d", count)
+	}
+}
+
+func TestCreateStorageAllowExistingReturnsExistingSubscribeMountWithSameAddition(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+	addition := datatypes.JSONMap{
+		consts.FileAdditionKeyUpUserId: "up-user",
+	}
+
+	firstID, err := svc.CreateStorage(ctx, &CreateStorageRequest{
+		LocalPath:     "/subscribe-existing/same",
+		OsType:        models.OsTypeSubscribe,
+		CloudToken:    0,
+		FileId:        "",
+		Addition:      addition,
+		CreatorUserID: 100,
+	})
+	if err != nil {
+		t.Fatalf("create first subscribe storage: %v", err)
+	}
+
+	secondID, err := svc.CreateStorage(ctx, &CreateStorageRequest{
+		LocalPath:     "/subscribe-existing/same",
+		OsType:        models.OsTypeSubscribe,
+		CloudToken:    0,
+		FileId:        "",
+		Addition:      datatypes.JSONMap{consts.FileAdditionKeyUpUserId: "up-user"},
+		CreatorUserID: 100,
+		AllowExisting: true,
+	})
+	if err != nil {
+		t.Fatalf("reuse same subscribe mount: %v", err)
+	}
+
+	if secondID != firstID {
+		t.Fatalf("expected existing file id %d, got %d", firstID, secondID)
+	}
+}
+
+func TestCreateStorageAllowExistingRejectsDifferentSubscribeAddition(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	_, err := svc.CreateStorage(ctx, &CreateStorageRequest{
+		LocalPath:     "/subscribe-existing/conflict",
+		OsType:        models.OsTypeSubscribe,
+		CloudToken:    0,
+		FileId:        "",
+		Addition:      datatypes.JSONMap{consts.FileAdditionKeyUpUserId: "up-user-a"},
+		CreatorUserID: 100,
+	})
+	if err != nil {
+		t.Fatalf("create first subscribe storage: %v", err)
+	}
+
+	_, err = svc.CreateStorage(ctx, &CreateStorageRequest{
+		LocalPath:     "/subscribe-existing/conflict",
+		OsType:        models.OsTypeSubscribe,
+		CloudToken:    0,
+		FileId:        "",
+		Addition:      datatypes.JSONMap{consts.FileAdditionKeyUpUserId: "up-user-b"},
+		CreatorUserID: 100,
+		AllowExisting: true,
+	})
+	if !errors.Is(err, ErrPathAlreadyExists) {
+		t.Fatalf("expected ErrPathAlreadyExists for different subscribe addition, got %v", err)
+	}
+}
+
+func TestCreateStorageAllowExistingReturnsExistingShareMountWithSameAddition(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+	addition := datatypes.JSONMap{
+		consts.FileAdditionKeyShareId:    int64(123),
+		consts.FileAdditionKeyIsFolder:   true,
+		consts.FileAdditionKeyShareMode:  1,
+		consts.FileAdditionKeyAccessCode: "abcd",
+	}
+
+	firstID, err := svc.CreateStorage(ctx, &CreateStorageRequest{
+		LocalPath:     "/share-existing/same",
+		OsType:        models.OsTypeShareFolder,
+		CloudToken:    0,
+		FileId:        "share-file-id",
+		Addition:      addition,
+		CreatorUserID: 100,
+	})
+	if err != nil {
+		t.Fatalf("create first share storage: %v", err)
+	}
+
+	secondID, err := svc.CreateStorage(ctx, &CreateStorageRequest{
+		LocalPath:  "/share-existing/same",
+		OsType:     models.OsTypeShareFolder,
+		CloudToken: 0,
+		FileId:     "share-file-id",
+		Addition: datatypes.JSONMap{
+			consts.FileAdditionKeyShareId:    int64(123),
+			consts.FileAdditionKeyIsFolder:   true,
+			consts.FileAdditionKeyShareMode:  1,
+			consts.FileAdditionKeyAccessCode: "abcd",
+		},
+		CreatorUserID: 100,
+		AllowExisting: true,
+	})
+	if err != nil {
+		t.Fatalf("reuse same share mount: %v", err)
+	}
+
+	if secondID != firstID {
+		t.Fatalf("expected existing file id %d, got %d", firstID, secondID)
+	}
+}
+
+func TestCreateStorageAllowExistingRejectsSameCloudIDDifferentAddition(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	_, err := svc.CreateStorage(ctx, &CreateStorageRequest{
+		LocalPath:  "/share-existing/conflict",
+		OsType:     models.OsTypeShareFolder,
+		CloudToken: 0,
+		FileId:     "share-file-id",
+		Addition: datatypes.JSONMap{
+			consts.FileAdditionKeyShareId:    int64(123),
+			consts.FileAdditionKeyIsFolder:   true,
+			consts.FileAdditionKeyShareMode:  1,
+			consts.FileAdditionKeyAccessCode: "abcd",
+		},
+		CreatorUserID: 100,
+	})
+	if err != nil {
+		t.Fatalf("create first share storage: %v", err)
+	}
+
+	_, err = svc.CreateStorage(ctx, &CreateStorageRequest{
+		LocalPath:  "/share-existing/conflict",
+		OsType:     models.OsTypeShareFolder,
+		CloudToken: 0,
+		FileId:     "share-file-id",
+		Addition: datatypes.JSONMap{
+			consts.FileAdditionKeyShareId:    int64(456),
+			consts.FileAdditionKeyIsFolder:   true,
+			consts.FileAdditionKeyShareMode:  1,
+			consts.FileAdditionKeyAccessCode: "wxyz",
+		},
+		CreatorUserID: 100,
+		AllowExisting: true,
+	})
+	if !errors.Is(err, ErrPathAlreadyExists) {
+		t.Fatalf("expected ErrPathAlreadyExists for different share addition, got %v", err)
+	}
+}
+
 func TestCreateStorageAllowExistingRejectsDifferentCloudID(t *testing.T) {
 	tDB := setupStorageFacadeTestDB(t)
 
@@ -358,6 +963,108 @@ func TestCreateStorageAllowExistingRejectsDifferentCloudID(t *testing.T) {
 	})
 	if !errors.Is(err, ErrPathAlreadyExists) {
 		t.Fatalf("expected ErrPathAlreadyExists for different cloud id, got %v", err)
+	}
+}
+
+func TestCreateStorageAllowExistingRejectsDifferentOsType(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+
+	existingFile := createStorageFacadeVirtualDir(t, tDB.db, 0, "mounted-different-type")
+
+	mountPoint := &models.MountPoint{
+		FileId:        existingFile.ID,
+		Name:          "mounted-different-type",
+		FullPath:      "/mounted-different-type",
+		OsType:        models.OsTypeFolder,
+		TokenId:       0,
+		CreatorUserID: 100,
+	}
+	if err := tDB.db.Create(mountPoint).Error; err != nil {
+		t.Fatalf("create mount point: %v", err)
+	}
+
+	svc := NewService(tDB)
+
+	_, err := svc.CreateStorage(context.NewContext(stdctx.Background()), &CreateStorageRequest{
+		LocalPath:     "/mounted-different-type",
+		OsType:        models.OsTypeShareFolder,
+		CloudToken:    0,
+		FileId:        "cloud-id",
+		Addition:      datatypes.JSONMap{},
+		CreatorUserID: 100,
+		AllowExisting: true,
+	})
+	if !errors.Is(err, ErrPathAlreadyExists) {
+		t.Fatalf("expected ErrPathAlreadyExists for different os type, got %v", err)
+	}
+}
+
+func TestCreateStorageAllowExistingReturnsExistingTokenMountWithSameToken(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+	token := createStorageFacadeCloudToken(t, tDB.db, 100, "same-token")
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	firstID, err := svc.CreateStorage(ctx, &CreateStorageRequest{
+		LocalPath:     "/token-existing/same",
+		OsType:        models.OsTypePersonFolder,
+		CloudToken:    token.ID,
+		FileId:        "cloud-id",
+		Addition:      datatypes.JSONMap{},
+		CreatorUserID: 100,
+	})
+	if err != nil {
+		t.Fatalf("create first token storage: %v", err)
+	}
+
+	secondID, err := svc.CreateStorage(ctx, &CreateStorageRequest{
+		LocalPath:     "/token-existing/same",
+		OsType:        models.OsTypePersonFolder,
+		CloudToken:    token.ID,
+		FileId:        "cloud-id",
+		Addition:      datatypes.JSONMap{},
+		CreatorUserID: 100,
+		AllowExisting: true,
+	})
+	if err != nil {
+		t.Fatalf("reuse same token mount: %v", err)
+	}
+
+	if secondID != firstID {
+		t.Fatalf("expected existing file id %d, got %d", firstID, secondID)
+	}
+}
+
+func TestCreateStorageAllowExistingRejectsDifferentCloudToken(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+	firstToken := createStorageFacadeCloudToken(t, tDB.db, 100, "first-token")
+	secondToken := createStorageFacadeCloudToken(t, tDB.db, 100, "second-token")
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	_, err := svc.CreateStorage(ctx, &CreateStorageRequest{
+		LocalPath:     "/token-existing/conflict",
+		OsType:        models.OsTypePersonFolder,
+		CloudToken:    firstToken.ID,
+		FileId:        "cloud-id",
+		Addition:      datatypes.JSONMap{},
+		CreatorUserID: 100,
+	})
+	if err != nil {
+		t.Fatalf("create first token storage: %v", err)
+	}
+
+	_, err = svc.CreateStorage(ctx, &CreateStorageRequest{
+		LocalPath:     "/token-existing/conflict",
+		OsType:        models.OsTypePersonFolder,
+		CloudToken:    secondToken.ID,
+		FileId:        "cloud-id",
+		Addition:      datatypes.JSONMap{},
+		CreatorUserID: 100,
+		AllowExisting: true,
+	})
+	if !errors.Is(err, ErrPathAlreadyExists) {
+		t.Fatalf("expected ErrPathAlreadyExists for different cloud token, got %v", err)
 	}
 }
 
@@ -556,5 +1263,32 @@ func TestCreateStorageAllowExistingStillValidatesCloudTokenAccess(t *testing.T) 
 	})
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("expected record not found before returning existing mount point, got %v", err)
+	}
+}
+
+func TestCreateStorageRejectsTypedNilCloudTokenService(t *testing.T) {
+	tDB := setupStorageFacadeTestDB(t)
+
+	var cloudTokenService *mockCreateStorageCloudTokenService
+
+	svc := &service{
+		svc:               tDB,
+		cloudTokenService: cloudTokenService,
+	}
+
+	_, err := svc.CreateStorage(context.NewContext(stdctx.Background()), &CreateStorageRequest{
+		LocalPath:     "/typed-nil-token",
+		OsType:        models.OsTypePersonFolder,
+		CloudToken:    99,
+		FileId:        "cloud-id",
+		Addition:      datatypes.JSONMap{},
+		CreatorUserID: 100,
+	})
+	if !errors.Is(err, errInvalidCloudToken) {
+		t.Fatalf("expected invalid cloud token error, got %v", err)
+	}
+
+	if got := countStorageFacadeVirtualFilesByNames(t, tDB.db, "typed-nil-token"); got != 0 {
+		t.Fatalf("expected no virtual files created, got %d", got)
 	}
 }

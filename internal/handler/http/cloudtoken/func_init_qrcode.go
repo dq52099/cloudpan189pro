@@ -23,6 +23,10 @@ type InitQrcodeResponse = cloudtokenSvi.InitQrcodeResponse
 // @Router /api/cloud_token/init_qrcode [post]
 func (h *handler) InitQrcode() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
+		if !h.ensureCloudTokenService(ctx, codeInitQrcodeFailed) {
+			return
+		}
+
 		resp, err := h.cloudTokenService.InitQrcode(ctx.GetContext())
 		if err != nil {
 			ctx.Fail(codeInitQrcodeFailed.WithError(err))

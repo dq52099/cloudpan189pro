@@ -14,6 +14,29 @@ func (s *service) Update(ctx context.Context, fields ...utils.Field) error {
 	mp := make(map[string]interface{})
 
 	for _, field := range fields {
+		if field.Key == "base_url" {
+			value, ok := field.Value.(string)
+			if !ok {
+				return errInvalidSettingBaseURL
+			}
+
+			baseURL, err := normalizeSettingBaseURL(value)
+			if err != nil {
+				return err
+			}
+
+			field.Value = baseURL
+		}
+
+		if field.Key == "addition" {
+			addition, err := normalizeSettingAddition(field.Value)
+			if err != nil {
+				return err
+			}
+
+			field.Value = addition
+		}
+
 		mp[field.Key] = field.Value
 	}
 
@@ -91,11 +114,7 @@ func checkSettingUpdateResult(ctx context.Context, db *gorm.DB, result *gorm.DB,
 }
 
 func syncSharedSetting(setting *models.Setting) {
-	shared.SaltKey = setting.SaltKey
-	shared.BaseURL = setting.BaseURL
-	shared.EnableAuth = setting.EnableAuth
-
 	addition := setting.Addition
 	addition.WebDAVAllowedSuffixes = append([]string(nil), addition.WebDAVAllowedSuffixes...)
-	shared.SettingAddition = addition
+	shared.SetSetting(setting.SaltKey, setting.BaseURL, setting.EnableAuth, addition)
 }

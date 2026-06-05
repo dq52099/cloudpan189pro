@@ -31,10 +31,12 @@ func (a *telegramShareAdapter) GetShareInfo(ctx stdContext.Context, shareCode, a
 	}
 
 	return &telegram.ShareInfo{
-		Name:     info.Name,
-		ShareId:  info.ShareId,
-		FileId:   info.ID,
-		IsFolder: info.IsFolder,
+		Name:       info.Name,
+		ShareId:    info.ShareId,
+		ShareMode:  info.ShareMode,
+		FileId:     info.ID,
+		IsFolder:   info.IsFolder,
+		AccessCode: info.AccessCode,
 	}, nil
 }
 
@@ -47,9 +49,24 @@ type telegramMountAdapter struct {
 }
 
 func (a *telegramMountAdapter) CreateMountPoint(ctx stdContext.Context, req *telegram.MountRequest) (int64, error) {
+	if req == nil {
+		return 0, errors.New("telegram 挂载请求为空")
+	}
+
+	if req.ShareID <= 0 {
+		return 0, errors.New("telegram 分享ID缺失，无法创建可扫描的挂载点")
+	}
+
+	shareMode := req.ShareMode
+	if shareMode <= 0 {
+		shareMode = 1
+	}
+
 	addition := datatypes.JSONMap{
-		consts.FileAdditionKeyShareId:  req.ShareCode,
-		consts.FileAdditionKeyIsFolder: true,
+		consts.FileAdditionKeyShareId:    req.ShareID,
+		consts.FileAdditionKeyIsFolder:   req.IsFolder,
+		consts.FileAdditionKeyShareMode:  shareMode,
+		consts.FileAdditionKeyAccessCode: req.AccessCode,
 	}
 
 	bgCtx := context.NewContext(ctx)
@@ -61,6 +78,8 @@ func (a *telegramMountAdapter) CreateMountPoint(ctx stdContext.Context, req *tel
 		FileId:            req.FileID,
 		Addition:          addition,
 		EnableDeepRefresh: req.EnableDeepRefresh,
+		CreatorUserID:     1,
+		IsAdmin:           true,
 		// Telegram 重复收到同一分享链接也视作成功
 		AllowExisting: true,
 	})
@@ -69,7 +88,7 @@ func (a *telegramMountAdapter) CreateMountPoint(ctx stdContext.Context, req *tel
 	}
 
 	// 下发扫描任务，与 BatchAdd 行为保持一致
-	if a.mountPointService == nil || a.taskEngine == nil {
+	if isNilDependency(a.mountPointService) || isNilDependency(a.taskEngine) {
 		return id, errors.New("telegram 挂载扫描依赖未初始化")
 	}
 

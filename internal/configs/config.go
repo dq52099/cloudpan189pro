@@ -57,7 +57,7 @@ type SubscriptionConfig struct {
 	Enabled bool `json:"enabled,default=false,env=SUBSCRIPTION_ENABLED"`
 	// CronExpression 的默认值通过代码设置，避免 struct tag 中的空格触发 go vet 警告。
 	CronExpression string `json:"cronExpression,optional,env=SUBSCRIPTION_CRON"`
-	PanSearchURL   string `json:"panSearchURL,default=https://tg.252035.xyz,env=PAN_SEARCH_URL"`
+	PanSearchURL   string `json:"panSearchURL,default=https://so.252035.xyz/api/search,env=PAN_SEARCH_URL"`
 	EnableTMDB     bool   `json:"enableTMDB,default=true,env=SUBSCRIPTION_ENABLE_TMDB"`
 	EnableDouban   bool   `json:"enableDouban,default=true,env=SUBSCRIPTION_ENABLE_DOUBAN"`
 }

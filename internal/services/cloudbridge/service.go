@@ -20,13 +20,13 @@ type Service interface {
 	FamilyList(ctx context.Context, token client.AuthToken) (*GetFamilyListResponse, error)
 
 	GetSubscribeUserFiles(ctx context.Context, userId string) ([]converter.VirtualFileConverter, error)
-	GetSubscribeShareFiles(ctx context.Context, upUserId string, shareId int64, fileId string, isFolder bool) ([]converter.VirtualFileConverter, error)
+	GetSubscribeShareFiles(ctx context.Context, upUserId string, shareId int64, fileId string, isFolder bool, shareMode int, accessCode string) ([]converter.VirtualFileConverter, error)
 	GetShareFiles(ctx context.Context, shareId int64, fileId string, shareMode int, accessCode string, isFolder bool) ([]converter.VirtualFileConverter, error)
 	GetCloudFiles(ctx context.Context, cc AuthToken, fileId string) ([]converter.VirtualFileConverter, error)
 	GetCloudFamilyFiles(ctx context.Context, cc AuthToken, familyId string, fileId string) ([]converter.VirtualFileConverter, error)
 
 	CheckSubscribeUser(ctx context.Context, subscribeUser string) (string, error)
-	CheckSubscribeShare(ctx context.Context, subscribeUser, shareCode string) (shareId int64, isFolder bool, fileId string, err error)
+	CheckSubscribeShare(ctx context.Context, subscribeUser, shareCode, accessCode string) (shareId int64, isFolder bool, fileId string, shareMode int, resolvedAccessCode string, err error)
 	CheckShare(ctx context.Context, shareCode string, accessCode string) (result *CheckShareResult, err error)
 	CheckPerson(ctx context.Context, token AuthToken, fileId string) (string, error)
 	CheckFamily(ctx context.Context, token AuthToken, familyId, fileId string) error

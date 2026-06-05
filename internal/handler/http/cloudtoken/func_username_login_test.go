@@ -95,6 +95,18 @@ func TestUsernameLoginReturnsNotFoundWhenStoredCredentialsTokenMissing(t *testin
 	}
 }
 
+func TestUsernameLoginReturnsNotFoundWhenStoredCredentialsQueryReturnsNil(t *testing.T) {
+	cloudTokenService := &mockUsernameLoginCloudTokenService{}
+
+	recorder := performUsernameLoginRequest(t, cloudTokenService, `{"id":123}`)
+
+	assertCloudTokenNotFoundResponse(t, recorder)
+
+	if cloudTokenService.usernameLoginCalled {
+		t.Fatal("expected username login service not to be called after nil token pre-query")
+	}
+}
+
 func TestUsernameLoginRejectsInvalidIDBeforeServiceCall(t *testing.T) {
 	cloudTokenService := &mockUsernameLoginCloudTokenService{}
 

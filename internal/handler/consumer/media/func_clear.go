@@ -13,19 +13,24 @@ func (h *handler) Clear() taskcontext.HandlerFunc {
 	return func(ctx *taskcontext.Context) error {
 		logger := ctx.GetContext().Logger
 
-		if shared.MediaConfig == nil {
+		mediaConfig := shared.GetMediaConfig()
+		if mediaConfig == nil {
 			logger.Warn("媒体功能未配置，跳过清理")
 
 			return nil
 		}
 
-		storagePath := shared.MediaConfig.StoragePath
+		storagePath := mediaConfig.StoragePath
 
 		// 基本验证
 		if strings.TrimSpace(storagePath) == "" {
 			logger.Error("媒体存储路径为空，无法执行清理操作")
 
 			return fmt.Errorf("媒体存储路径为空")
+		}
+
+		if err := h.ensureMediaFileService(); err != nil {
+			return err
 		}
 
 		logger.Info("开始清理媒体文件", zap.String("storage_path", storagePath))

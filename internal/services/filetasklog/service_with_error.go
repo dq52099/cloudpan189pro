@@ -19,7 +19,7 @@ func (s *service) WithError(ctx context.Context, key LogKey, err error) (retErr 
 	}
 
 	db := s.getDB(ctx)
-	errorMsg := err.Error()
+	errorMsg := sanitizeTaskLogText(err.Error())
 
 	// 根据数据库类型选择拼接方式
 	var concatExpr clause.Expr

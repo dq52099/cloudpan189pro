@@ -14,6 +14,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	appContext "github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/taskcontext"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/datatypes"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/taskengine"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
@@ -25,6 +26,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/shared"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	"gorm.io/gorm"
 )
 
@@ -194,8 +196,25 @@ func (m *mockBatchModifyTokenGroup2FileService) GetBindFiles(ctx appContext.Cont
 
 type mockBatchModifyTokenCloudTokenService struct {
 	cloudtokenSvi.Service
-	err     error
-	queries []int64
+	err         error
+	queryErr    error
+	nilQueryIDs map[int64]bool
+	queries     []int64
+	queryCalls  []int64
+}
+
+func (m *mockBatchModifyTokenCloudTokenService) Query(ctx appContext.Context, id int64) (*models.CloudToken, error) {
+	m.queryCalls = append(m.queryCalls, id)
+
+	if m.queryErr != nil {
+		return nil, m.queryErr
+	}
+
+	if m.nilQueryIDs[id] {
+		return nil, nil
+	}
+
+	return &models.CloudToken{ID: id, AccessToken: "access-token"}, nil
 }
 
 func (m *mockBatchModifyTokenCloudTokenService) QueryAccessible(ctx appContext.Context, id, userID int64, isAdmin bool) (*models.CloudToken, error) {
@@ -203,6 +222,10 @@ func (m *mockBatchModifyTokenCloudTokenService) QueryAccessible(ctx appContext.C
 
 	if m.err != nil {
 		return nil, m.err
+	}
+
+	if m.nilQueryIDs[id] {
+		return nil, nil
 	}
 
 	return &models.CloudToken{ID: id, UserID: userID}, nil
@@ -344,6 +367,52 @@ func TestClearFileIgnoresTerminalCompletedStatus(t *testing.T) {
 	}
 }
 
+func TestClearFileSkipsMissingMediaFileServiceWhenAutoCleanEnabled(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := filetasklog.NewService(tDB)
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		filesByID: map[int64]*models.VirtualFile{
+			10: {ID: 10, TopId: 10, Name: "dir", IsDir: true},
+		},
+		childrenByParent: map[int64][]*models.VirtualFile{},
+		deleteErrByID:    map[int64]error{},
+	}
+
+	oldMediaConfig := shared.GetMediaConfig()
+
+	shared.SetMediaConfig(&models.MediaConfig{
+		Enable:      true,
+		AutoClean:   true,
+		StoragePath: t.TempDir(),
+	})
+
+	defer shared.SetMediaConfig(oldMediaConfig)
+
+	handler := NewHandler(
+		zap.NewNop(),
+		virtualFileService,
+		nil,
+		nil,
+		&mockBatchModifyTokenMountPointService{},
+		logService,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	req := topic.FileClearFileRequest{FileId: 10}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.ClearFile())
+	if err = processor.Process(stdctx.Background(), payload); err != nil {
+		t.Fatalf("expected clear to skip missing media file service during auto clean, got %v", err)
+	}
+}
+
 func TestClearFileJoinsBusinessAndFailedStatusErrors(t *testing.T) {
 	tDB := setupBatchDeleteTaskLogTestDB(t)
 	statusErr := errors.New("clear failed status write failed")
@@ -396,6 +465,39 @@ func TestClearFileJoinsBusinessAndFailedStatusErrors(t *testing.T) {
 
 	if !errors.Is(err, statusErr) {
 		t.Fatalf("expected clear failed status error, got %v", err)
+	}
+}
+
+func TestClearFileReturnsNotFoundWhenFileQueryReturnsNil(t *testing.T) {
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		filesByID: map[int64]*models.VirtualFile{
+			10: nil,
+		},
+	}
+	handler := NewHandler(
+		zap.NewNop(),
+		virtualFileService,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	req := topic.FileClearFileRequest{FileId: 10}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.ClearFile())
+
+	err = processor.Process(stdctx.Background(), payload)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected record not found, got %v", err)
 	}
 }
 
@@ -543,6 +645,39 @@ func TestScanFileJoinsBusinessAndFailedStatusErrors(t *testing.T) {
 	}
 }
 
+func TestScanFileReturnsNotFoundWhenFileQueryReturnsNil(t *testing.T) {
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		filesByID: map[int64]*models.VirtualFile{
+			10: nil,
+		},
+	}
+	handler := NewHandler(
+		zap.NewNop(),
+		virtualFileService,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	req := topic.FileScanFileRequest{FileId: 10}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.ScanFile())
+
+	err = processor.Process(stdctx.Background(), payload)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected record not found, got %v", err)
+	}
+}
+
 func TestScanFileSkipsWhenMountPointOwnerChanged(t *testing.T) {
 	tDB := setupBatchDeleteTaskLogTestDB(t)
 	logService := filetasklog.NewService(tDB)
@@ -665,6 +800,380 @@ func TestScanFileReturnsMountPointOwnerLookupError(t *testing.T) {
 
 	if logCount != 0 {
 		t.Fatalf("expected owner lookup failure before task log creation, got %d", logCount)
+	}
+}
+
+func TestScanFileSkipsWhenMountPointOwnerLookupReturnsNil(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := filetasklog.NewService(tDB)
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		childrenByParent: map[int64][]*models.VirtualFile{},
+		deleteErrByID:    map[int64]error{},
+		filesByID: map[int64]*models.VirtualFile{
+			10: {ID: 10, TopId: 10, IsTop: true, Name: "top", IsDir: true, OsType: models.OsTypeFolder},
+		},
+	}
+	mountPointService := &mockBatchModifyTokenMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			10: nil,
+		},
+	}
+
+	oldMediaConfig := shared.MediaConfig
+	shared.MediaConfig = nil
+
+	defer func() {
+		shared.MediaConfig = oldMediaConfig
+	}()
+
+	handler := NewHandler(
+		zap.NewNop(),
+		virtualFileService,
+		nil,
+		nil,
+		mountPointService,
+		logService,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	req := topic.FileScanFileRequest{
+		FileId:         10,
+		ExpectedUserID: 100,
+	}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.ScanFile())
+	if err := processor.Process(stdctx.Background(), payload); err != nil {
+		t.Fatalf("nil owner mount point should be skipped without retrying queue item: %v", err)
+	}
+
+	var logCount int64
+	if err := tDB.db.Model(&models.FileTaskLog{}).Count(&logCount).Error; err != nil {
+		t.Fatalf("count task logs: %v", err)
+	}
+
+	if logCount != 0 {
+		t.Fatalf("expected skipped scan not to create task log, got %d", logCount)
+	}
+
+	if len(mountPointService.refreshTimeUpdates) != 0 || len(mountPointService.lastStateUpdates) != 0 {
+		t.Fatalf("expected skipped scan not to update mount point state, got refresh=%v state=%v", mountPointService.refreshTimeUpdates, mountPointService.lastStateUpdates)
+	}
+}
+
+func TestScanFileReturnsNotFoundWhenPersonFolderMountPointIsNil(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := filetasklog.NewService(tDB)
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		childrenByParent: map[int64][]*models.VirtualFile{},
+		deleteErrByID:    map[int64]error{},
+		filesByID: map[int64]*models.VirtualFile{
+			10: {ID: 10, TopId: 10, IsTop: true, Name: "person", IsDir: true, OsType: models.OsTypePersonFolder, CloudId: "cloud-folder-id"},
+		},
+	}
+	mountPointService := &mockBatchModifyTokenMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			10: nil,
+		},
+	}
+
+	oldMediaConfig := shared.MediaConfig
+	shared.MediaConfig = nil
+
+	defer func() {
+		shared.MediaConfig = oldMediaConfig
+	}()
+
+	handler := NewHandler(
+		zap.NewNop(),
+		virtualFileService,
+		nil,
+		&mockBatchModifyTokenCloudTokenService{},
+		mountPointService,
+		logService,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	req := topic.FileScanFileRequest{FileId: 10}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.ScanFile())
+
+	err = processor.Process(stdctx.Background(), payload)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected nil person mount point to return record not found, got %v", err)
+	}
+
+	if len(mountPointService.lastStateUpdates) != 1 || mountPointService.lastStateUpdates[0] != 10 {
+		t.Fatalf("expected failed scan to update mount point state, got %v", mountPointService.lastStateUpdates)
+	}
+}
+
+func TestScanFileLogsPersonFolderCloudTokenQueryError(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := filetasklog.NewService(tDB)
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		childrenByParent: map[int64][]*models.VirtualFile{},
+		deleteErrByID:    map[int64]error{},
+		filesByID: map[int64]*models.VirtualFile{
+			10: {ID: 10, TopId: 10, IsTop: true, Name: "person", IsDir: true, OsType: models.OsTypePersonFolder, CloudId: "cloud-folder-id"},
+		},
+	}
+	mountPointService := &mockBatchModifyTokenMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			10: {ID: 1001, FileId: 10, TokenId: 88, CreatorUserID: 1, Name: "person"},
+		},
+	}
+	queryErr := errors.New(`cloud token query failed: https://proxy-user:proxy-pass@example.test/token?access_token=query-secret&filename=private-name.mkv#token=fragment-secret accessCode=abcd Authorization: Bearer secret-token`)
+	cloudTokenService := &mockBatchModifyTokenCloudTokenService{queryErr: queryErr}
+
+	oldMediaConfig := shared.MediaConfig
+	shared.MediaConfig = nil
+
+	defer func() {
+		shared.MediaConfig = oldMediaConfig
+	}()
+
+	core, logs := observer.New(zap.ErrorLevel)
+	logger := zap.New(core)
+	handler := NewHandler(
+		logger,
+		virtualFileService,
+		nil,
+		cloudTokenService,
+		mountPointService,
+		logService,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	req := topic.FileScanFileRequest{FileId: 10}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(logger).Wrap(handler.ScanFile())
+
+	err = processor.Process(stdctx.Background(), payload)
+	if err == nil || !strings.Contains(err.Error(), "获取云盘令牌失败") {
+		t.Fatalf("expected scan token query failure, got %v", err)
+	}
+
+	for _, leaked := range []string{"proxy-user", "proxy-pass", "query-secret", "private-name.mkv", "fragment-secret", "abcd", "secret-token"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("expected %q to be redacted from returned error %q", leaked, err.Error())
+		}
+	}
+
+	if !strings.Contains(err.Error(), utils.RedactedSecret) {
+		t.Fatalf("expected returned error to include redacted marker, got %q", err.Error())
+	}
+
+	if len(cloudTokenService.queryCalls) != 1 || cloudTokenService.queryCalls[0] != 88 {
+		t.Fatalf("expected token 88 to be queried, got %v", cloudTokenService.queryCalls)
+	}
+
+	entries := logs.FilterMessage("获取云盘令牌失败").All()
+	if len(entries) != 1 {
+		t.Fatalf("expected one cloud token query failure log, got %d", len(entries))
+	}
+
+	logText := entries[0].Message + entries[0].ContextMap()["error"].(string)
+	if !strings.Contains(logText, "cloud token query failed") {
+		t.Fatalf("expected log to include safe query failure reason, got %s", logText)
+	}
+
+	for _, leaked := range []string{"proxy-user", "proxy-pass", "query-secret", "private-name.mkv", "fragment-secret", "abcd", "secret-token"} {
+		if strings.Contains(logText, leaked) {
+			t.Fatalf("expected %q to be redacted from log %s", leaked, logText)
+		}
+	}
+
+	if !strings.Contains(logText, utils.RedactedSecret) {
+		t.Fatalf("expected log to include redacted marker, got %s", logText)
+	}
+
+	var log models.FileTaskLog
+	if err := tDB.db.First(&log).Error; err != nil {
+		t.Fatalf("query task log: %v", err)
+	}
+
+	if !strings.Contains(log.Result, "cloud token query failed") {
+		t.Fatalf("expected task log result to keep failure reason, got %q", log.Result)
+	}
+
+	for _, leaked := range []string{"proxy-user", "proxy-pass", "query-secret", "private-name.mkv", "fragment-secret", "abcd", "secret-token"} {
+		if strings.Contains(log.Result, leaked) {
+			t.Fatalf("expected %q to be redacted from task log result %q", leaked, log.Result)
+		}
+	}
+
+	if !strings.Contains(log.Result, utils.RedactedSecret) {
+		t.Fatalf("expected task log result to include redacted marker, got %q", log.Result)
+	}
+}
+
+func TestScanFileKeepsSafeFamilyFolderCloudTokenQueryFailureReason(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := filetasklog.NewService(tDB)
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		childrenByParent: map[int64][]*models.VirtualFile{},
+		deleteErrByID:    map[int64]error{},
+		filesByID: map[int64]*models.VirtualFile{
+			20: {
+				ID:      20,
+				TopId:   20,
+				IsTop:   true,
+				Name:    "family",
+				IsDir:   true,
+				OsType:  models.OsTypeFamilyFolder,
+				CloudId: "cloud-family-folder-id",
+				Addition: datatypes.JSONMap{
+					consts.FileAdditionKeyFamilyId: "family-id",
+				},
+			},
+		},
+	}
+	mountPointService := &mockBatchModifyTokenMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			20: {ID: 1002, FileId: 20, TokenId: 99, CreatorUserID: 1, Name: "family"},
+		},
+	}
+	queryErr := errors.New(`family token query failed: https://proxy-user:proxy-pass@example.test/token?access_token=query-secret#token=fragment-secret accessCode=abcd`)
+	cloudTokenService := &mockBatchModifyTokenCloudTokenService{queryErr: queryErr}
+
+	oldMediaConfig := shared.MediaConfig
+	shared.MediaConfig = nil
+
+	defer func() {
+		shared.MediaConfig = oldMediaConfig
+	}()
+
+	handler := NewHandler(
+		zap.NewNop(),
+		virtualFileService,
+		nil,
+		cloudTokenService,
+		mountPointService,
+		logService,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	req := topic.FileScanFileRequest{FileId: 20}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.ScanFile())
+
+	err = processor.Process(stdctx.Background(), payload)
+	if err == nil || !strings.Contains(err.Error(), "family token query failed") {
+		t.Fatalf("expected safe family token failure reason, got %v", err)
+	}
+
+	if len(cloudTokenService.queryCalls) != 1 || cloudTokenService.queryCalls[0] != 99 {
+		t.Fatalf("expected token 99 to be queried, got %v", cloudTokenService.queryCalls)
+	}
+
+	for _, leaked := range []string{"proxy-user", "proxy-pass", "query-secret", "fragment-secret", "abcd"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("expected %q to be redacted from returned error %q", leaked, err.Error())
+		}
+	}
+
+	if !strings.Contains(err.Error(), utils.RedactedSecret) {
+		t.Fatalf("expected returned error to include redacted marker, got %q", err.Error())
+	}
+}
+
+func TestScanFileReturnsNotFoundWhenFamilyFolderCloudTokenIsNil(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := filetasklog.NewService(tDB)
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		childrenByParent: map[int64][]*models.VirtualFile{},
+		deleteErrByID:    map[int64]error{},
+		filesByID: map[int64]*models.VirtualFile{
+			20: {
+				ID:      20,
+				TopId:   20,
+				IsTop:   true,
+				Name:    "family",
+				IsDir:   true,
+				OsType:  models.OsTypeFamilyFolder,
+				CloudId: "cloud-family-folder-id",
+				Addition: datatypes.JSONMap{
+					consts.FileAdditionKeyFamilyId: "family-id",
+				},
+			},
+		},
+	}
+	mountPointService := &mockBatchModifyTokenMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			20: {ID: 1002, FileId: 20, TokenId: 99, CreatorUserID: 1, Name: "family"},
+		},
+	}
+	cloudTokenService := &mockBatchModifyTokenCloudTokenService{
+		nilQueryIDs: map[int64]bool{99: true},
+	}
+
+	oldMediaConfig := shared.MediaConfig
+	shared.MediaConfig = nil
+
+	defer func() {
+		shared.MediaConfig = oldMediaConfig
+	}()
+
+	handler := NewHandler(
+		zap.NewNop(),
+		virtualFileService,
+		nil,
+		cloudTokenService,
+		mountPointService,
+		logService,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	req := topic.FileScanFileRequest{FileId: 20}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.ScanFile())
+
+	err = processor.Process(stdctx.Background(), payload)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected nil family cloud token to return record not found, got %v", err)
+	}
+
+	if err == nil || !strings.Contains(err.Error(), "获取云盘令牌失败") {
+		t.Fatalf("expected nil family cloud token to keep token failure context, got %v", err)
+	}
+
+	if len(cloudTokenService.queryCalls) != 1 || cloudTokenService.queryCalls[0] != 99 {
+		t.Fatalf("expected token 99 to be queried, got %v", cloudTokenService.queryCalls)
 	}
 }
 
@@ -1023,6 +1532,71 @@ func TestHandleBatchDeleteSkipsWhenMountPointOwnerChanged(t *testing.T) {
 	}
 }
 
+func TestHandleBatchDeleteRecordsFailureWhenOwnerMountPointQueryReturnsNil(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := filetasklog.NewService(tDB)
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		filesByID: map[int64]*models.VirtualFile{
+			10: {ID: 10, TopId: 10, IsTop: true, Name: "top"},
+		},
+		childrenByParent: map[int64][]*models.VirtualFile{},
+		deleteErrByID:    map[int64]error{},
+	}
+	mountPointService := &mockBatchModifyTokenMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			10: nil,
+		},
+	}
+
+	handler := NewHandler(
+		zap.NewNop(),
+		virtualFileService,
+		nil,
+		nil,
+		mountPointService,
+		logService,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	req := topic.FileBatchDeleteRequest{
+		IDs:            []int64{10},
+		ExpectedUserID: 100,
+	}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.HandleBatchDelete())
+	if err := processor.Process(stdctx.Background(), payload); err != nil {
+		t.Fatalf("nil owner mount point should be recorded as item failure without retrying whole batch: %v", err)
+	}
+
+	if len(mountPointService.batchDeleteRequests) != 0 {
+		t.Fatalf("expected no mount point delete when owner lookup returns nil, got %+v", mountPointService.batchDeleteRequests)
+	}
+
+	if len(virtualFileService.deletedIDs) != 0 || len(virtualFileService.batchDeletedIDs) != 0 {
+		t.Fatalf("expected no virtual file deletion when owner lookup returns nil, got deleted=%v batch=%v", virtualFileService.deletedIDs, virtualFileService.batchDeletedIDs)
+	}
+
+	var log models.FileTaskLog
+	if err := tDB.db.First(&log).Error; err != nil {
+		t.Fatalf("query task log: %v", err)
+	}
+
+	if log.Status != models.StatusFailed {
+		t.Fatalf("expected task status failed, got %q", log.Status)
+	}
+
+	if log.Completed != 0 || log.Total != 1 || log.Failed != 1 {
+		t.Fatalf("expected completed=0 total=1 failed=1, got completed=%d total=%d failed=%d", log.Completed, log.Total, log.Failed)
+	}
+}
+
 func TestHandleBatchDeleteUsesOwnerScopedMountPointDelete(t *testing.T) {
 	tDB := setupBatchDeleteTaskLogTestDB(t)
 	logService := filetasklog.NewService(tDB)
@@ -1365,6 +1939,60 @@ func TestHandleDeleteDeletesTopMountPointAfterVirtualFiles(t *testing.T) {
 	wantCalls := []string{"virtual-list", "virtual-delete", "mount-delete"}
 	if !slices.Equal(callLog, wantCalls) {
 		t.Fatalf("expected call order %v, got %v", wantCalls, callLog)
+	}
+
+	if !slices.Equal(virtualFileService.deletedIDs, []int64{10}) {
+		t.Fatalf("expected root virtual file deleted, got %v", virtualFileService.deletedIDs)
+	}
+
+	if len(mountPointService.batchDeleteRequests) != 1 {
+		t.Fatalf("expected one mount point delete, got %+v", mountPointService.batchDeleteRequests)
+	}
+}
+
+func TestHandleDeleteSkipsMissingMediaFileServiceWhenMediaEnabled(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := filetasklog.NewService(tDB)
+	virtualFileService := &mockBatchDeleteVirtualFileService{
+		filesByID: map[int64]*models.VirtualFile{
+			10: {ID: 10, TopId: 10, IsTop: true, Name: "top", IsDir: true},
+		},
+		childrenByParent: map[int64][]*models.VirtualFile{},
+		deleteErrByID:    map[int64]error{},
+	}
+	mountPointService := &mockBatchModifyTokenMountPointService{}
+
+	oldMediaConfig := shared.GetMediaConfig()
+
+	shared.SetMediaConfig(&models.MediaConfig{
+		Enable:      true,
+		StoragePath: t.TempDir(),
+	})
+
+	defer shared.SetMediaConfig(oldMediaConfig)
+
+	handler := NewHandler(
+		zap.NewNop(),
+		virtualFileService,
+		nil,
+		nil,
+		mountPointService,
+		logService,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	req := topic.FileDeleteRequest{FileId: 10}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.HandleDelete())
+	if err = processor.Process(stdctx.Background(), payload); err != nil {
+		t.Fatalf("expected delete to skip missing media file service during empty dir cleanup, got %v", err)
 	}
 
 	if !slices.Equal(virtualFileService.deletedIDs, []int64{10}) {
@@ -1800,6 +2428,221 @@ func TestHandleBatchModifyTokenRejectsInaccessibleTokenBeforeBinding(t *testing.
 
 	if !strings.Contains(log.Result, "令牌不可用") {
 		t.Fatalf("expected token unavailable result, got %q", log.Result)
+	}
+}
+
+func TestHandleBatchModifyTokenRejectsNilAccessibleTokenBeforeBinding(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := filetasklog.NewService(tDB)
+	cloudTokenService := &mockBatchModifyTokenCloudTokenService{
+		nilQueryIDs: map[int64]bool{99: true},
+	}
+	userMountPointTokenService := &mockBatchModifyTokenUserMountPointTokenService{}
+
+	handler := NewHandler(
+		zap.NewNop(),
+		nil,
+		nil,
+		cloudTokenService,
+		&mockBatchModifyTokenMountPointService{
+			mountPoints: map[int64]*models.MountPoint{
+				10: {ID: 101, FileId: 10, CreatorUserID: 7, Name: "owned"},
+			},
+			queryErrByID: map[int64]error{},
+		},
+		logService,
+		nil,
+		nil,
+		nil,
+		userMountPointTokenService,
+	)
+	req := topic.FileBatchModifyTokenRequest{
+		IDs:     []int64{10},
+		TokenID: 99,
+		UserID:  7,
+		IsAdmin: false,
+	}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.HandleBatchModifyToken())
+	if err := processor.Process(stdctx.Background(), payload); err != nil {
+		t.Fatalf("nil accessible token should fail task status without retrying whole queue item, got %v", err)
+	}
+
+	if got, want := cloudTokenService.queries, []int64{99}; !slices.Equal(got, want) {
+		t.Fatalf("expected token access query %v, got %v", want, got)
+	}
+
+	if len(userMountPointTokenService.boundMountPointIDs) != 0 {
+		t.Fatalf("expected no binding when token query returns nil, got %v", userMountPointTokenService.boundMountPointIDs)
+	}
+
+	var log models.FileTaskLog
+	if err := tDB.db.First(&log).Error; err != nil {
+		t.Fatalf("query task log: %v", err)
+	}
+
+	if log.Status != models.StatusFailed {
+		t.Fatalf("expected task status failed, got %q", log.Status)
+	}
+
+	if !strings.Contains(log.Result, "令牌不可用") {
+		t.Fatalf("expected token unavailable result, got %q", log.Result)
+	}
+}
+
+func TestHandleBatchModifyTokenReturnsMissingCloudTokenServiceWhenTypedNil(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := filetasklog.NewService(tDB)
+
+	var cloudTokenService *mockBatchModifyTokenCloudTokenService
+
+	handler := NewHandler(
+		zap.NewNop(),
+		nil,
+		nil,
+		cloudTokenService,
+		&mockBatchModifyTokenMountPointService{},
+		logService,
+		nil,
+		nil,
+		nil,
+		&mockBatchModifyTokenUserMountPointTokenService{},
+	)
+	req := topic.FileBatchModifyTokenRequest{
+		IDs:     []int64{10},
+		TokenID: 99,
+		UserID:  7,
+		IsAdmin: false,
+	}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.HandleBatchModifyToken())
+
+	err = processor.Process(stdctx.Background(), payload)
+	if err == nil || !strings.Contains(err.Error(), "云盘令牌服务未初始化") {
+		t.Fatalf("expected missing cloud token service error, got %v", err)
+	}
+}
+
+func TestHandleBatchModifyTokenSkipsTypedNilUserTokenAccessCheck(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := filetasklog.NewService(tDB)
+
+	var userMountPointTokenService *mockBatchModifyTokenUserMountPointTokenService
+
+	handler := NewHandler(
+		zap.NewNop(),
+		nil,
+		nil,
+		&mockBatchModifyTokenCloudTokenService{},
+		&mockBatchModifyTokenMountPointService{
+			mountPoints: map[int64]*models.MountPoint{
+				10: {ID: 101, FileId: 10, CreatorUserID: 8, Name: "not-owned"},
+			},
+			queryErrByID: map[int64]error{},
+		},
+		logService,
+		nil,
+		nil,
+		nil,
+		userMountPointTokenService,
+	)
+	req := topic.FileBatchModifyTokenRequest{
+		IDs:     []int64{10},
+		TokenID: 0,
+		UserID:  7,
+		IsAdmin: false,
+	}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.HandleBatchModifyToken())
+	if err := processor.Process(stdctx.Background(), payload); err != nil {
+		t.Fatalf("typed nil user token service should skip optional access check without retrying, got %v", err)
+	}
+
+	var log models.FileTaskLog
+	if err := tDB.db.First(&log).Error; err != nil {
+		t.Fatalf("query task log: %v", err)
+	}
+
+	if log.Status != models.StatusFailed {
+		t.Fatalf("expected task status failed, got %q", log.Status)
+	}
+
+	if !strings.Contains(log.Result, "失败 1 个") {
+		t.Fatalf("expected one failed item in result, got %q", log.Result)
+	}
+}
+
+func TestHandleBatchModifyTokenRecordsFailureWhenMountPointQueryReturnsNil(t *testing.T) {
+	tDB := setupBatchDeleteTaskLogTestDB(t)
+	logService := filetasklog.NewService(tDB)
+	userMountPointTokenService := &mockBatchModifyTokenUserMountPointTokenService{}
+
+	handler := NewHandler(
+		zap.NewNop(),
+		nil,
+		nil,
+		&mockBatchModifyTokenCloudTokenService{},
+		&mockBatchModifyTokenMountPointService{
+			mountPoints: map[int64]*models.MountPoint{
+				10: nil,
+			},
+			queryErrByID: map[int64]error{},
+		},
+		logService,
+		nil,
+		nil,
+		nil,
+		userMountPointTokenService,
+	)
+	req := topic.FileBatchModifyTokenRequest{
+		IDs:     []int64{10},
+		TokenID: 0,
+		UserID:  7,
+		IsAdmin: false,
+	}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.HandleBatchModifyToken())
+	if err := processor.Process(stdctx.Background(), payload); err != nil {
+		t.Fatalf("nil mount point should be recorded as item failure without retrying whole queue item, got %v", err)
+	}
+
+	if len(userMountPointTokenService.boundMountPointIDs) != 0 || len(userMountPointTokenService.unboundMountPointIDs) != 0 {
+		t.Fatalf("expected no token binding changes, bound=%v unbound=%v",
+			userMountPointTokenService.boundMountPointIDs,
+			userMountPointTokenService.unboundMountPointIDs)
+	}
+
+	var log models.FileTaskLog
+	if err := tDB.db.First(&log).Error; err != nil {
+		t.Fatalf("query task log: %v", err)
+	}
+
+	if log.Status != models.StatusFailed {
+		t.Fatalf("expected task status failed, got %q", log.Status)
+	}
+
+	if !strings.Contains(log.Result, "失败 1 个") {
+		t.Fatalf("expected one failed item in result, got %q", log.Result)
 	}
 }
 

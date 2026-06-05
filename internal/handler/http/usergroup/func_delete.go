@@ -34,6 +34,10 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureUserGroupService(ctx, codeDeleteUserGroupFailed) {
+			return
+		}
+
 		if err := h.userGroupService.Delete(ctx.GetContext(), req); err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				ctx.Fail(codeUserGroupNotFound.WithError(err))

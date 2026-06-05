@@ -7,10 +7,10 @@
           v-model:value="searchKeyword"
           placeholder="请输入用户名搜索"
           clearable
-          style="width: 200px; margin-right: 12px"
+          class="header-search-input"
           @keyup.enter="handleSearch"
         />
-        <n-button type="primary" @click="handleSearch" style="margin-right: 8px"> 搜索 </n-button>
+        <n-button type="primary" @click="handleSearch"> 搜索 </n-button>
         <n-button @click="handleReset"> 重置 </n-button>
       </div>
       <div class="header-right">
@@ -186,8 +186,10 @@ const fetchUserList = () => {
     .catch((error) => {
       if (currentRequestId !== userListRequestId) return
 
-      console.error('获取用户列表失败:', error)
-      message.error(getErrorMessage(error, '获取用户列表失败'))
+      const errorMessage = getErrorMessage(error, '获取用户列表失败')
+
+      console.error('获取用户列表失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (currentRequestId !== userListRequestId) return
@@ -242,8 +244,10 @@ const handleDeleteUser = (userId: number) => {
     .catch((error) => {
       if (!usersPageAlive) return
 
-      console.error('删除用户失败:', error)
-      message.error(getErrorMessage(error, '删除用户失败'))
+      const errorMessage = getErrorMessage(error, '删除用户失败')
+
+      console.error('删除用户失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (usersPageAlive) {
@@ -300,8 +304,10 @@ const handleToggleStatus = (user: Models.UserInfo) => {
     .catch((error) => {
       if (!usersPageAlive) return
 
-      console.error(`${actionText}用户失败:`, error)
-      message.error(getErrorMessage(error, `${actionText}用户失败`))
+      const errorMessage = getErrorMessage(error, `${actionText}用户失败`)
+
+      console.error(`${actionText}用户失败:`, errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (usersPageAlive) {
@@ -332,7 +338,7 @@ const columns: DataTableColumns<Models.UserInfo> = [
     render(row) {
       const statusMap: Record<number, string> = {
         1: '正常',
-        2: '受限',
+        2: '禁用',
         0: '禁用',
       }
       return statusMap[row.status] || '未知'
@@ -508,11 +514,27 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .header-left {
   display: flex;
   align-items: center;
+  gap: 8px;
+  flex: 1 1 320px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.header-right {
+  display: flex;
+  justify-content: flex-end;
+  flex: 0 1 auto;
+}
+
+.header-search-input {
+  width: min(220px, 100%);
 }
 
 .users-table {
@@ -527,5 +549,21 @@ onUnmounted(() => {
 
 .users-table :deep(.n-data-table-td) {
   text-align: center;
+}
+
+@media (width <= 640px) {
+  .header,
+  .header-left,
+  .header-right {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .header-search-input,
+  .header-left :deep(.n-button),
+  .header-right :deep(.n-button) {
+    width: 100%;
+  }
 }
 </style>

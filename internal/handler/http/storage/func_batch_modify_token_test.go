@@ -379,6 +379,56 @@ func TestBatchModifyTokenReturnsNotFoundWhenMountPointMissing(t *testing.T) {
 	}
 }
 
+func TestBatchModifyTokenReturnsNotFoundWhenMountPointQueryReturnsNil(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: {ID: 101, FileId: 11, FullPath: "/movies", CreatorUserID: 100},
+			22: nil,
+		},
+	}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/batch_modify_token", wrapper.Wrap(NewHandler(
+		taskEngine,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	).BatchModifyToken()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_modify_token", strings.NewReader(`{"ids":[11,22],"tokenId":0}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if got, want := mountPointService.queries, []int64{11, 22}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected querying to stop at nil mount point %v, got %v", want, got)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no queued task, got %d", len(taskEngine.payloads))
+	}
+}
+
 func TestBatchModifyTokenReturnsNotFoundWhenCloudTokenNotFound(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -389,6 +439,62 @@ func TestBatchModifyTokenReturnsNotFoundWhenCloudTokenNotFound(t *testing.T) {
 		},
 	}
 	cloudTokenService := &mockBatchModifyCloudTokenService{err: gorm.ErrRecordNotFound}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/batch_modify_token", wrapper.Wrap(NewHandler(
+		taskEngine,
+		nil,
+		nil,
+		cloudTokenService,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	).BatchModifyToken()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_modify_token", strings.NewReader(`{"ids":[11],"tokenId":99}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if got, want := cloudTokenService.queries, []int64{99}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected cloud token query %v, got %v", want, got)
+	}
+
+	if len(mountPointService.queries) != 0 {
+		t.Fatalf("expected request to stop before querying mount points, got %v", mountPointService.queries)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no queued task, got %d", len(taskEngine.payloads))
+	}
+}
+
+func TestBatchModifyTokenReturnsNotFoundWhenCloudTokenQueryReturnsNil(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: {ID: 101, FileId: 11, FullPath: "/movies", CreatorUserID: 100},
+		},
+	}
+	cloudTokenService := &mockBatchModifyCloudTokenService{
+		tokens: map[int64]*models.CloudToken{99: nil},
+	}
 
 	router := gin.New()
 	router.Use(func(ctx *gin.Context) {
@@ -631,6 +737,60 @@ func TestModifyTokenReturnsNotFoundWhenMountPointMissing(t *testing.T) {
 	}
 }
 
+func TestModifyTokenReturnsNotFoundWhenMountPointQueryReturnsNil(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: nil,
+		},
+	}
+	cloudTokenService := &mockBatchModifyCloudTokenService{}
+	userTokenService := &mockBatchModifyUserMountPointTokenService{}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/modify_token", wrapper.Wrap(NewHandler(
+		nil,
+		nil,
+		nil,
+		cloudTokenService,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		nil,
+		userTokenService,
+	).ModifyToken()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/modify_token", strings.NewReader(`{"id":11,"tokenId":99}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if got, want := mountPointService.queries, []int64{11}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected mount point query %v, got %v", want, got)
+	}
+
+	if len(cloudTokenService.queries) != 0 {
+		t.Fatalf("expected request to stop before querying cloud token, got %v", cloudTokenService.queries)
+	}
+
+	if len(userTokenService.bound) != 0 || len(userTokenService.unbound) != 0 {
+		t.Fatalf("expected no token binding changes, got bound=%v unbound=%v", userTokenService.bound, userTokenService.unbound)
+	}
+}
+
 func TestModifyTokenReturnsNotFoundWhenCloudTokenNotFound(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -640,6 +800,62 @@ func TestModifyTokenReturnsNotFoundWhenCloudTokenNotFound(t *testing.T) {
 		},
 	}
 	cloudTokenService := &mockBatchModifyCloudTokenService{err: gorm.ErrRecordNotFound}
+	userTokenService := &mockBatchModifyUserMountPointTokenService{}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/modify_token", wrapper.Wrap(NewHandler(
+		nil,
+		nil,
+		nil,
+		cloudTokenService,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		nil,
+		userTokenService,
+	).ModifyToken()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/modify_token", strings.NewReader(`{"id":11,"tokenId":99}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if got, want := mountPointService.queries, []int64{11}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected mount point query %v, got %v", want, got)
+	}
+
+	if got, want := cloudTokenService.queries, []int64{99}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected cloud token query %v, got %v", want, got)
+	}
+
+	if len(userTokenService.bound) != 0 || len(userTokenService.unbound) != 0 {
+		t.Fatalf("expected no token binding changes, got bound=%v unbound=%v", userTokenService.bound, userTokenService.unbound)
+	}
+}
+
+func TestModifyTokenReturnsNotFoundWhenCloudTokenQueryReturnsNil(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: {ID: 101, FileId: 11, FullPath: "/movies", CreatorUserID: 100},
+		},
+	}
+	cloudTokenService := &mockBatchModifyCloudTokenService{
+		tokens: map[int64]*models.CloudToken{99: nil},
+	}
 	userTokenService := &mockBatchModifyUserMountPointTokenService{}
 
 	router := gin.New()
@@ -729,5 +945,220 @@ func TestModifyTokenAllowsUserBoundMountPoint(t *testing.T) {
 
 	if got, want := userTokenService.unbound, []int64{101}; !int64SlicesEqual(got, want) {
 		t.Fatalf("expected unbound mount point IDs %v, got %v", want, got)
+	}
+}
+
+func TestModifyTokenFailsWhenUserTokenServiceMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: {ID: 101, FileId: 11, FullPath: "/movies", CreatorUserID: 100},
+		},
+	}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/modify_token", wrapper.Wrap(NewHandler(
+		nil,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	).ModifyToken()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/modify_token", strings.NewReader(`{"id":11,"tokenId":0}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Code int `json:"code"`
+	}
+
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Code != busCodeStorageModifyTokenFailed.GetCode() {
+		t.Fatalf("expected modify token business code %d, got %d", busCodeStorageModifyTokenFailed.GetCode(), response.Code)
+	}
+}
+
+func TestModifyTokenFailsWhenGroupBindingServiceMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: {ID: 101, FileId: 11, FullPath: "/shared", CreatorUserID: 200},
+		},
+	}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+		ctx.Set(consts.CtxKeyUserGroupId, int64(7))
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/modify_token", wrapper.Wrap(NewHandler(
+		nil,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		nil,
+		&mockBatchModifyUserMountPointTokenService{},
+	).ModifyToken()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/modify_token", strings.NewReader(`{"id":11,"tokenId":0}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Code int `json:"code"`
+	}
+
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Code != busCodeStorageQueryMountPointError.GetCode() {
+		t.Fatalf("expected query mount point business code %d, got %d", busCodeStorageQueryMountPointError.GetCode(), response.Code)
+	}
+}
+
+func TestBatchModifyTokenFailsWhenTaskEngineMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: {ID: 101, FileId: 11, FullPath: "/movies", CreatorUserID: 100},
+		},
+	}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/batch_modify_token", wrapper.Wrap(NewHandler(
+		nil,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	).BatchModifyToken()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_modify_token", strings.NewReader(`{"ids":[11],"tokenId":0}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Code int `json:"code"`
+	}
+
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Code != busCodeStorageSendTaskFail.GetCode() {
+		t.Fatalf("expected send task business code %d, got %d", busCodeStorageSendTaskFail.GetCode(), response.Code)
+	}
+}
+
+func TestBatchModifyTokenFailsWhenGroupBindingServiceMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockBatchDeleteTaskEngine{}
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: {ID: 101, FileId: 11, FullPath: "/shared", CreatorUserID: 200},
+		},
+	}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+		ctx.Set(consts.CtxKeyUserGroupId, int64(7))
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/batch_modify_token", wrapper.Wrap(NewHandler(
+		taskEngine,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	).BatchModifyToken()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_modify_token", strings.NewReader(`{"ids":[11],"tokenId":0}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Code int `json:"code"`
+	}
+
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Code != busCodeStorageQueryMountPointError.GetCode() {
+		t.Fatalf("expected query mount point business code %d, got %d", busCodeStorageQueryMountPointError.GetCode(), response.Code)
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no queued task, got %d", len(taskEngine.payloads))
 	}
 }

@@ -35,7 +35,7 @@ openai:
   model: "agent/deepseek-v3.2"
 subscription:
   enabled: false
-  cronExpression: "0 8 * * *"
+  cronExpression: "0 2 * * *"
   panSearchURL: ""
   panSearchProxy: ""
   enableTMDB: true

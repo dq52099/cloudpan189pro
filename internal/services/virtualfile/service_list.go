@@ -1,6 +1,8 @@
 package virtualfile
 
 import (
+	"strings"
+
 	"github.com/samber/lo"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
@@ -17,7 +19,6 @@ var allowedVirtualFileSortColumns = map[string]struct{}{
 	"id":          {},
 	"parent_id":   {},
 	"top_id":      {},
-	"link_id":     {},
 	"name":        {},
 	"is_dir":      {},
 	"is_top":      {},
@@ -45,6 +46,8 @@ type ListRequest struct {
 	// ExcludeIdList 排除ID
 	ExcludeIdList []int64 `form:"-"`
 	TopIdList     []int64 `form:"-"`
+	// AllowedSuffixes 限制非目录文件后缀；目录始终保留。
+	AllowedSuffixes []string `form:"-"`
 
 	AscList  []string `form:"-"`
 	DescList []string `form:"-"`
@@ -134,7 +137,7 @@ func (s *service) getListQuery(ctx context.Context, req *ListRequest) (*gorm.DB,
 	}
 
 	if req.LinkId != 0 {
-		query = query.Where("link_id = ?", req.LinkId)
+		return nil, errUnsupportedVirtualFileLinkID
 	}
 
 	if req.IsFolder != nil {
@@ -179,7 +182,31 @@ func (s *service) getListQuery(ctx context.Context, req *ListRequest) (*gorm.DB,
 		}
 	}
 
+	if req.AllowedSuffixes != nil {
+		query = applyAllowedSuffixFilter(query, req.AllowedSuffixes)
+	}
+
 	return query, nil
+}
+
+func applyAllowedSuffixFilter(query *gorm.DB, suffixes []string) *gorm.DB {
+	normalizedSuffixes := models.NormalizeSuffixes(suffixes)
+	if len(normalizedSuffixes) == 0 {
+		return query.Where("is_dir = ?", true)
+	}
+
+	conditions := make([]string, 0, len(normalizedSuffixes)+1)
+	args := make([]interface{}, 0, len(normalizedSuffixes)+1)
+
+	conditions = append(conditions, "is_dir = ?")
+	args = append(args, true)
+
+	for _, suffix := range normalizedSuffixes {
+		conditions = append(conditions, "LOWER(name) LIKE ?")
+		args = append(args, "%"+suffix)
+	}
+
+	return query.Where("("+strings.Join(conditions, " OR ")+")", args...)
 }
 
 func shouldPaginateVirtualFileList(req *ListRequest) bool {

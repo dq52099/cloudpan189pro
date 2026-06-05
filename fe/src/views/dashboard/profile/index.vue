@@ -2,38 +2,34 @@
   <div class="profile-page">
     <!-- 个人信息卡片 -->
     <n-card title="个人信息" class="info-card" :bordered="false">
-      <n-descriptions
-        :column="2"
-        label-placement="left"
-        label-style="width: 120px; font-weight: 500;"
-      >
+      <n-descriptions :column="2" label-placement="left">
         <n-descriptions-item label="用户名">
-          <n-text strong>{{ userInfo.username || '-' }}</n-text>
+          <n-text strong>{{ displayUsername }}</n-text>
         </n-descriptions-item>
         <n-descriptions-item label="用户ID">
-          <n-text>{{ userInfo.id || '-' }}</n-text>
+          <n-text>{{ displayUserId }}</n-text>
         </n-descriptions-item>
         <n-descriptions-item label="状态">
-          <n-tag :type="getUserStatusType(userInfo.status)" size="small">
-            {{ getUserStatusText(userInfo.status) }}
+          <n-tag :type="getUserStatusType(displayUserStatus)" size="small">
+            {{ getUserStatusText(displayUserStatus) }}
           </n-tag>
         </n-descriptions-item>
         <n-descriptions-item label="用户组">
-          <n-text>{{ userInfo.groupName || '-' }}</n-text>
+          <n-text>{{ displayUserGroup }}</n-text>
         </n-descriptions-item>
         <n-descriptions-item label="管理员权限">
-          <n-tag :type="userInfo.isAdmin ? 'success' : 'default'" size="small">
-            {{ userInfo.isAdmin ? '是' : '否' }}
+          <n-tag :type="displayIsAdmin ? 'success' : 'default'" size="small">
+            {{ displayIsAdmin ? '是' : '否' }}
           </n-tag>
         </n-descriptions-item>
         <n-descriptions-item label="创建时间">
-          <n-text>{{ formatDate(userInfo.createdAt) }}</n-text>
+          <n-text>{{ displayCreatedAt }}</n-text>
         </n-descriptions-item>
       </n-descriptions>
     </n-card>
 
     <!-- 快捷操作卡片 -->
-    <n-card title="快捷操作" class="action-card" :bordered="false">
+    <n-card v-if="!authDisabled" title="快捷操作" class="action-card" :bordered="false">
       <div class="action-buttons">
         <n-button type="primary" size="large" @click="handleChangePassword">
           <template #icon>
@@ -48,6 +44,7 @@
 
     <!-- 修改密码弹窗 -->
     <ChangePasswordModal
+      v-if="!authDisabled"
       v-model:show="showChangePasswordModal"
       @success="handleChangePasswordSuccess"
     />
@@ -57,14 +54,28 @@
 <script setup lang="ts">
 import { NCard, NDescriptions, NDescriptionsItem, NTag, NText, NButton, NIcon } from 'naive-ui'
 import { KeyOutline } from '@vicons/ionicons5'
-import { ref } from 'vue'
-import { useUserStore } from '@/stores'
+import { computed, ref } from 'vue'
+import { useSystemStore, useUserStore } from '@/stores'
 import ChangePasswordModal from '@/components/profile/ChangePasswordModal.vue'
+import { formatDateTime } from '@/utils/time'
 
 const userStore = useUserStore()
+const systemStore = useSystemStore()
 
 // 用户信息
 const userInfo = userStore.get()
+const systemInfo = systemStore.get()
+const authDisabled = computed(() => !systemInfo.enableAuth)
+const displayUsername = computed(() =>
+  authDisabled.value ? 'anonymous' : userInfo.username || '-'
+)
+const displayUserId = computed(() => (authDisabled.value ? '-' : userInfo.id || '-'))
+const displayUserStatus = computed(() => (authDisabled.value ? 1 : userInfo.status))
+const displayUserGroup = computed(() =>
+  authDisabled.value ? '匿名访问' : userInfo.groupName || '-'
+)
+const displayIsAdmin = computed(() => authDisabled.value || userInfo.isAdmin)
+const displayCreatedAt = computed(() => (authDisabled.value ? '-' : formatDate(userInfo.createdAt)))
 
 // 修改密码弹窗
 const showChangePasswordModal = ref(false)
@@ -75,10 +86,10 @@ const getUserStatusType = (status: number) => {
     case 1:
       return 'success'
     case 2:
-      return 'warning'
     case 0:
-    default:
       return 'error'
+    default:
+      return 'default'
   }
 }
 
@@ -88,17 +99,16 @@ const getUserStatusText = (status: number) => {
     case 1:
       return '正常'
     case 2:
-      return '受限'
     case 0:
-    default:
       return '禁用'
+    default:
+      return '未知'
   }
 }
 
 // 格式化日期
 const formatDate = (dateString: string) => {
-  if (!dateString) return '-'
-  return new Date(dateString).toLocaleString('zh-CN')
+  return formatDateTime(dateString)
 }
 
 // 修改密码
@@ -148,7 +158,9 @@ const handleChangePasswordSuccess = () => {
 }
 
 .info-card :deep(.n-descriptions-item__label) {
+  width: min(120px, 36vw);
   color: var(--n-text-color-2);
+  font-weight: 500;
 }
 
 .info-card :deep(.n-descriptions-item__content) {

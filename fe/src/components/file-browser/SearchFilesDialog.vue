@@ -3,7 +3,7 @@
     :show="show"
     preset="card"
     title="文件搜索"
-    style="width: 1000px; max-width: 92vw"
+    style="width: min(1000px, calc(100vw - 32px))"
     :bordered="false"
     @update:show="onUpdateShow"
   >
@@ -40,13 +40,47 @@
         <n-empty v-if="!list.length" description="暂无搜索结果" />
         <n-data-table
           v-else
+          class="desktop-search-table"
           :columns="columns"
           :data="list"
           :loading="searching"
           :bordered="false"
           :single-line="false"
           :row-props="rowProps"
+          :scroll-x="720"
         />
+        <div v-if="list.length" class="mobile-search-results">
+          <div
+            v-for="row in list"
+            :key="row.id"
+            class="search-result-card"
+            role="button"
+            tabindex="0"
+            @click="selectResult(row)"
+            @keydown.enter.prevent="selectResult(row)"
+            @keydown.space.prevent="selectResult(row)"
+          >
+            <n-icon
+              class="search-result-card__icon"
+              :color="row.isDir ? 'var(--n-primary-color)' : undefined"
+            >
+              <FolderOutline v-if="row.isDir" />
+              <DocumentOutline v-else />
+            </n-icon>
+            <div class="search-result-card__body">
+              <div class="search-result-card__name" :title="row.name || '-'">
+                {{ row.name || '-' }}
+              </div>
+              <div class="search-result-card__meta">
+                <span>{{ row.isDir ? '目录' : '文件' }}</span>
+                <span v-if="!row.isDir">{{ formatFileSize(row.size || 0) }}</span>
+              </div>
+              <div class="search-result-card__path" :title="row.fullPath || '-'">
+                {{ row.fullPath || '-' }}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="pagination">
         <div class="summary">共 {{ total }} 条结果，第 {{ currentPage }} / {{ totalPages }} 页</div>
@@ -83,11 +117,9 @@ import {
   NDataTable,
   NSpin,
   NEmpty,
-  NEllipsis,
-  NTooltip,
   useMessage,
 } from 'naive-ui'
-import { SearchOutline } from '@vicons/ionicons5'
+import { DocumentOutline, FolderOutline, SearchOutline } from '@vicons/ionicons5'
 import { searchFiles, type FileSearchItem } from '@/api/file'
 import { getErrorMessage } from '@/utils/api'
 import { formatFileSize } from '@/utils/format'
@@ -141,6 +173,25 @@ const isPositiveSafeInteger = (value: unknown): value is number => {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
 }
 
+const toSafeNonNegativeInteger = (value: unknown): number | null => {
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value >= 0 ? value : null
+  }
+
+  if (typeof value !== 'string') {
+    return null
+  }
+
+  const normalizedValue = value.trim()
+  if (!/^\d+$/.test(normalizedValue)) {
+    return null
+  }
+
+  const parsedValue = Number(normalizedValue)
+
+  return Number.isSafeInteger(parsedValue) ? parsedValue : null
+}
+
 const resetSearchState = () => {
   currentPage.value = 1
   list.value = []
@@ -150,6 +201,8 @@ const resetSearchState = () => {
 
 const resetDialogState = () => {
   invalidateSearchRequests()
+  keyword.value = ''
+  globalSearch.value = false
   resetSearchState()
 }
 
@@ -170,6 +223,27 @@ watch(
   }
 )
 
+watch(
+  () => props.currentDirId,
+  () => {
+    if (!show.value || globalSearch.value) {
+      return
+    }
+
+    invalidateSearchRequests()
+    resetSearchState()
+  }
+)
+
+watch(globalSearch, () => {
+  if (!show.value) {
+    return
+  }
+
+  invalidateSearchRequests()
+  resetSearchState()
+})
+
 const onUpdateShow = (val: boolean) => {
   show.value = val
   if (val) {
@@ -180,12 +254,23 @@ const onUpdateShow = (val: boolean) => {
   emits('update:show', val)
 }
 
+const renderEllipsisText = (text: string, className = 'search-result-text') => {
+  return h(
+    'span',
+    {
+      class: className,
+      title: text,
+    },
+    text
+  )
+}
+
 const columns = [
   {
     title: '名称',
     key: 'name',
     render(row: FileSearchItem) {
-      return row.name
+      return renderEllipsisText(row.name || '-')
     },
   },
   {
@@ -209,15 +294,8 @@ const columns = [
     key: 'fullPath',
     render(row: FileSearchItem) {
       const text = row.fullPath || '-'
-      return h(
-        NTooltip,
-        { placement: 'top' },
-        {
-          default: () => text,
-          trigger: () =>
-            h(NEllipsis, { style: 'max-width: 100%;', lineClamp: 1 }, { default: () => text }),
-        }
-      )
+
+      return renderEllipsisText(text, 'search-path-text')
     },
   },
 ]
@@ -226,15 +304,21 @@ const rowProps = (row: FileSearchItem) => {
   return {
     style: 'cursor: pointer;',
     onClick: () => {
-      emits('select', row)
-      show.value = false
-      closeDialogState()
-      emits('update:show', false)
+      selectResult(row)
     },
   }
 }
 
-const buildQuery = () => {
+const selectResult = (row: FileSearchItem) => {
+  emits('select', row)
+  show.value = false
+  closeDialogState()
+  emits('update:show', false)
+}
+
+const buildQuery = (requestedPage = currentPage.value) => {
+  const normalizedPage = isPositiveSafeInteger(requestedPage) ? requestedPage : 1
+  const normalizedPageSize = isPositiveSafeInteger(pageSize.value) ? pageSize.value : 15
   const q: {
     keyword?: string
     pid?: number
@@ -242,22 +326,25 @@ const buildQuery = () => {
     pageSize: number
     currentPage: number
   } = {
-    pageSize: pageSize.value,
-    currentPage: currentPage.value,
+    pageSize: normalizedPageSize,
+    currentPage: normalizedPage,
   }
   if (keyword.value?.trim()) {
     q.keyword = keyword.value.trim()
   }
   if (globalSearch.value) {
     q.global = true
-  } else if (props.currentDirId != null) {
-    q.pid = Number(props.currentDirId)
+  } else {
+    const pid = toSafeNonNegativeInteger(props.currentDirId)
+    if (pid !== null) {
+      q.pid = pid
+    }
   }
   return q
 }
 
-const doSearch = () => {
-  const query = buildQuery()
+const doSearch = (requestedPage = currentPage.value) => {
+  const query = buildQuery(requestedPage)
   const currentDialogVersion = dialogVersion
   const currentSearchRequestId = searchRequestId + 1
   searchRequestId = currentSearchRequestId
@@ -295,8 +382,10 @@ const doSearch = () => {
     .catch((err) => {
       if (!isLatestSearch(currentDialogVersion, currentSearchRequestId)) return
 
-      console.error('搜索失败: ', err)
-      message.error(getErrorMessage(err, '搜索失败'))
+      const errorMessage = getErrorMessage(err, '搜索失败')
+
+      console.error('搜索失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (!isLatestSearch(currentDialogVersion, currentSearchRequestId)) return
@@ -307,20 +396,20 @@ const doSearch = () => {
 
 const handleNewSearch = () => {
   currentPage.value = 1
-  doSearch()
+  total.value = 0
+  list.value = []
+  doSearch(1)
 }
 
 const prevPage = () => {
   if (!searching.value && currentPage.value > 1) {
-    currentPage.value -= 1
-    doSearch()
+    doSearch(currentPage.value - 1)
   }
 }
 
 const nextPage = () => {
   if (!searching.value && currentPage.value < totalPages.value) {
-    currentPage.value += 1
-    doSearch()
+    doSearch(currentPage.value + 1)
   }
 }
 
@@ -334,6 +423,7 @@ onUnmounted(() => {
   display: flex;
   gap: 12px;
   align-items: center;
+  flex-wrap: wrap;
   margin-bottom: 16px;
   padding: 10px;
   background: #f7f8fa;
@@ -342,7 +432,8 @@ onUnmounted(() => {
 }
 
 .keyword-input {
-  flex: 1;
+  flex: 1 1 240px;
+  min-width: 0;
 }
 
 .dialog-section {
@@ -362,6 +453,19 @@ onUnmounted(() => {
 
 :deep(.n-data-table .n-data-table-tr:hover) {
   background: #f7f9fc;
+}
+
+.mobile-search-results {
+  display: none;
+}
+
+.search-result-text,
+.search-path-text {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .loading-container {
@@ -386,5 +490,93 @@ onUnmounted(() => {
 .pager {
   display: flex;
   gap: 8px;
+}
+
+@media (width <= 640px) {
+  .search-toolbar,
+  .pagination,
+  .pager {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .search-toolbar :deep(.n-button),
+  .keyword-input,
+  .pager :deep(.n-button) {
+    width: 100%;
+  }
+
+  .keyword-input {
+    flex: 0 0 auto;
+  }
+
+  .dialog-section {
+    max-height: 54vh;
+  }
+
+  .desktop-search-table {
+    display: none;
+  }
+
+  .mobile-search-results {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .search-result-card {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
+    padding: 12px;
+    border-bottom: 1px solid #eef0f3;
+    cursor: pointer;
+  }
+
+  .search-result-card:last-child {
+    border-bottom: 0;
+  }
+
+  .search-result-card:focus-visible {
+    outline: 2px solid var(--n-primary-color);
+    outline-offset: -2px;
+  }
+
+  .search-result-card__icon {
+    margin-top: 2px;
+    font-size: 22px;
+  }
+
+  .search-result-card__body {
+    min-width: 0;
+  }
+
+  .search-result-card__name {
+    overflow: hidden;
+    color: var(--n-text-color);
+    font-weight: 500;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .search-result-card__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    margin-top: 4px;
+    color: var(--n-text-color-3);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .search-result-card__path {
+    overflow: hidden;
+    margin-top: 5px;
+    color: var(--n-text-color-3);
+    font-size: 12px;
+    line-height: 1.4;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 </style>

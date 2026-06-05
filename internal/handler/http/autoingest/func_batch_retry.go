@@ -41,6 +41,10 @@ func (h *handler) BatchRetry() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensurePlanService(ctx, codePlanListFailed) {
+			return
+		}
+
 		plans, err := h.planService.ListByIDs(ctx.GetContext(), requestIDs)
 		if err != nil {
 			ctx.Fail(codePlanListFailed.WithError(err))
@@ -50,6 +54,10 @@ func (h *handler) BatchRetry() httpcontext.HandlerFunc {
 
 		accessiblePlans, initialFailCount := filterAccessiblePlans(ctx, requestIDs, plans)
 		if abortBatchIfNoAccessiblePlans(ctx, len(accessiblePlans)) {
+			return
+		}
+
+		if !h.ensureTaskEngine(ctx, codePlanRefreshFailed) {
 			return
 		}
 

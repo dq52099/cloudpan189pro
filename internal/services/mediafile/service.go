@@ -44,9 +44,9 @@ func (s *service) getDB(ctx context.Context) *gorm.DB {
 	return s.svc.GetDB(ctx).Model(new(models.MediaFile))
 }
 
-// mediaRoot 读取当前媒体根路径（StoragePath）。shared.MediaConfig 为 nil 时返回空串。
+// mediaRoot 读取当前媒体根路径（StoragePath）。未配置媒体配置时返回空串。
 func mediaRoot() string {
-	cfg := shared.MediaConfig
+	cfg := shared.GetMediaConfig()
 	if cfg == nil {
 		return ""
 	}
@@ -72,7 +72,14 @@ func (s *service) DeleteStrmByFullPath(ctx context.Context, fullPath string) err
 		return err
 	}
 
-	result := s.getDB(ctx).Where("path IN ?", mediaFilePathCandidates(relPath)).Delete(new(models.MediaFile))
+	candidates := mediaFilePathCandidates(relPath)
+	if len(candidates) == 0 {
+		ctx.Warn("跳过 STRM DB 清理：媒体文件路径不合法", zap.String("path", fullPath), zap.String("relative_path", relPath))
+
+		return nil
+	}
+
+	result := s.getDB(ctx).Where("path IN ?", candidates).Delete(new(models.MediaFile))
 	if result.Error != nil {
 		ctx.Warn("清理 STRM DB 记录失败（磁盘已删除）", zap.String("path", fullPath), zap.Error(result.Error))
 
@@ -87,7 +94,7 @@ func (s *service) DeleteStrmByFullPath(ctx context.Context, fullPath string) err
 }
 
 // deriveRelativeMediaPath 把磁盘绝对路径转换为 DB 中存储的相对 path。
-// 依赖 shared.MediaConfig.StoragePath，如果无法推断则返回空串。
+// 依赖当前媒体配置的 StoragePath，如果无法推断则返回空串。
 func deriveRelativeMediaPath(fullPath string) string {
 	root := mediaRoot()
 	if root == "" {

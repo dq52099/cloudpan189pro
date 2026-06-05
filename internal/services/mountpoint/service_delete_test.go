@@ -4,6 +4,7 @@ import (
 	stdctx "context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,7 +13,10 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/bootstrap"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/taskengine"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	cloudbridgeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
+	cloudtokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudtoken"
 	userMountPointTokenSvi "github.com/xxcheng123/cloudpan189-share/internal/services/userMountPointToken"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
@@ -142,6 +146,23 @@ func createUserMountPointTokenBinding(t *testing.T, db *gorm.DB, userID, mountPo
 	return binding
 }
 
+type mockMountPointUserMountPointTokenService struct {
+	userMountPointTokenSvi.Service
+
+	ids   []int64
+	err   error
+	calls int
+}
+
+func (m *mockMountPointUserMountPointTokenService) GetUserMountPointIDs(ctx context.Context, userID int64) ([]int64, error) {
+	m.calls++
+	if m.err != nil {
+		return nil, m.err
+	}
+
+	return m.ids, nil
+}
+
 func countUserMountPointTokenBindings(t *testing.T, db *gorm.DB, query string, args ...any) int64 {
 	t.Helper()
 
@@ -203,6 +224,75 @@ func TestListIncludesMountPointsBoundToUserToken(t *testing.T) {
 
 	if count != 3 {
 		t.Fatalf("expected count 3, got %d", count)
+	}
+}
+
+func TestListAndAccessibleIDsTreatTypedNilUserMountPointTokenServiceAsMissing(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+
+	var userTokenService *mockMountPointUserMountPointTokenService
+
+	svc := NewService(tDB, nil, nil, userTokenService)
+	ctx := context.NewContext(stdctx.Background())
+
+	owned := createMountPoint(t, tDB.db, 3021, 10, "typed-nil-owned")
+	groupShared := createMountPoint(t, tDB.db, 3022, 20, "typed-nil-group")
+	hidden := createMountPoint(t, tDB.db, 3023, 30, "typed-nil-hidden")
+
+	list, err := svc.List(ctx, &ListRequest{
+		UserID:       10,
+		GroupFileIds: []int64{groupShared.FileId},
+		NoPaginate:   true,
+	})
+	if err != nil {
+		t.Fatalf("list mount points: %v", err)
+	}
+
+	gotList := map[int64]bool{}
+	for _, item := range list {
+		gotList[item.FileId] = true
+	}
+
+	for _, expected := range []int64{owned.FileId, groupShared.FileId} {
+		if !gotList[expected] {
+			t.Fatalf("expected file %d in list, got %+v", expected, gotList)
+		}
+	}
+
+	if gotList[hidden.FileId] {
+		t.Fatalf("expected hidden file %d to be excluded, got %+v", hidden.FileId, gotList)
+	}
+
+	count, err := svc.Count(ctx, &ListRequest{
+		UserID:       10,
+		GroupFileIds: []int64{groupShared.FileId},
+	})
+	if err != nil {
+		t.Fatalf("count mount points: %v", err)
+	}
+
+	if count != 2 {
+		t.Fatalf("expected count 2, got %d", count)
+	}
+
+	ids, err := svc.GetAccessibleMountPointIDs(ctx, 10, false, []int64{groupShared.FileId})
+	if err != nil {
+		t.Fatalf("get accessible mount point ids: %v", err)
+	}
+
+	gotIDs := map[int64]bool{}
+	for _, id := range ids {
+		gotIDs[id] = true
+	}
+
+	for _, expected := range []int64{owned.FileId, groupShared.FileId} {
+		if !gotIDs[expected] {
+			t.Fatalf("expected file %d in accessible ids, got %+v", expected, gotIDs)
+		}
+	}
+
+	if gotIDs[hidden.FileId] {
+		t.Fatalf("expected hidden file %d to be excluded from accessible ids, got %+v", hidden.FileId, gotIDs)
 	}
 }
 
@@ -662,6 +752,9 @@ func TestCreateRejectsInvalidRequest(t *testing.T) {
 		{name: "zero file id", req: &CreateRequest{FileId: 0, FullPath: "/invalid"}, wantErr: errInvalidMountPointFileID},
 		{name: "negative file id", req: &CreateRequest{FileId: -1, FullPath: "/invalid"}, wantErr: errInvalidMountPointFileID},
 		{name: "negative token id", req: &CreateRequest{FileId: 1001, FullPath: "/invalid", TokenId: -1}, wantErr: errInvalidMountPointTokenID},
+		{name: "relative full path", req: &CreateRequest{FileId: 1001, FullPath: "invalid"}, wantErr: errInvalidMountPointFullPath},
+		{name: "root full path", req: &CreateRequest{FileId: 1001, FullPath: "/"}, wantErr: errInvalidMountPointFullPath},
+		{name: "escaped separator", req: &CreateRequest{FileId: 1001, FullPath: "/invalid/%2F/path"}, wantErr: errInvalidMountPointFullPath},
 	}
 
 	for _, tt := range tests {
@@ -675,6 +768,93 @@ func TestCreateRejectsInvalidRequest(t *testing.T) {
 				t.Fatalf("expected zero id, got %d", id)
 			}
 		})
+	}
+}
+
+func TestCreateUsesLastNormalizedPathSegmentAsName(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	svc := NewService(tDB, nil, nil, nil)
+
+	id, err := svc.Create(context.NewContext(stdctx.Background()), &CreateRequest{
+		FileId:        1001,
+		FullPath:      "/media/%E4%B8%AD%E6%96%87%20/a%3ab/",
+		OsType:        models.OsTypeShareFolder,
+		CreatorUserID: 100,
+	})
+	if err != nil {
+		t.Fatalf("create mount point: %v", err)
+	}
+
+	var mountPoint models.MountPoint
+	if err = tDB.db.First(&mountPoint, id).Error; err != nil {
+		t.Fatalf("query mount point: %v", err)
+	}
+
+	if mountPoint.Name != "a_b" || mountPoint.FullPath != "/media/中文/a_b" {
+		t.Fatalf("expected normalized mount point name/path, got name=%q fullPath=%q", mountPoint.Name, mountPoint.FullPath)
+	}
+}
+
+func TestCreateAllowsEscapedPercentInNormalizedPath(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	svc := NewService(tDB, nil, nil, nil)
+
+	id, err := svc.Create(context.NewContext(stdctx.Background()), &CreateRequest{
+		FileId:        1001,
+		FullPath:      "/percent/a%25b",
+		OsType:        models.OsTypeShareFolder,
+		CreatorUserID: 100,
+	})
+	if err != nil {
+		t.Fatalf("create mount point: %v", err)
+	}
+
+	var mountPoint models.MountPoint
+	if err = tDB.db.First(&mountPoint, id).Error; err != nil {
+		t.Fatalf("query mount point: %v", err)
+	}
+
+	if mountPoint.Name != "a%b" || mountPoint.FullPath != "/percent/a%25b" {
+		t.Fatalf("expected percent mount point name/path, got name=%q fullPath=%q", mountPoint.Name, mountPoint.FullPath)
+	}
+}
+
+func TestQueryByPathNormalizesLookupPath(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	svc := NewService(tDB, nil, nil, nil)
+
+	mountPoint := &models.MountPoint{
+		FileId:        1002,
+		FullPath:      "/media/中文/a_b",
+		Name:          "a_b",
+		OsType:        models.OsTypeShareFolder,
+		CreatorUserID: 100,
+	}
+	if err := tDB.db.Create(mountPoint).Error; err != nil {
+		t.Fatalf("create mount point: %v", err)
+	}
+
+	got, err := svc.QueryByPath(context.NewContext(stdctx.Background()), "/media//%E4%B8%AD%E6%96%87%20/a%3ab/")
+	if err != nil {
+		t.Fatalf("query mount point by normalized path: %v", err)
+	}
+
+	if got == nil || got.ID != mountPoint.ID {
+		t.Fatalf("expected normalized query to return mount point %+v, got %+v", mountPoint, got)
+	}
+}
+
+func TestQueryByPathRejectsInvalidPath(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	svc := NewService(tDB, nil, nil, nil)
+
+	got, err := svc.QueryByPath(context.NewContext(stdctx.Background()), "invalid")
+	if !errors.Is(err, errInvalidMountPointFullPath) {
+		t.Fatalf("expected invalid path error, got %v", err)
+	}
+
+	if got != nil {
+		t.Fatalf("expected no mount point for invalid path, got %+v", got)
 	}
 }
 
@@ -1297,6 +1477,34 @@ func TestUpdateLastStateAllowsRepeatedSameState(t *testing.T) {
 	}
 }
 
+func TestUpdateLastStateRedactsSensitiveTextBeforePersisting(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	svc := NewService(tDB, nil, nil, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	mountPoint := createMountPoint(t, tDB.db, 6105, 10, "last-state-redact")
+
+	state := "失败: request https://proxy-user:proxy-pass@download.example.test/path/file.mkv?sign=query-secret&filename=private-name.mkv#access_token=fragment-secret accessCode=abcd Authorization: Bearer secret-token"
+	if err := svc.UpdateLastState(ctx, mountPoint.FileId, state); err != nil {
+		t.Fatalf("update last state: %v", err)
+	}
+
+	var got models.MountPoint
+	if err := tDB.db.First(&got, mountPoint.ID).Error; err != nil {
+		t.Fatalf("query mount point: %v", err)
+	}
+
+	for _, leaked := range []string{"proxy-user", "proxy-pass", "query-secret", "private-name.mkv", "fragment-secret", "abcd", "secret-token"} {
+		if strings.Contains(got.LastState, leaked) {
+			t.Fatalf("expected %q to be redacted from %q", leaked, got.LastState)
+		}
+	}
+
+	if !strings.Contains(got.LastState, utils.RedactedSecret) {
+		t.Fatalf("expected redacted marker in %q", got.LastState)
+	}
+}
+
 func TestUpdateLastStateRejectsInvalidFileID(t *testing.T) {
 	tDB := setupMountPointTestDB(t)
 	svc := NewService(tDB, nil, nil, nil)
@@ -1319,6 +1527,8 @@ func TestBatchParseTextRejectsInvalidRequest(t *testing.T) {
 		wantErr error
 	}{
 		{name: "nil request", req: nil, wantErr: errInvalidMountPointParseRequest},
+		{name: "empty content", req: &topic.BatchParseTextRequest{Content: "", CloudToken: 1}, wantErr: errInvalidMountPointParseRequest},
+		{name: "blank content", req: &topic.BatchParseTextRequest{Content: " \n\t ", CloudToken: 1}, wantErr: errInvalidMountPointParseRequest},
 		{name: "zero cloud token", req: &topic.BatchParseTextRequest{Content: "123", CloudToken: 0}, wantErr: errInvalidMountPointCloudTokenID},
 		{name: "negative cloud token", req: &topic.BatchParseTextRequest{Content: "123", CloudToken: -1}, wantErr: errInvalidMountPointCloudTokenID},
 	}
@@ -1335,6 +1545,705 @@ func TestBatchParseTextRejectsInvalidRequest(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBatchParseTextRejectsFolderIDWhenCloudTokenServiceMissing(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	cloudBridgeService := &mockBatchParseMountPointCloudBridge{}
+	svc := NewService(tDB, nil, cloudBridgeService, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	items, err := svc.BatchParseText(ctx, &topic.BatchParseTextRequest{
+		Content:    "123456",
+		CloudToken: 9,
+		UserID:     100,
+	})
+	if !errors.Is(err, errMountPointCloudTokenServiceUnavailable) {
+		t.Fatalf("expected token service unavailable error, got %v", err)
+	}
+
+	if len(items) != 0 {
+		t.Fatalf("expected no parsed items, got %+v", items)
+	}
+
+	if len(cloudBridgeService.personFileIDs) != 0 {
+		t.Fatalf("expected no person lookup, got %v", cloudBridgeService.personFileIDs)
+	}
+}
+
+func TestBatchParseTextRejectsFolderIDWhenCloudTokenServiceTypedNil(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+
+	var cloudTokenService *mockBatchParseMountPointCloudTokenService
+
+	cloudBridgeService := &mockBatchParseMountPointCloudBridge{}
+	svc := NewService(tDB, cloudTokenService, cloudBridgeService, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	items, err := svc.BatchParseText(ctx, &topic.BatchParseTextRequest{
+		Content:    "123456",
+		CloudToken: 9,
+		UserID:     100,
+	})
+	if !errors.Is(err, errMountPointCloudTokenServiceUnavailable) {
+		t.Fatalf("expected token service unavailable error, got %v", err)
+	}
+
+	if len(items) != 0 {
+		t.Fatalf("expected no parsed items, got %+v", items)
+	}
+
+	if len(cloudBridgeService.personFileIDs) != 0 {
+		t.Fatalf("expected no person lookup, got %v", cloudBridgeService.personFileIDs)
+	}
+}
+
+func TestBatchParseTextFallsBackToUnknownNamesWhenCloudBridgeServiceMissing(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	cloudTokenService := &mockBatchParseMountPointCloudTokenService{}
+	svc := NewService(tDB, cloudTokenService, nil, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	items, err := svc.BatchParseText(ctx, &topic.BatchParseTextRequest{
+		Content: strings.Join([]string{
+			"https://cloud.189.cn/t/abcDEF",
+			"订阅号：up-user",
+			"123456",
+		}, "\n"),
+		CloudToken: 9,
+		UserID:     100,
+	})
+	if err != nil {
+		t.Fatalf("batch parse text: %v", err)
+	}
+
+	if len(items) != 3 {
+		t.Fatalf("expected three parsed items, got %+v", items)
+	}
+
+	expectedNames := []string{"未知分享_abcDEF", "未知订阅号_up-user", "未知文件夹_123456"}
+	for i, expectedName := range expectedNames {
+		if items[i].Name != expectedName {
+			t.Fatalf("expected item %d name %q, got %+v", i, expectedName, items[i])
+		}
+	}
+
+	if got, want := cloudTokenService.queries, []int64{9}; len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("expected token lookups %v, got %v", want, got)
+	}
+}
+
+func TestBatchParseTextFallsBackToUnknownNamesWhenCloudBridgeServiceTypedNil(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	cloudTokenService := &mockBatchParseMountPointCloudTokenService{}
+
+	var cloudBridgeService *mockBatchParseMountPointCloudBridge
+
+	svc := NewService(tDB, cloudTokenService, cloudBridgeService, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	items, err := svc.BatchParseText(ctx, &topic.BatchParseTextRequest{
+		Content: strings.Join([]string{
+			"https://cloud.189.cn/t/abcDEF",
+			"订阅号：up-user",
+			"123456",
+		}, "\n"),
+		CloudToken: 9,
+		UserID:     100,
+	})
+	if err != nil {
+		t.Fatalf("batch parse text: %v", err)
+	}
+
+	if len(items) != 3 {
+		t.Fatalf("expected three parsed items, got %+v", items)
+	}
+
+	expectedNames := []string{"未知分享_abcDEF", "未知订阅号_up-user", "未知文件夹_123456"}
+	for i, expectedName := range expectedNames {
+		if items[i].Name != expectedName {
+			t.Fatalf("expected item %d name %q, got %+v", i, expectedName, items[i])
+		}
+	}
+
+	if got, want := cloudTokenService.queries, []int64{9}; len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("expected token lookups %v, got %v", want, got)
+	}
+}
+
+type mockBatchParseMountPointCloudTokenService struct {
+	cloudtokenSvi.Service
+	token   *models.CloudToken
+	err     error
+	queries []int64
+}
+
+func (m *mockBatchParseMountPointCloudTokenService) QueryAccessible(ctx context.Context, id, userID int64, isAdmin bool) (*models.CloudToken, error) {
+	m.queries = append(m.queries, id)
+	if m.err != nil {
+		return nil, m.err
+	}
+
+	if m.token != nil {
+		return m.token, nil
+	}
+
+	return &models.CloudToken{ID: id, AccessToken: "access-token", ExpiresIn: 7200, UserID: userID}, nil
+}
+
+func TestBatchParseTextAllowsShareAndSubscribeWithoutCloudToken(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	cloudTokenService := &mockBatchParseMountPointCloudTokenService{}
+	cloudBridgeService := &mockBatchParseMountPointCloudBridge{}
+	svc := NewService(tDB, cloudTokenService, cloudBridgeService, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	items, err := svc.BatchParseText(ctx, &topic.BatchParseTextRequest{
+		Content: strings.Join([]string{
+			"https://cloud.189.cn/t/abcDEF 提取码：wxyz",
+			"订阅号：up-user",
+		}, "\n"),
+		CloudToken: 0,
+		UserID:     100,
+	})
+	if err != nil {
+		t.Fatalf("batch parse text: %v", err)
+	}
+
+	if len(items) != 2 {
+		t.Fatalf("expected two parsed items, got %+v", items)
+	}
+
+	if items[0].OsType != models.OsTypeShareFolder || items[0].ShareCode != "abcDEF" || items[0].ShareAccessCode != "wxyz" {
+		t.Fatalf("expected first item to be share folder, got %+v", items[0])
+	}
+
+	if items[1].OsType != models.OsTypeSubscribe || items[1].SubscribeUser != "up-user" {
+		t.Fatalf("expected second item to be subscribe, got %+v", items[1])
+	}
+
+	if len(cloudTokenService.queries) != 0 {
+		t.Fatalf("expected cloud token lookup to be skipped, got %v", cloudTokenService.queries)
+	}
+
+	if got, want := cloudBridgeService.shareCodes, []string{"abcDEF"}; !stringSlicesEqual(got, want) {
+		t.Fatalf("expected share lookups %v, got %v", want, got)
+	}
+
+	if got, want := cloudBridgeService.subscribeUsers, []string{"up-user"}; !stringSlicesEqual(got, want) {
+		t.Fatalf("expected subscribe lookups %v, got %v", want, got)
+	}
+}
+
+func TestBatchParseTextRequiresCloudTokenBeforeRemoteLookupWhenFolderIDPresent(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	cloudTokenService := &mockBatchParseMountPointCloudTokenService{}
+	cloudBridgeService := &mockBatchParseMountPointCloudBridge{}
+	svc := NewService(tDB, cloudTokenService, cloudBridgeService, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	items, err := svc.BatchParseText(ctx, &topic.BatchParseTextRequest{
+		Content: strings.Join([]string{
+			"https://cloud.189.cn/t/abcDEF",
+			"123456",
+			"订阅号：up-user",
+		}, "\n"),
+		CloudToken: 0,
+		UserID:     100,
+	})
+	if !errors.Is(err, errInvalidMountPointCloudTokenID) {
+		t.Fatalf("expected invalid cloud token error, got %v", err)
+	}
+
+	if len(items) != 0 {
+		t.Fatalf("expected no parsed items, got %+v", items)
+	}
+
+	if len(cloudTokenService.queries) != 0 {
+		t.Fatalf("expected invalid token to fail before lookup, got %v", cloudTokenService.queries)
+	}
+
+	if len(cloudBridgeService.shareCodes) != 0 ||
+		len(cloudBridgeService.accessCodes) != 0 ||
+		len(cloudBridgeService.personFileIDs) != 0 ||
+		len(cloudBridgeService.subscribeUsers) != 0 {
+		t.Fatalf(
+			"expected no remote lookup, got share=%v access=%v person=%v subscribe=%v",
+			cloudBridgeService.shareCodes,
+			cloudBridgeService.accessCodes,
+			cloudBridgeService.personFileIDs,
+			cloudBridgeService.subscribeUsers,
+		)
+	}
+}
+
+type mockBatchParseMountPointCloudBridge struct {
+	cloudbridgeSvi.Service
+	shareCodes     []string
+	accessCodes    []string
+	personFileIDs  []string
+	subscribeUsers []string
+}
+
+func (m *mockBatchParseMountPointCloudBridge) GetShareInfo(ctx context.Context, shareCode, accessCode string) (*cloudbridgeSvi.ShareInfo, error) {
+	m.shareCodes = append(m.shareCodes, shareCode)
+	m.accessCodes = append(m.accessCodes, accessCode)
+
+	return &cloudbridgeSvi.ShareInfo{Name: "分享_" + shareCode}, nil
+}
+
+func (m *mockBatchParseMountPointCloudBridge) CheckPerson(ctx context.Context, token cloudbridgeSvi.AuthToken, fileId string) (string, error) {
+	m.personFileIDs = append(m.personFileIDs, fileId)
+
+	return "文件夹_" + fileId, nil
+}
+
+func (m *mockBatchParseMountPointCloudBridge) GetSubscribeUserInfo(ctx context.Context, userId string) (*cloudbridgeSvi.SubscribeUserInfo, error) {
+	m.subscribeUsers = append(m.subscribeUsers, userId)
+
+	return &cloudbridgeSvi.SubscribeUserInfo{UserId: userId, Name: "订阅号_" + userId}, nil
+}
+
+func TestBatchParseTextTreatsNumericPrefixWithNonURLNoteAsFolderID(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	cloudTokenService := &mockBatchParseMountPointCloudTokenService{}
+	cloudBridgeService := &mockBatchParseMountPointCloudBridge{}
+	svc := NewService(tDB, cloudTokenService, cloudBridgeService, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	items, err := svc.BatchParseText(ctx, &topic.BatchParseTextRequest{
+		Content:    "123456 abc.d1",
+		CloudToken: 9,
+		UserID:     100,
+	})
+	if err != nil {
+		t.Fatalf("batch parse text: %v", err)
+	}
+
+	if len(items) != 1 {
+		t.Fatalf("expected one parsed item, got %+v", items)
+	}
+
+	if items[0].OsType != models.OsTypePersonFolder || items[0].FileId != "123456" {
+		t.Fatalf("expected numeric prefix to parse as person folder, got %+v", items[0])
+	}
+
+	if len(cloudTokenService.queries) != 1 || cloudTokenService.queries[0] != 9 {
+		t.Fatalf("expected cloud token lookup [9], got %v", cloudTokenService.queries)
+	}
+
+	if got, want := cloudBridgeService.personFileIDs, []string{"123456"}; !stringSlicesEqual(got, want) {
+		t.Fatalf("expected person lookups %v, got %v", want, got)
+	}
+
+	if len(cloudBridgeService.shareCodes) != 0 || len(cloudBridgeService.subscribeUsers) != 0 {
+		t.Fatalf("expected only person lookup, got share=%v subscribe=%v", cloudBridgeService.shareCodes, cloudBridgeService.subscribeUsers)
+	}
+}
+
+func TestBatchParseTextSupportsPlainShareCodes(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	cloudTokenService := &mockBatchParseMountPointCloudTokenService{}
+	cloudBridgeService := &mockBatchParseMountPointCloudBridge{}
+	svc := NewService(tDB, cloudTokenService, cloudBridgeService, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	items, err := svc.BatchParseText(ctx, &topic.BatchParseTextRequest{
+		Content:    "abcDEF\nxyZ123 abcd\nabC999（访问码：wxyz）\n123456",
+		CloudToken: 9,
+		UserID:     100,
+	})
+	if err != nil {
+		t.Fatalf("batch parse text: %v", err)
+	}
+
+	if len(items) != 4 {
+		t.Fatalf("expected four parsed items, got %+v", items)
+	}
+
+	if items[0].OsType != models.OsTypeShareFolder || items[0].ShareCode != "abcDEF" || items[0].ShareAccessCode != "" {
+		t.Fatalf("expected first item to be plain share code, got %+v", items[0])
+	}
+
+	if items[1].OsType != models.OsTypeShareFolder || items[1].ShareCode != "xyZ123" || items[1].ShareAccessCode != "abcd" {
+		t.Fatalf("expected second item to include access code, got %+v", items[1])
+	}
+
+	if items[2].OsType != models.OsTypeShareFolder || items[2].ShareCode != "abC999" || items[2].ShareAccessCode != "wxyz" {
+		t.Fatalf("expected third item to parse parenthesized access code, got %+v", items[2])
+	}
+
+	if items[3].OsType != models.OsTypePersonFolder || items[3].FileId != "123456" {
+		t.Fatalf("expected numeric line to stay person folder id, got %+v", items[3])
+	}
+
+	if got, want := cloudBridgeService.shareCodes, []string{"abcDEF", "xyZ123", "abC999"}; !stringSlicesEqual(got, want) {
+		t.Fatalf("expected share lookups %v, got %v", want, got)
+	}
+
+	if got, want := cloudBridgeService.accessCodes, []string{"", "abcd", "wxyz"}; !stringSlicesEqual(got, want) {
+		t.Fatalf("expected access code lookups %v, got %v", want, got)
+	}
+
+	if got, want := cloudBridgeService.personFileIDs, []string{"123456"}; !stringSlicesEqual(got, want) {
+		t.Fatalf("expected person lookups %v, got %v", want, got)
+	}
+}
+
+func TestBatchParseTextSupportsLabeledShareCodes(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	cloudTokenService := &mockBatchParseMountPointCloudTokenService{}
+	cloudBridgeService := &mockBatchParseMountPointCloudBridge{}
+	svc := NewService(tDB, cloudTokenService, cloudBridgeService, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	items, err := svc.BatchParseText(ctx, &topic.BatchParseTextRequest{
+		Content:    "分享码：abcDEF\n分享码：xyZ123 提取码：wxyz\nshareCode:qWe123 accessCode:zzzz\nshareCode:spAce1 accessCode: a1b2\n分享码：urlOk1 提取码：b2c3 https://example.com/help",
+		CloudToken: 9,
+		UserID:     100,
+	})
+	if err != nil {
+		t.Fatalf("batch parse text: %v", err)
+	}
+
+	if len(items) != 5 {
+		t.Fatalf("expected five parsed items, got %+v", items)
+	}
+
+	expectedShareCodes := []string{"abcDEF", "xyZ123", "qWe123", "spAce1", "urlOk1"}
+	expectedAccessCodes := []string{"", "wxyz", "zzzz", "a1b2", "b2c3"}
+
+	for i, item := range items {
+		if item.OsType != models.OsTypeShareFolder {
+			t.Fatalf("expected item %d to be share folder, got %+v", i, item)
+		}
+
+		if item.ShareCode != expectedShareCodes[i] || item.ShareAccessCode != expectedAccessCodes[i] {
+			t.Fatalf("expected item %d share/access %q/%q, got %+v", i, expectedShareCodes[i], expectedAccessCodes[i], item)
+		}
+	}
+
+	if got, want := cloudBridgeService.shareCodes, expectedShareCodes; !stringSlicesEqual(got, want) {
+		t.Fatalf("expected share lookups %v, got %v", want, got)
+	}
+
+	if got, want := cloudBridgeService.accessCodes, expectedAccessCodes; !stringSlicesEqual(got, want) {
+		t.Fatalf("expected access code lookups %v, got %v", want, got)
+	}
+}
+
+func TestBatchParseTextSupportsChinesePunctuationShareParams(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	cloudTokenService := &mockBatchParseMountPointCloudTokenService{}
+	cloudBridgeService := &mockBatchParseMountPointCloudBridge{}
+	svc := NewService(tDB, cloudTokenService, cloudBridgeService, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	items, err := svc.BatchParseText(ctx, &topic.BatchParseTextRequest{
+		Content: strings.Join([]string{
+			"https://cloud.189.cn/t/abcDEF、提取码：wxyz",
+			"https://cloud.189.cn/t/qWe123！",
+			"分享码：xyZ123、提取码：a1b2",
+			"分享码：spAce1 提取码：zzzz？",
+		}, "\n"),
+		CloudToken: 9,
+		UserID:     100,
+	})
+	if err != nil {
+		t.Fatalf("batch parse text: %v", err)
+	}
+
+	if len(items) != 4 {
+		t.Fatalf("expected four parsed items, got %+v", items)
+	}
+
+	expectedShareCodes := []string{"abcDEF", "qWe123", "xyZ123", "spAce1"}
+	expectedAccessCodes := []string{"wxyz", "", "a1b2", "zzzz"}
+
+	for i, item := range items {
+		if item.OsType != models.OsTypeShareFolder {
+			t.Fatalf("expected item %d to be share folder, got %+v", i, item)
+		}
+
+		if item.ShareCode != expectedShareCodes[i] || item.ShareAccessCode != expectedAccessCodes[i] {
+			t.Fatalf("expected item %d share/access %q/%q, got %+v", i, expectedShareCodes[i], expectedAccessCodes[i], item)
+		}
+	}
+
+	if got, want := cloudBridgeService.shareCodes, expectedShareCodes; !stringSlicesEqual(got, want) {
+		t.Fatalf("expected share lookups %v, got %v", want, got)
+	}
+
+	if got, want := cloudBridgeService.accessCodes, expectedAccessCodes; !stringSlicesEqual(got, want) {
+		t.Fatalf("expected access code lookups %v, got %v", want, got)
+	}
+}
+
+func TestBatchParseTextSupportsSubscribeLinks(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	cloudTokenService := &mockBatchParseMountPointCloudTokenService{}
+	cloudBridgeService := &mockBatchParseMountPointCloudBridge{}
+	svc := NewService(tDB, cloudTokenService, cloudBridgeService, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	items, err := svc.BatchParseText(ctx, &topic.BatchParseTextRequest{
+		Content: strings.Join([]string{
+			"https://content.21cn.com/h5/subscrip/?uuid=up-user",
+			"HTTPS://CONTENT.21CN.COM/h5/subscrip/?foo=1&uuid=user_123&bar=2",
+			"https://content.21cn.com/h5/subscrip/?uuid=encoded%2Duser%5F9。",
+			"123 https://content.21cn.com/h5/subscrip/?uuid=number-prefix-user",
+		}, "\n"),
+		CloudToken: 9,
+		UserID:     100,
+	})
+	if err != nil {
+		t.Fatalf("batch parse text: %v", err)
+	}
+
+	expectedSubscribeUsers := []string{"up-user", "user_123", "encoded-user_9", "number-prefix-user"}
+	if len(items) != len(expectedSubscribeUsers) {
+		t.Fatalf("expected %d parsed items, got %+v", len(expectedSubscribeUsers), items)
+	}
+
+	for i, item := range items {
+		if item.OsType != models.OsTypeSubscribe {
+			t.Fatalf("expected item %d to be subscribe, got %+v", i, item)
+		}
+
+		if item.SubscribeUser != expectedSubscribeUsers[i] {
+			t.Fatalf("expected item %d subscribe user %q, got %+v", i, expectedSubscribeUsers[i], item)
+		}
+	}
+
+	if got, want := cloudBridgeService.subscribeUsers, expectedSubscribeUsers; !stringSlicesEqual(got, want) {
+		t.Fatalf("expected subscribe lookups %v, got %v", want, got)
+	}
+
+	if len(cloudBridgeService.shareCodes) != 0 || len(cloudBridgeService.personFileIDs) != 0 {
+		t.Fatalf("expected only subscribe lookups, got share=%v person=%v", cloudBridgeService.shareCodes, cloudBridgeService.personFileIDs)
+	}
+}
+
+func TestBatchParseTextSupportsLabeledSubscribeUsers(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	cloudTokenService := &mockBatchParseMountPointCloudTokenService{}
+	cloudBridgeService := &mockBatchParseMountPointCloudBridge{}
+	svc := NewService(tDB, cloudTokenService, cloudBridgeService, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	items, err := svc.BatchParseText(ctx, &topic.BatchParseTextRequest{
+		Content: strings.Join([]string{
+			"订阅号：up-user",
+			"订阅号ID：user_123。",
+			"subscribeUser: encoded%2Duser%5F9",
+			"uuid=uuid-user",
+			"https://example.com/path?uuid=bad-user",
+		}, "\n"),
+		CloudToken: 9,
+		UserID:     100,
+	})
+	if err != nil {
+		t.Fatalf("batch parse text: %v", err)
+	}
+
+	expectedSubscribeUsers := []string{"up-user", "user_123", "encoded-user_9", "uuid-user"}
+	if len(items) != len(expectedSubscribeUsers) {
+		t.Fatalf("expected %d parsed items, got %+v", len(expectedSubscribeUsers), items)
+	}
+
+	for i, item := range items {
+		if item.OsType != models.OsTypeSubscribe {
+			t.Fatalf("expected item %d to be subscribe, got %+v", i, item)
+		}
+
+		if item.SubscribeUser != expectedSubscribeUsers[i] {
+			t.Fatalf("expected item %d subscribe user %q, got %+v", i, expectedSubscribeUsers[i], item)
+		}
+	}
+
+	if got, want := cloudBridgeService.subscribeUsers, expectedSubscribeUsers; !stringSlicesEqual(got, want) {
+		t.Fatalf("expected subscribe lookups %v, got %v", want, got)
+	}
+
+	if len(cloudBridgeService.shareCodes) != 0 || len(cloudBridgeService.personFileIDs) != 0 {
+		t.Fatalf("expected only subscribe lookups, got share=%v person=%v", cloudBridgeService.shareCodes, cloudBridgeService.personFileIDs)
+	}
+}
+
+func TestBatchParseTextSupportsWWWAndUppercaseCloudShareLinks(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	cloudTokenService := &mockBatchParseMountPointCloudTokenService{}
+	cloudBridgeService := &mockBatchParseMountPointCloudBridge{}
+	svc := NewService(tDB, cloudTokenService, cloudBridgeService, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	items, err := svc.BatchParseText(ctx, &topic.BatchParseTextRequest{
+		Content:    "https://www.cloud.189.cn/t/abcDEF?shareId=1 提取码：wxyz\nHTTPS://CLOUD.189.CN/t/AbC123?foo=bar",
+		CloudToken: 9,
+		UserID:     100,
+	})
+	if err != nil {
+		t.Fatalf("batch parse text: %v", err)
+	}
+
+	if len(items) != 2 {
+		t.Fatalf("expected two parsed items, got %+v", items)
+	}
+
+	expectedShareCodes := []string{"abcDEF", "AbC123"}
+	expectedAccessCodes := []string{"wxyz", ""}
+
+	for i, item := range items {
+		if item.OsType != models.OsTypeShareFolder {
+			t.Fatalf("expected item %d to be share folder, got %+v", i, item)
+		}
+
+		if item.ShareCode != expectedShareCodes[i] || item.ShareAccessCode != expectedAccessCodes[i] {
+			t.Fatalf("expected item %d share/access %q/%q, got %+v", i, expectedShareCodes[i], expectedAccessCodes[i], item)
+		}
+	}
+
+	if got, want := cloudBridgeService.shareCodes, expectedShareCodes; !stringSlicesEqual(got, want) {
+		t.Fatalf("expected share lookups %v, got %v", want, got)
+	}
+
+	if got, want := cloudBridgeService.accessCodes, expectedAccessCodes; !stringSlicesEqual(got, want) {
+		t.Fatalf("expected access code lookups %v, got %v", want, got)
+	}
+}
+
+func TestBatchParseTextRejectsLookalikeCloudShareHostsBeforeLookup(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	cloudTokenService := &mockBatchParseMountPointCloudTokenService{}
+	cloudBridgeService := &mockBatchParseMountPointCloudBridge{}
+	svc := NewService(tDB, cloudTokenService, cloudBridgeService, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	items, err := svc.BatchParseText(ctx, &topic.BatchParseTextRequest{
+		Content: strings.Join([]string{
+			"note https://cloud.189.cn.evil.test/t/abcDEF",
+			"note https://evil-cloud.189.cn/t/xyZ123",
+			"note https://evilcloud.189.cn/t/qWe123",
+		}, "\n"),
+		CloudToken: 9,
+		UserID:     100,
+	})
+	if err != nil {
+		t.Fatalf("batch parse text: %v", err)
+	}
+
+	if len(items) != 0 {
+		t.Fatalf("expected lookalike links to be skipped, got %+v", items)
+	}
+
+	if len(cloudBridgeService.shareCodes) != 0 || len(cloudBridgeService.accessCodes) != 0 {
+		t.Fatalf("expected share lookup not to be called, got share=%v access=%v", cloudBridgeService.shareCodes, cloudBridgeService.accessCodes)
+	}
+}
+
+func TestBatchParseTextRejectsURLLikeLinesBeforeFolderFallback(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	cloudTokenService := &mockBatchParseMountPointCloudTokenService{}
+	cloudBridgeService := &mockBatchParseMountPointCloudBridge{}
+	svc := NewService(tDB, cloudTokenService, cloudBridgeService, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	items, err := svc.BatchParseText(ctx, &topic.BatchParseTextRequest{
+		Content: strings.Join([]string{
+			"123 https://content.21cn.com.evil.test/h5/subscrip/?uuid=bad-user",
+			"456 https://cloud.189.cn.evil.test/t/abcDEF",
+			"789 https://example.com/share?token=secret-token",
+		}, "\n"),
+		CloudToken: 9,
+		UserID:     100,
+	})
+	if err != nil {
+		t.Fatalf("batch parse text: %v", err)
+	}
+
+	if len(items) != 0 {
+		t.Fatalf("expected url-like lines to be skipped, got %+v", items)
+	}
+
+	if len(cloudBridgeService.shareCodes) != 0 ||
+		len(cloudBridgeService.accessCodes) != 0 ||
+		len(cloudBridgeService.personFileIDs) != 0 ||
+		len(cloudBridgeService.subscribeUsers) != 0 {
+		t.Fatalf(
+			"expected no remote lookup, got share=%v access=%v person=%v subscribe=%v",
+			cloudBridgeService.shareCodes,
+			cloudBridgeService.accessCodes,
+			cloudBridgeService.personFileIDs,
+			cloudBridgeService.subscribeUsers,
+		)
+	}
+}
+
+func TestBatchParseTextRejectsMalformedCloudShareLinksBeforeLookup(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	cloudTokenService := &mockBatchParseMountPointCloudTokenService{}
+	cloudBridgeService := &mockBatchParseMountPointCloudBridge{}
+	svc := NewService(tDB, cloudTokenService, cloudBridgeService, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	items, err := svc.BatchParseText(ctx, &topic.BatchParseTextRequest{
+		Content:    "https://cloud.189.cn/t/?token=secret-token\nhttps://cloud.189.cn/t/!!!?token=secret-token",
+		CloudToken: 9,
+		UserID:     100,
+	})
+	if err != nil {
+		t.Fatalf("batch parse text: %v", err)
+	}
+
+	if len(items) != 0 {
+		t.Fatalf("expected malformed links to be skipped, got %+v", items)
+	}
+
+	if len(cloudBridgeService.shareCodes) != 0 || len(cloudBridgeService.accessCodes) != 0 {
+		t.Fatalf("expected share lookup not to be called, got share=%v access=%v", cloudBridgeService.shareCodes, cloudBridgeService.accessCodes)
+	}
+}
+
+func TestBatchParseTextRejectsInvalidAccessCodesBeforeLookup(t *testing.T) {
+	tDB := setupMountPointTestDB(t)
+	cloudTokenService := &mockBatchParseMountPointCloudTokenService{}
+	cloudBridgeService := &mockBatchParseMountPointCloudBridge{}
+	svc := NewService(tDB, cloudTokenService, cloudBridgeService, nil)
+	ctx := context.NewContext(stdctx.Background())
+
+	items, err := svc.BatchParseText(ctx, &topic.BatchParseTextRequest{
+		Content: strings.Join([]string{
+			"分享码：abcDEF 提取码：bad-code",
+			"分享码：xyZ123 提取码：https://example.com/share?token=secret-token",
+		}, "\n"),
+		CloudToken: 9,
+		UserID:     100,
+	})
+	if err != nil {
+		t.Fatalf("batch parse text: %v", err)
+	}
+
+	if len(items) != 0 {
+		t.Fatalf("expected invalid access code lines to be skipped, got %+v", items)
+	}
+
+	if len(cloudBridgeService.shareCodes) != 0 || len(cloudBridgeService.accessCodes) != 0 {
+		t.Fatalf("expected share lookup not to be called, got share=%v access=%v", cloudBridgeService.shareCodes, cloudBridgeService.accessCodes)
+	}
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+
+	return true
 }
 
 func TestModifyTokenUpdatesExistingMountPoint(t *testing.T) {

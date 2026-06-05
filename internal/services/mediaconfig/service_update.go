@@ -11,7 +11,17 @@ import (
 
 func (s *service) Update(ctx context.Context, fields ...utils.Field) error {
 	mp := make(map[string]interface{})
+
 	for _, field := range fields {
+		if field.Key == "auto_rebuild_cron" {
+			autoRebuildCron, err := normalizeAutoRebuildCronField(field.Value)
+			if err != nil {
+				return err
+			}
+
+			field.Value = autoRebuildCron
+		}
+
 		mp[field.Key] = field.Value
 	}
 
@@ -53,9 +63,18 @@ func (s *service) Update(ctx context.Context, fields ...utils.Field) error {
 		return err
 	}
 
-	shared.MediaConfig = updatedCfg
+	shared.SetMediaConfig(updatedCfg)
 
 	return nil
+}
+
+func normalizeAutoRebuildCronField(value interface{}) (string, error) {
+	cronExpr, ok := value.(string)
+	if !ok {
+		return "", errInvalidAutoRebuildCron
+	}
+
+	return normalizeAutoRebuildCron(cronExpr)
 }
 
 func checkMediaConfigUpdateResult(ctx context.Context, db *gorm.DB, result *gorm.DB, id int64) error {

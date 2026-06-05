@@ -29,7 +29,7 @@
               v-for="token in tokenState.tokens"
               :key="token.id"
               class="token-card"
-              :class="{ active: tokenState.selectedTokenId === token.id }"
+              :class="{ active: tokenState.selectedTokenId === token.id, disabled: bindLoading }"
               @click="handleSelectToken(token.id)"
             >
               <div class="token-info">
@@ -51,7 +51,7 @@
             <n-button
               type="primary"
               size="large"
-              :disabled="!tokenState.selectedTokenId"
+              :disabled="!tokenState.selectedTokenId || bindLoading"
               @click="handleNextToFamilySelection"
               style="width: 100%"
             >
@@ -92,7 +92,10 @@
               v-for="family in familyState.families"
               :key="family.familyId"
               class="family-card"
-              :class="{ active: familyState.selectedFamilyId === family.familyId }"
+              :class="{
+                active: familyState.selectedFamilyId === family.familyId,
+                disabled: bindLoading,
+              }"
               @click="handleSelectFamily(family.familyId)"
             >
               <div class="family-info">
@@ -133,7 +136,7 @@
             <n-button
               type="primary"
               size="large"
-              :disabled="!familyState.selectedFamilyId"
+              :disabled="!familyState.selectedFamilyId || bindLoading"
               @click="handleNextToFileSelection"
               style="width: 100%"
             >
@@ -186,6 +189,7 @@
                 :selected-keys="fileState.selectedKeys"
                 :expanded-keys="fileState.expandedKeys"
                 :loading="fileState.treeLoading"
+                :disabled="bindLoading"
                 block-line
                 selectable
                 @update:selected-keys="handleTreeSelect"
@@ -211,13 +215,21 @@
     </div>
 
     <div class="modal-actions">
-      <n-button v-if="currentStep === 2" @click="handleBackToTokenSelection">
+      <n-button
+        v-if="currentStep === 2"
+        :disabled="bindLoading"
+        @click="handleBackToTokenSelection"
+      >
         <template #icon
           ><n-icon><ArrowBackOutline /></n-icon
         ></template>
         返回上一步
       </n-button>
-      <n-button v-if="currentStep === 3" @click="handleBackToFamilySelection">
+      <n-button
+        v-if="currentStep === 3"
+        :disabled="bindLoading"
+        @click="handleBackToFamilySelection"
+      >
         <template #icon
           ><n-icon><ArrowBackOutline /></n-icon
         ></template>
@@ -228,7 +240,9 @@
         v-if="currentStep === 3"
         type="primary"
         :loading="bindLoading"
-        :disabled="!fileState.selectedFile || bindLoading"
+        :disabled="
+          !fileState.selectedFile || bindLoading || fileState.loading || fileState.treeLoading
+        "
         @click="handleConfirm"
       >
         绑定挂载点
@@ -270,10 +284,15 @@ import type {
   GetFamilyListQuery,
 } from '@/api/storage/advance'
 import { getListItems } from '@/utils/pagination'
-import { normalizeCloudTokens, normalizeFamilies, normalizeFileNodes } from '@/utils/responseGuards'
+import {
+  normalizeCloudTokens,
+  normalizeFamilies,
+  normalizeFileNodePage,
+} from '@/utils/responseGuards'
 import { OS_TYPES } from '@/utils/osType'
 import { useMountPointBind } from '@/composables/useMountPointBind'
 import { getErrorMessage } from '@/utils/api'
+import { formatDateTime } from '@/utils/time'
 
 // Emits
 interface Emits {
@@ -384,49 +403,6 @@ const resetFileState = () => {
   fileState.treeData.clear()
 }
 
-interface FamilyFilesPage {
-  files: FileNode[]
-  total: number
-  currentPage: number
-  pageSize: number
-}
-
-const isRecord = (value: unknown): value is Record<string, unknown> => {
-  return typeof value === 'object' && value !== null
-}
-
-const isSafePositiveInteger = (value: unknown): value is number => {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
-}
-
-const isSafeNonNegativeInteger = (value: unknown): value is number => {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
-}
-
-const normalizeFamilyFilesPage = (value: unknown): FamilyFilesPage | null => {
-  if (!isRecord(value)) {
-    return null
-  }
-
-  const fileItems = getListItems<FileNode>(value)
-  const files = normalizeFileNodes(fileItems)
-  if (
-    !files ||
-    !isSafeNonNegativeInteger(value.total) ||
-    !isSafePositiveInteger(value.currentPage) ||
-    !isSafePositiveInteger(value.pageSize)
-  ) {
-    return null
-  }
-
-  return {
-    files,
-    total: value.total,
-    currentPage: value.currentPage,
-    pageSize: value.pageSize,
-  }
-}
-
 // 获取令牌列表
 const fetchTokenList = () => {
   if (!isComponentMounted) {
@@ -461,8 +437,10 @@ const fetchTokenList = () => {
         return
       }
 
-      console.error('获取令牌列表失败:', error)
-      message.error(getErrorMessage(error, '获取令牌列表失败'))
+      const errorMessage = getErrorMessage(error, '获取令牌列表失败')
+
+      console.error('获取令牌列表失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isCurrentTokenRequest(currentRequestId, currentOperation)) {
@@ -473,6 +451,10 @@ const fetchTokenList = () => {
 
 // 选择令牌
 const handleSelectToken = (tokenId: number) => {
+  if (bindLoading.value) {
+    return
+  }
+
   if (tokenState.selectedTokenId !== tokenId) {
     invalidatePendingWork()
     resetFamilyState()
@@ -483,6 +465,10 @@ const handleSelectToken = (tokenId: number) => {
 
 // 下一步到家庭选择
 const handleNextToFamilySelection = () => {
+  if (bindLoading.value) {
+    return
+  }
+
   if (!tokenState.selectedTokenId) {
     message.warning('请选择令牌')
     return
@@ -523,8 +509,10 @@ const fetchFamilyList = () => {
         return
       }
 
-      console.error('获取家庭列表失败:', error)
-      message.error(getErrorMessage(error, '获取家庭列表失败'))
+      const errorMessage = getErrorMessage(error, '获取家庭列表失败')
+
+      console.error('获取家庭列表失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isCurrentFamilyRequest(currentRequestId, currentOperation, currentCloudToken)) {
@@ -535,6 +523,10 @@ const fetchFamilyList = () => {
 
 // 选择家庭
 const handleSelectFamily = (familyId: string) => {
+  if (bindLoading.value) {
+    return
+  }
+
   if (familyState.selectedFamilyId !== familyId) {
     invalidatePendingWork()
     resetFileState()
@@ -549,16 +541,17 @@ const getFamilyRoleText = (userRole: number) => {
 
 // 格式化时间
 const formatTime = (timeStr: string) => {
-  if (!timeStr) return '未知'
-  try {
-    return new Date(timeStr).toLocaleString('zh-CN')
-  } catch {
-    return timeStr
-  }
+  const formatted = formatDateTime(timeStr)
+
+  return formatted === '-' ? '未知' : formatted
 }
 
 // 下一步到文件选择
 const handleNextToFileSelection = () => {
+  if (bindLoading.value) {
+    return
+  }
+
   if (!familyState.selectedFamilyId) {
     message.warning('请选择家庭')
     return
@@ -615,7 +608,7 @@ const fetchFamilyFiles = async (parentId: string = '') => {
         return
       }
 
-      const page = normalizeFamilyFilesPage(response.data)
+      const page = normalizeFileNodePage(response.data)
       if (!page) {
         message.error('获取家庭文件列表失败：响应数据格式异常')
 
@@ -657,8 +650,10 @@ const fetchFamilyFiles = async (parentId: string = '') => {
       return
     }
 
-    console.error('获取家庭文件列表失败:', error)
-    message.error(getErrorMessage(error, '获取家庭文件列表失败'))
+    const errorMessage = getErrorMessage(error, '获取家庭文件列表失败')
+
+    console.error('获取家庭文件列表失败:', errorMessage)
+    message.error(errorMessage)
   } finally {
     if (
       isCurrentFileRequest(
@@ -723,6 +718,10 @@ const renderTreeSuffix = ({ option }: { option: Record<string, unknown> }) => {
 
 // 树形选择处理
 const handleTreeSelect = (keys: string[]) => {
+  if (bindLoading.value) {
+    return
+  }
+
   fileState.selectedKeys = keys
   if (keys.length > 0) {
     const selectedKey = keys[0]
@@ -755,6 +754,10 @@ const handleTreeSelect = (keys: string[]) => {
 
 // 树形展开处理
 const handleTreeExpand = (keys: string[]) => {
+  if (bindLoading.value) {
+    return
+  }
+
   const newExpandedKeys = keys.filter((key) => !fileState.expandedKeys.includes(key))
   fileState.expandedKeys = keys
   newExpandedKeys.forEach((key) => {
@@ -766,33 +769,78 @@ const handleTreeExpand = (keys: string[]) => {
 
 // 导航处理
 const handleNavigateToRoot = () => {
+  if (bindLoading.value) {
+    return
+  }
+
   fileState.breadcrumbs = []
   fileState.selectedFile = null
   fetchFamilyFiles('')
 }
 const handleNavigateToBreadcrumb = (index: number) => {
+  if (bindLoading.value) {
+    return
+  }
+
   const targetBreadcrumb = fileState.breadcrumbs[index]
   fileState.breadcrumbs = fileState.breadcrumbs.slice(0, index + 1)
   fileState.selectedFile = null
   fetchFamilyFiles(targetBreadcrumb.id)
 }
 
+const findLoadedFilePath = (
+  targetId: string,
+  files: FileNode[],
+  visited = new Set<string>()
+): string[] | null => {
+  for (const file of files) {
+    if (file.id === targetId) {
+      return [file.name]
+    }
+
+    if (visited.has(file.id)) {
+      continue
+    }
+
+    visited.add(file.id)
+
+    const childFiles = fileState.treeData.get(file.id)
+    if (!childFiles) {
+      continue
+    }
+
+    const childPath = findLoadedFilePath(targetId, childFiles, visited)
+    if (childPath) {
+      return [file.name, ...childPath]
+    }
+  }
+
+  return null
+}
+
 // 获取选中文件路径
 const getSelectedFilePath = () => {
   if (!fileState.selectedFile) return ''
-  const pathParts = [
-    '根目录',
-    ...fileState.breadcrumbs.map((b) => b.name),
-    fileState.selectedFile.name,
-  ]
+
+  const loadedPath = findLoadedFilePath(fileState.selectedFile.id, fileState.files)
+  const pathParts = ['根目录', ...(loadedPath || [fileState.selectedFile.name])]
+
   return pathParts.join(' / ')
 }
 
 // 返回上一步
 const handleBackToTokenSelection = () => {
+  if (bindLoading.value) {
+    return
+  }
+
   currentStep.value = 1
 }
 const handleBackToFamilySelection = () => {
+  if (bindLoading.value) {
+    return
+  }
+
   currentStep.value = 2
 }
 
@@ -812,10 +860,16 @@ const handleConfirm = () => {
     return
   }
 
-  if (!fileState.selectedFile || !tokenState.selectedTokenId) {
-    message.warning('请选择文件夹和令牌')
+  if (!fileState.selectedFile || !tokenState.selectedTokenId || !familyState.selectedFamilyId) {
+    message.warning('请选择家庭、文件夹和令牌')
     return
   }
+
+  if (fileState.loading || fileState.treeLoading) {
+    message.warning('文件列表加载中，请稍后再试')
+    return
+  }
+
   const itemsToMount = [
     {
       name: fileState.selectedFile.name,
@@ -823,10 +877,10 @@ const handleConfirm = () => {
       cloudToken: tokenState.selectedTokenId,
       disableSwitchCloudToken: true,
       fileId: fileState.selectedFile.id,
-      familyId: familyState.selectedFamilyId!,
+      familyId: familyState.selectedFamilyId,
     },
   ]
-  const currentOperation = operationVersion
+  const currentOperation = ++operationVersion
   bindLoading.value = true
   mountPointBind
     .show(itemsToMount, { defaultCloudToken: tokenState.selectedTokenId || undefined })
@@ -863,8 +917,10 @@ onUnmounted(() => {
 
 <style scoped>
 .family-mount-container {
-  min-width: 800px;
-  width: 100%;
+  box-sizing: border-box;
+  width: min(800px, 100%);
+  max-width: 100%;
+  min-width: 0;
 }
 
 .family-mount-content {
@@ -933,15 +989,23 @@ onUnmounted(() => {
   background: var(--n-primary-color-suppl);
 }
 
+.token-card.disabled,
+.family-card.disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .token-info,
 .family-info {
   flex: 1;
+  min-width: 0;
 }
 
 .token-header,
 .family-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 8px;
 }
@@ -996,17 +1060,19 @@ onUnmounted(() => {
   border-radius: 8px;
   background: var(--n-card-color);
   overflow: hidden;
+  min-width: 0;
 }
 
 .breadcrumb-container {
   padding: 12px 16px;
   border-bottom: 1px solid var(--n-border-color);
   background: var(--n-color-target);
+  overflow-x: auto;
 }
 
 .file-tree {
   max-height: 400px;
-  overflow-y: auto;
+  overflow: auto;
 }
 
 .selected-info {
@@ -1036,6 +1102,7 @@ onUnmounted(() => {
 
 .selected-path {
   font-size: 13px;
+  word-break: break-all;
 }
 
 .modal-actions {
@@ -1066,6 +1133,10 @@ onUnmounted(() => {
 
   .modal-actions {
     flex-direction: column;
+  }
+
+  .modal-actions :deep(.n-button) {
+    width: 100%;
   }
 }
 </style>

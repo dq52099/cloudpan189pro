@@ -121,15 +121,15 @@
 
             <!-- 用户信息 -->
             <n-dropdown
-              v-if="authStore.isLogin"
+              v-if="showUserMenu"
               :options="userMenuOptions"
               @select="handleUserMenuSelect"
             >
               <div class="user-info">
-                <n-text class="username">{{ userInfo.username }}</n-text>
-                <n-text v-if="!isMobile && userStore.isAdmin" depth="3" class="user-role"
-                  >管理员</n-text
-                >
+                <n-text class="username">{{ displayUsername }}</n-text>
+                <n-text v-if="!isMobile && displayUserRole" depth="3" class="user-role">
+                  {{ displayUserRole }}
+                </n-text>
                 <n-icon v-if="!isMobile" size="16" class="dropdown-icon">
                   <ChevronDownIcon />
                 </n-icon>
@@ -149,6 +149,7 @@
 
     <!-- 修改密码弹窗 -->
     <ChangePasswordModal
+      v-if="!authDisabled"
       v-model:show="showChangePasswordModal"
       @success="handleChangePasswordSuccess"
     />
@@ -210,6 +211,18 @@ const themeStore = useThemeStore()
 // 系统信息
 const systemInfo = systemStore.get()
 const userInfo = userStore.get()
+const authDisabled = computed(() => !systemInfo.enableAuth)
+const showUserMenu = computed(() => authDisabled.value || authStore.isLogin)
+const displayUsername = computed(() =>
+  authDisabled.value ? 'anonymous' : userInfo.username || '-'
+)
+const displayUserRole = computed(() => {
+  if (authDisabled.value) {
+    return '匿名管理员'
+  }
+
+  return userStore.isAdmin ? '管理员' : ''
+})
 
 type AppMenuItem = {
   key: string
@@ -345,8 +358,8 @@ const showChangePasswordModal = ref(false)
 
 const filterMenuTree = (items: AppMenuItem[]): AppMenuItem[] => {
   return items
-    .filter((item) => !item.authOnly || authStore.isLogin)
-    .filter((item) => !item.adminOnly || userStore.isAdmin)
+    .filter((item) => !item.authOnly || !systemInfo.enableAuth || authStore.isLogin)
+    .filter((item) => !item.adminOnly || !systemInfo.enableAuth || userStore.isAdmin)
     .map((item) => ({
       ...item,
       children: item.children ? filterMenuTree(item.children) : undefined,
@@ -502,20 +515,33 @@ const handleExpandedKeysUpdate = (keys: string[]) => {
 }
 
 // 用户菜单选项
-const userMenuOptions: DropdownOption[] = [
-  {
-    label: '修改密码',
-    key: 'change-password',
-  },
-  {
-    type: 'divider',
-    key: 'divider',
-  },
-  {
-    label: '退出登录',
-    key: 'logout',
-  },
-]
+const userMenuOptions = computed<DropdownOption[]>(() => {
+  const options: DropdownOption[] = [
+    {
+      label: '个人资料',
+      key: 'profile',
+    },
+  ]
+
+  if (!authDisabled.value) {
+    options.push(
+      {
+        label: '修改密码',
+        key: 'change-password',
+      },
+      {
+        type: 'divider',
+        key: 'divider',
+      },
+      {
+        label: '退出登录',
+        key: 'logout',
+      }
+    )
+  }
+
+  return options
+})
 
 // 处理菜单选择
 const handleMenuSelect = (key: string) => {
@@ -539,10 +565,14 @@ const handleUserMenuSelect = (key: string) => {
       router.push('/@dashboard/profile')
       break
     case 'change-password':
-      showChangePasswordModal.value = true
+      if (!authDisabled.value) {
+        showChangePasswordModal.value = true
+      }
       break
     case 'logout':
-      handleLogout()
+      if (!authDisabled.value) {
+        handleLogout()
+      }
       break
   }
 }
@@ -565,7 +595,9 @@ onMounted(() => {
   checkScreenSize()
   window.addEventListener('resize', checkScreenSize)
 
-  userStore.refresh()
+  if (systemInfo.enableAuth) {
+    userStore.refresh()
+  }
 })
 
 // 清理事件监听器

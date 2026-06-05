@@ -27,7 +27,28 @@ func ensurePlanAccess(ctx *httpcontext.Context, plan *models.AutoIngestPlan) boo
 	return true
 }
 
+func compactAutoIngestPlans(plans []*models.AutoIngestPlan) []*models.AutoIngestPlan {
+	if len(plans) == 0 {
+		return plans
+	}
+
+	writeIndex := 0
+
+	for _, plan := range plans {
+		if plan == nil {
+			continue
+		}
+
+		plans[writeIndex] = plan
+		writeIndex++
+	}
+
+	return plans[:writeIndex]
+}
+
 func filterAccessiblePlans(ctx *httpcontext.Context, requestIDs []int64, plans []*models.AutoIngestPlan) ([]*models.AutoIngestPlan, int) {
+	plans = compactAutoIngestPlans(plans)
+
 	deniedOrMissingCount := len(requestIDs) - len(plans)
 	if ctx.GetBool(consts.CtxKeyIsAdmin) {
 		return plans, deniedOrMissingCount

@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"go.uber.org/zap"
 )
@@ -36,7 +37,7 @@ func (s *service) QueryByUsername(ctx context.Context, username string) (*models
 	)
 
 	if err := s.getDB(ctx).Where("username = ?", username).First(user).Error; err != nil {
-		ctx.Error("用户查询失败", zap.String("username", username), zap.Error(err))
+		ctx.Error("用户查询失败", zap.String("username", utils.MaskSecret(username)), zap.Error(err))
 
 		return nil, err
 	}

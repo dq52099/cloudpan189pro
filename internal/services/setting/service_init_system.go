@@ -22,10 +22,13 @@ func (s *service) InitSystem(ctx context.Context, req *InitSystemRequest) error 
 	}
 
 	title := strings.TrimSpace(req.Title)
-	baseURL := strings.TrimSpace(req.BaseURL)
-
-	if title == "" || baseURL == "" {
+	if title == "" {
 		return errInvalidInitSystemRequest
+	}
+
+	baseURL, normalizeErr := normalizeSettingBaseURL(req.BaseURL)
+	if normalizeErr != nil {
+		return normalizeErr
 	}
 
 	setting, err := s.Query(ctx)

@@ -33,6 +33,10 @@ func (h *handler) ModifyName() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureUserGroupService(ctx, codeModifyNameFailed) {
+			return
+		}
+
 		if err := h.userGroupService.ModifyName(ctx.GetContext(), req); err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				ctx.Fail(codeUserGroupNotFound.WithError(err))

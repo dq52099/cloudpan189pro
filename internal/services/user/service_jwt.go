@@ -30,7 +30,7 @@ func (s *service) ParseAccessToken(tokenString string) (int64, string, int, erro
 			return nil, errors.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 
-		return []byte(shared.SaltKey), nil
+		return []byte(shared.GetSaltKey()), nil
 	})
 	if err != nil {
 		return 0, "", 0, err
@@ -41,7 +41,7 @@ func (s *service) ParseAccessToken(tokenString string) (int64, string, int, erro
 			return 0, "", 0, errors.New("invalid access token subject")
 		}
 
-		return claims.UserId, claims.Issuer, claims.UserVersion, nil
+		return claims.UserId, claims.Username, claims.UserVersion, nil
 	}
 
 	return 0, "", 0, errors.New("invalid access token")
@@ -64,7 +64,7 @@ func (s *service) GenerateAccessToken(userId int64, username string, userVersion
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 
-	return token.SignedString([]byte(shared.SaltKey))
+	return token.SignedString([]byte(shared.GetSaltKey()))
 }
 
 // GenerateRefreshToken 生成刷新Token
@@ -85,7 +85,7 @@ func (s *service) GenerateRefreshToken(userId int64, username string, userVersio
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 
-	return token.SignedString([]byte(shared.SaltKey))
+	return token.SignedString([]byte(shared.GetSaltKey()))
 }
 
 // ParseRefreshToken 解析刷新Token
@@ -95,7 +95,7 @@ func (s *service) ParseRefreshToken(tokenString string) (int64, string, int, err
 			return nil, errors.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 
-		return []byte(shared.SaltKey), nil
+		return []byte(shared.GetSaltKey()), nil
 	})
 	if err != nil {
 		return 0, "", 0, err
@@ -106,7 +106,7 @@ func (s *service) ParseRefreshToken(tokenString string) (int64, string, int, err
 			return 0, "", 0, errors.New("invalid refresh token subject")
 		}
 
-		return claims.UserId, claims.Issuer, claims.UserVersion, nil
+		return claims.UserId, claims.Username, claims.UserVersion, nil
 	}
 
 	return 0, "", 0, errors.New("invalid refresh token")

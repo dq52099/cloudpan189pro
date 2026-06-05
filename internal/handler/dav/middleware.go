@@ -21,7 +21,11 @@ func newAuthMiddleware(userService user.Service) *AuthMiddleware {
 
 func (m *AuthMiddleware) Auth() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
-		if !shared.EnableAuth {
+		if !shared.IsAuthEnabled() {
+			ctx.Set(consts.CtxKeyUserId, int64(0))
+			ctx.Set(consts.CtxKeyUsername, "anonymous")
+			ctx.Set(consts.CtxKeyIsAdmin, true)
+			ctx.Set(consts.CtxKeyUserGroupId, int64(0))
 			ctx.Next()
 
 			return

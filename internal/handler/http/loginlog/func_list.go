@@ -50,12 +50,18 @@ func (h *handler) List() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureLoginLogService(ctx, codeListFailed) {
+			return
+		}
+
 		logList, err := h.loginLogService.List(ctx.GetContext(), req)
 		if err != nil {
 			ctx.Fail(codeListFailed.WithError(err))
 
 			return
 		}
+
+		logList = compactLoginLogs(logList)
 
 		var total int64
 		if !req.NoPaginate {
@@ -76,4 +82,23 @@ func (h *handler) List() httpcontext.HandlerFunc {
 			CurrentPage: req.CurrentPage,
 		})
 	}
+}
+
+func compactLoginLogs(list []*models.LoginLog) []*models.LoginLog {
+	if len(list) == 0 {
+		return list
+	}
+
+	writeIndex := 0
+
+	for _, item := range list {
+		if item == nil {
+			continue
+		}
+
+		list[writeIndex] = item
+		writeIndex++
+	}
+
+	return list[:writeIndex]
 }

@@ -32,7 +32,7 @@ func WithFile(fid int64) NewOptionFunc {
 
 func WithDesc(desc string) NewOptionFunc {
 	return func(b *models.FileTaskLog) {
-		b.Desc = desc
+		b.Desc = sanitizeTaskLogText(desc)
 	}
 }
 
@@ -56,6 +56,10 @@ func (s *service) Create(ctx context.Context, typ, title string, opts ...NewOpti
 	for _, opt := range opts {
 		opt(log)
 	}
+
+	log.Desc = sanitizeTaskLogText(log.Desc)
+	log.Result = sanitizeTaskLogText(log.Result)
+	log.ErrorMsg = sanitizeTaskLogText(log.ErrorMsg)
 
 	if err := s.getDB(ctx).Create(log).Error; err != nil {
 		ctx.Error("创建文件任务日志失败", zap.Error(err))

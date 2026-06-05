@@ -3,6 +3,7 @@ package filetasklog
 import (
 	stdctx "context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -10,6 +11,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/bootstrap"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/taskengine"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -46,6 +48,19 @@ func (t *fileTaskLogTestDB) GetHTTPEngine() *gin.Engine {
 }
 
 var _ bootstrap.ServiceContext = (*fileTaskLogTestDB)(nil)
+
+type fileTaskLogCounterStub struct {
+	name  string
+	count int
+}
+
+func (c fileTaskLogCounterStub) Name() string {
+	return c.name
+}
+
+func (c fileTaskLogCounterStub) Count() int {
+	return c.count
+}
 
 func setupFileTaskLogTestDB(t *testing.T) *fileTaskLogTestDB {
 	t.Helper()
@@ -125,6 +140,86 @@ func TestFlushCountReturnsNotFoundWhenTaskLogMissing(t *testing.T) {
 	}
 }
 
+func TestFlushCountRejectsNegativeCounters(t *testing.T) {
+	tests := []struct {
+		name    string
+		counter Counter
+	}{
+		{name: "completed", counter: WithCompletedCounter(-1)},
+		{name: "failed", counter: WithFailedCounter(-1)},
+		{name: "total", counter: WithTotalCounter(-1)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tDB := setupFileTaskLogTestDB(t)
+			svc := NewService(tDB)
+			ctx := context.NewContext(stdctx.Background())
+
+			tracker, err := svc.Create(ctx, "scan", "scan files")
+			if err != nil {
+				t.Fatalf("create task log: %v", err)
+			}
+
+			if err := svc.FlushCount(ctx, tracker, WithCompletedCounter(1), WithFailedCounter(1), WithTotalCounter(2)); err != nil {
+				t.Fatalf("seed counters: %v", err)
+			}
+
+			err = svc.FlushCount(ctx, tracker, tt.counter)
+			if !errors.Is(err, errInvalidFileTaskLogCounter) {
+				t.Fatalf("expected invalid counter error, got %v", err)
+			}
+
+			var log models.FileTaskLog
+			if err := tDB.db.First(&log, tracker.GetID()).Error; err != nil {
+				t.Fatalf("query task log: %v", err)
+			}
+
+			if log.Completed != 1 || log.Failed != 1 || log.Total != 2 {
+				t.Fatalf("expected counters unchanged, got completed=%d failed=%d total=%d", log.Completed, log.Failed, log.Total)
+			}
+		})
+	}
+}
+
+func TestFlushCountRejectsUnknownCounters(t *testing.T) {
+	tests := []struct {
+		name    string
+		counter Counter
+	}{
+		{name: "custom skipped", counter: fileTaskLogCounterStub{name: "skipped", count: 1}},
+		{name: "processed constructor", counter: WithProcessedCounter(1)},
+		{name: "nil counter", counter: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tDB := setupFileTaskLogTestDB(t)
+			svc := NewService(tDB)
+			ctx := context.NewContext(stdctx.Background())
+
+			tracker, err := svc.Create(ctx, "scan", "scan files")
+			if err != nil {
+				t.Fatalf("create task log: %v", err)
+			}
+
+			err = svc.FlushCount(ctx, tracker, tt.counter)
+			if !errors.Is(err, errInvalidFileTaskLogCounter) {
+				t.Fatalf("expected invalid counter error, got %v", err)
+			}
+
+			var log models.FileTaskLog
+			if err := tDB.db.First(&log, tracker.GetID()).Error; err != nil {
+				t.Fatalf("query task log: %v", err)
+			}
+
+			if log.Completed != 0 || log.Failed != 0 || log.Total != 0 {
+				t.Fatalf("expected counters unchanged, got completed=%d failed=%d total=%d", log.Completed, log.Failed, log.Total)
+			}
+		})
+	}
+}
+
 func TestWithErrorReturnsNotFoundWhenTaskLogMissing(t *testing.T) {
 	tDB := setupFileTaskLogTestDB(t)
 	svc := NewService(tDB)
@@ -188,6 +283,120 @@ func TestTaskLogUpdatesExistingRows(t *testing.T) {
 
 	if log.ErrorMsg != "" {
 		t.Fatalf("expected error message cleared, got %q", log.ErrorMsg)
+	}
+}
+
+func TestWithErrorRedactsSensitiveTextBeforePersisting(t *testing.T) {
+	tDB := setupFileTaskLogTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	tracker, err := svc.Create(ctx, "scan", "scan files")
+	if err != nil {
+		t.Fatalf("create task log: %v", err)
+	}
+
+	rawErr := errors.New(`GET "https://proxy-user:proxy-pass@example.test/file?access_token=query-secret&filename=private-name.mkv#token=fragment-secret": accessCode=abcd Authorization: Bearer secret-token`)
+	if err := svc.WithError(ctx, tracker, rawErr); err != nil {
+		t.Fatalf("with error: %v", err)
+	}
+
+	var log models.FileTaskLog
+	if err := tDB.db.First(&log, tracker.GetID()).Error; err != nil {
+		t.Fatalf("query task log: %v", err)
+	}
+
+	assertSensitiveTaskLogTextRedacted(t, log.ErrorMsg, "proxy-user", "proxy-pass", "query-secret", "private-name.mkv", "fragment-secret", "abcd", "secret-token")
+}
+
+func TestCreateRedactsSensitiveDescBeforePersisting(t *testing.T) {
+	tDB := setupFileTaskLogTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	rawDesc := `GET "https://proxy-user:proxy-pass@example.test/file?access_token=query-secret&filename=private-name.mkv#token=fragment-secret": accessCode=abcd Authorization: Bearer secret-token`
+
+	tracker, err := svc.Create(ctx, "scan", "scan files", WithDesc(rawDesc))
+	if err != nil {
+		t.Fatalf("create task log: %v", err)
+	}
+
+	var log models.FileTaskLog
+	if err := tDB.db.First(&log, tracker.GetID()).Error; err != nil {
+		t.Fatalf("query task log: %v", err)
+	}
+
+	assertSensitiveTaskLogTextRedacted(t, log.Desc, "proxy-user", "proxy-pass", "query-secret", "private-name.mkv", "fragment-secret", "abcd", "secret-token")
+}
+
+func TestStatusFieldsRedactSensitiveTextBeforePersisting(t *testing.T) {
+	tDB := setupFileTaskLogTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	tracker, err := svc.Create(ctx, "scan", "scan files")
+	if err != nil {
+		t.Fatalf("create task log: %v", err)
+	}
+
+	rawText := `GET "https://proxy-user:proxy-pass@example.test/file?access_token=query-secret&filename=private-name.mkv#token=fragment-secret": accessCode=abcd Authorization: Bearer secret-token`
+
+	if err := svc.Running(ctx, tracker); err != nil {
+		t.Fatalf("running task log: %v", err)
+	}
+
+	if err := svc.Failed(ctx, tracker, utils.WithField("result", rawText), utils.WithField("desc", rawText)); err != nil {
+		t.Fatalf("fail task log: %v", err)
+	}
+
+	var log models.FileTaskLog
+	if err := tDB.db.First(&log, tracker.GetID()).Error; err != nil {
+		t.Fatalf("query task log: %v", err)
+	}
+
+	for _, text := range []string{log.Result, log.Desc} {
+		assertSensitiveTaskLogTextRedacted(t, text, "proxy-user", "proxy-pass", "query-secret", "private-name.mkv", "fragment-secret", "abcd", "secret-token")
+	}
+}
+
+func TestFailedWithReasonRedactsSensitiveTextBeforePersisting(t *testing.T) {
+	tDB := setupFileTaskLogTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	tracker, err := svc.Create(ctx, "scan", "scan files")
+	if err != nil {
+		t.Fatalf("create task log: %v", err)
+	}
+
+	if err := svc.Running(ctx, tracker); err != nil {
+		t.Fatalf("running task log: %v", err)
+	}
+
+	reason := `accessCode=abcd Authorization: Bearer secret-token`
+	if err := svc.FailedWithReason(ctx, tracker, reason); err != nil {
+		t.Fatalf("fail task log with reason: %v", err)
+	}
+
+	var log models.FileTaskLog
+	if err := tDB.db.First(&log, tracker.GetID()).Error; err != nil {
+		t.Fatalf("query task log: %v", err)
+	}
+
+	assertSensitiveTaskLogTextRedacted(t, log.Desc, "abcd", "secret-token")
+}
+
+func assertSensitiveTaskLogTextRedacted(t *testing.T, text string, leakedValues ...string) {
+	t.Helper()
+
+	for _, leaked := range leakedValues {
+		if strings.Contains(text, leaked) {
+			t.Fatalf("expected %q to be redacted from %q", leaked, text)
+		}
+	}
+
+	if !strings.Contains(text, utils.RedactedSecret) {
+		t.Fatalf("expected redacted marker in %q", text)
 	}
 }
 

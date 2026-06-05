@@ -53,9 +53,19 @@ export interface BatchDeleteRequest {
   ids: number[]
 }
 
+export const normalizeFilePath = (path: string): string => {
+  if (!path) {
+    return '/'
+  }
+
+  const pathWithLeadingSlash = path.startsWith('/') ? path : `/${path}`
+
+  return pathWithLeadingSlash.replace(/\/+/g, '/')
+}
+
 // 路径编码工具函数，保留路径分隔符，只编码每个路径段。
 const encodePath = (path: string): string => {
-  return path.split('/').map(encodeURIComponent).join('/')
+  return normalizeFilePath(path).split('/').map(encodeURIComponent).join('/')
 }
 
 // ===== 文件管理接口 =====
@@ -68,7 +78,9 @@ export const searchFiles = (params: FileSearchQuery): Promise<ApiResponse<FileSe
 // 打开文件/目录
 export const openFile = (fullPath: string): Promise<ApiResponse<FileOpenResponse>> => {
   const safePath = encodePath(fullPath)
-  return api.get(`/file/open/${safePath}`).then((res) => res.data)
+  const requestPath = safePath === '/' ? '/file/open/' : `/file/open${safePath}`
+
+  return api.get(requestPath).then((res) => res.data)
 }
 
 // 创建下载链接

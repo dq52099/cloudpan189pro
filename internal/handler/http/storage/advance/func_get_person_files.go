@@ -1,6 +1,9 @@
 package advance
 
 import (
+	"errors"
+	"time"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
 )
@@ -51,13 +54,23 @@ func (h *handler) GetPersonFiles() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureCloudBridgeService(ctx, codeStorageAdvanceQueryPathFailed) {
+			return
+		}
+
 		// 构造认证令牌
-		authToken := cloudbridge.NewAuthToken(token.AccessToken, token.ExpiresIn)
+		authToken := cloudbridge.NewAuthToken(token.AccessToken, token.AuthExpiresAtMillis(time.Now()))
 
 		// 获取文件列表
 		fileList, err := h.cloudBridgeService.PersonFileList(ctx.GetContext(), authToken, req.ParentId, req.PageNum, req.PageSize)
 		if err != nil {
 			ctx.Fail(codeStorageAdvanceQueryPathFailed.WithError(err))
+
+			return
+		}
+
+		if fileList == nil {
+			ctx.Fail(codeStorageAdvanceQueryPathFailed.WithError(errors.New("个人文件列表返回为空")))
 
 			return
 		}

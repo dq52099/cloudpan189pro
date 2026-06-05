@@ -87,3 +87,56 @@ func TestConfigInitRejectsMissingAutoClean(t *testing.T) {
 		t.Fatal("expected missing autoClean not to call media config init service")
 	}
 }
+
+func TestConfigInitRejectsInvalidBaseURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseURL string
+	}{
+		{name: "blank", baseURL: "   "},
+		{name: "relative", baseURL: "/media"},
+		{name: "unsupported scheme", baseURL: "ftp://example.test"},
+		{name: "missing host", baseURL: "https:///media"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := &mockConfigInitMediaConfigService{}
+			recorder := performConfigInitRequest(
+				t,
+				service,
+				`{"enable":true,"storagePath":"/media","autoClean":true,"baseURL":"`+tt.baseURL+`"}`,
+			)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+			}
+
+			if service.req != nil {
+				t.Fatal("expected invalid baseURL not to call media config init service")
+			}
+		})
+	}
+}
+
+func TestConfigInitTrimsBaseURL(t *testing.T) {
+	service := &mockConfigInitMediaConfigService{}
+
+	recorder := performConfigInitRequest(
+		t,
+		service,
+		`{"enable":true,"storagePath":"/media","autoClean":true,"baseURL":" https://example.test/media "}`,
+	)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected success, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if service.req == nil {
+		t.Fatal("expected media config init service to be called")
+	}
+
+	if service.req.BaseURL != "https://example.test/media" {
+		t.Fatalf("expected trimmed baseURL, got %q", service.req.BaseURL)
+	}
+}

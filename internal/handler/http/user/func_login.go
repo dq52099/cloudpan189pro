@@ -47,6 +47,10 @@ func (h *handler) Login() httpcontext.HandlerFunc {
 
 		ctx.Set(consts.CtxKeyUsername, req.Username)
 
+		if !h.ensureUserService(ctx, codeLoginFailed) {
+			return
+		}
+
 		user, err := h.userService.QueryByUsername(ctx.GetContext(), req.Username)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -56,6 +60,12 @@ func (h *handler) Login() httpcontext.HandlerFunc {
 			}
 
 			ctx.Fail(codeLoginFailed.WithError(err))
+
+			return
+		}
+
+		if user == nil {
+			ctx.Fail(codeUserNotFound.WithError(gorm.ErrRecordNotFound))
 
 			return
 		}

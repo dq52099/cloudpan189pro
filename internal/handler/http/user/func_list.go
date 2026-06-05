@@ -24,6 +24,25 @@ type (
 	}
 )
 
+func compactUsers(list []*models.User) []*models.User {
+	if len(list) == 0 {
+		return list
+	}
+
+	writeIndex := 0
+
+	for _, item := range list {
+		if item == nil {
+			continue
+		}
+
+		list[writeIndex] = item
+		writeIndex++
+	}
+
+	return list[:writeIndex]
+}
+
 // List 获取用户列表
 // @Summary 获取用户列表
 // @Description 分页获取用户列表，支持按用户名模糊搜索，需要管理员权限
@@ -50,12 +69,18 @@ func (h *handler) List() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureUserService(ctx, codeListUserFailed) {
+			return
+		}
+
 		userList, err := h.userService.List(ctx.GetContext(), req)
 		if err != nil {
 			ctx.Fail(codeListUserFailed.WithError(err))
 
 			return
 		}
+
+		userList = compactUsers(userList)
 
 		var total int64
 		if !req.NoPaginate {
@@ -80,16 +105,29 @@ func (h *handler) List() httpcontext.HandlerFunc {
 
 		groupIds = lo.Uniq(groupIds)
 
-		groupList, err := h.userGroupService.BatchQuery(ctx.GetContext(), groupIds)
-		if err != nil {
-			ctx.Fail(codeListUserFailed.WithError(err))
+		groupList := make([]*models.UserGroup, 0)
 
-			return
+		if len(groupIds) > 0 {
+			if !h.ensureUserGroupService(ctx, codeListUserFailed) {
+				return
+			}
+
+			groupList, err = h.userGroupService.BatchQuery(ctx.GetContext(), groupIds)
+			if err != nil {
+				ctx.Fail(codeListUserFailed.WithError(err))
+
+				return
+			}
 		}
 
-		groupMap := lo.SliceToMap(groupList, func(item *models.UserGroup) (int64, *models.UserGroup) {
-			return item.ID, item
-		})
+		groupMap := make(map[int64]*models.UserGroup, len(groupList))
+		for _, item := range groupList {
+			if item == nil {
+				continue
+			}
+
+			groupMap[item.ID] = item
+		}
 
 		var respUserList = make([]*userInfo, 0)
 

@@ -8,9 +8,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"go.uber.org/zap"
 )
 
@@ -18,6 +21,8 @@ const (
 	defaultTMDBBaseURL  = "https://api.themoviedb.org/3"
 	maxTMDBResponseSize = 5 << 20
 )
+
+var tmdbLogURLPattern = regexp.MustCompile(`(?i)(?:[a-z][a-z0-9+.-]*://|/)[^\s"'<>]+`)
 
 type Service interface {
 	GetPopularMovies(page int) ([]Movie, error)
@@ -94,7 +99,22 @@ type service struct {
 	baseURL string
 }
 
+func sanitizeTMDBError(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	message := err.Error()
+	message = tmdbLogURLPattern.ReplaceAllStringFunc(message, utils.RedactURLForLog)
+
+	return utils.RedactSensitiveText(message)
+}
+
 func NewService(logger *zap.Logger, apiKey, baseURL, proxyURL, proxyType string) Service {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
 	baseURL = normalizeTMDBBaseURL(baseURL)
 
 	s := &service{
@@ -143,15 +163,27 @@ func (s *service) setupProxy() {
 
 	proxyURL, err := url.Parse(s.config.ProxyURL)
 	if err != nil {
-		s.logger.Warn("Failed to parse proxy URL", zap.String("proxy", s.config.ProxyURL), zap.Error(err))
+		s.logger.Warn("Failed to parse proxy URL", zap.String("proxy", utils.RedactURLForLog(s.config.ProxyURL)), zap.String("error", sanitizeTMDBError(err)))
 
 		return
 	}
 
-	s.client.Transport = &http.Transport{
-		Proxy: http.ProxyURL(proxyURL),
+	transport := proxyHTTPTransport(s.client.Transport)
+	transport.Proxy = http.ProxyURL(proxyURL)
+	s.client.Transport = transport
+	s.logger.Info("TMDB proxy configured", zap.String("proxy", utils.RedactURLForLog(s.config.ProxyURL)))
+}
+
+func proxyHTTPTransport(base http.RoundTripper) *http.Transport {
+	if transport, ok := base.(*http.Transport); ok && transport != nil {
+		return transport.Clone()
 	}
-	s.logger.Info("TMDB proxy configured", zap.String("proxy", s.config.ProxyURL))
+
+	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
+		return transport.Clone()
+	}
+
+	return &http.Transport{}
 }
 
 func (s *service) GetConfig() *Config {
@@ -160,15 +192,7 @@ func (s *service) GetConfig() *Config {
 
 func (s *service) SetAPIKey(apiKey string) {
 	s.config.APIKey = apiKey
-	s.logger.Info("TMDB API key updated", zap.String("apiKey", apiKey[:min(10, len(apiKey))]+"..."))
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-
-	return b
+	s.logger.Info("TMDB API key updated", zap.Bool("has_api_key", strings.TrimSpace(apiKey) != ""))
 }
 
 func decodeLimitedTMDBResponse(body io.Reader, target interface{}) error {
@@ -184,22 +208,38 @@ func decodeLimitedTMDBResponse(body io.Reader, target interface{}) error {
 	return json.Unmarshal(data, target)
 }
 
+func buildTMDBAPIURL(baseURL, path string, query url.Values) string {
+	return strings.TrimRight(baseURL, "/") + path + "?" + query.Encode()
+}
+
 func (s *service) GetPopularMovies(page int) ([]Movie, error) {
+	return s.GetPopularMoviesWithContext(context.Background(), page)
+}
+
+func (s *service) GetPopularMoviesWithContext(ctx context.Context, page int) ([]Movie, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	if s.config.APIKey == "" {
 		return nil, fmt.Errorf("tmdb API key is not set")
 	}
 
-	apiURL := fmt.Sprintf("%s/movie/popular?api_key=%s&language=%s&region=%s&page=%d",
-		s.baseURL, s.config.APIKey, s.config.Language, s.config.Region, page)
+	apiURL := buildTMDBAPIURL(s.baseURL, "/movie/popular", url.Values{
+		"api_key":  {s.config.APIKey},
+		"language": {s.config.Language},
+		"page":     {strconv.Itoa(page)},
+		"region":   {s.config.Region},
+	})
 
-	req, err := http.NewRequestWithContext(context.Background(), "GET", apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("创建 TMDB 请求失败: %s", sanitizeTMDBError(err))
 	}
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("TMDB 请求失败: %s", sanitizeTMDBError(err))
 	}
 	defer func() {
 		_ = resp.Body.Close()
@@ -218,21 +258,33 @@ func (s *service) GetPopularMovies(page int) ([]Movie, error) {
 }
 
 func (s *service) GetPopularTVs(page int) ([]TV, error) {
+	return s.GetPopularTVsWithContext(context.Background(), page)
+}
+
+func (s *service) GetPopularTVsWithContext(ctx context.Context, page int) ([]TV, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	if s.config.APIKey == "" {
 		return nil, fmt.Errorf("tmdb API key is not set")
 	}
 
-	apiURL := fmt.Sprintf("%s/tv/popular?api_key=%s&language=%s&region=%s&page=%d",
-		s.baseURL, s.config.APIKey, s.config.Language, s.config.Region, page)
+	apiURL := buildTMDBAPIURL(s.baseURL, "/tv/popular", url.Values{
+		"api_key":  {s.config.APIKey},
+		"language": {s.config.Language},
+		"page":     {strconv.Itoa(page)},
+		"region":   {s.config.Region},
+	})
 
-	req, err := http.NewRequestWithContext(context.Background(), "GET", apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("创建 TMDB 请求失败: %s", sanitizeTMDBError(err))
 	}
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("TMDB 请求失败: %s", sanitizeTMDBError(err))
 	}
 	defer func() {
 		_ = resp.Body.Close()
@@ -251,21 +303,31 @@ func (s *service) GetPopularTVs(page int) ([]TV, error) {
 }
 
 func (s *service) GetGenreList() ([]Genre, error) {
+	return s.GetGenreListWithContext(context.Background())
+}
+
+func (s *service) GetGenreListWithContext(ctx context.Context) ([]Genre, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	if s.config.APIKey == "" {
 		return nil, fmt.Errorf("tmdb API key is not set")
 	}
 
-	apiURL := fmt.Sprintf("%s/genre/movie/list?api_key=%s&language=%s",
-		s.baseURL, s.config.APIKey, s.config.Language)
+	apiURL := buildTMDBAPIURL(s.baseURL, "/genre/movie/list", url.Values{
+		"api_key":  {s.config.APIKey},
+		"language": {s.config.Language},
+	})
 
-	req, err := http.NewRequestWithContext(context.Background(), "GET", apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("创建 TMDB 请求失败: %s", sanitizeTMDBError(err))
 	}
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("TMDB 请求失败: %s", sanitizeTMDBError(err))
 	}
 	defer func() {
 		_ = resp.Body.Close()
@@ -284,21 +346,35 @@ func (s *service) GetGenreList() ([]Genre, error) {
 }
 
 func (s *service) GetMoviesByGenre(genreID int, page int) ([]Movie, error) {
+	return s.GetMoviesByGenreWithContext(context.Background(), genreID, page)
+}
+
+func (s *service) GetMoviesByGenreWithContext(ctx context.Context, genreID int, page int) ([]Movie, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	if s.config.APIKey == "" {
 		return nil, fmt.Errorf("tmdb API key is not set")
 	}
 
-	apiURL := fmt.Sprintf("%s/discover/movie?api_key=%s&language=%s&region=%s&with_genres=%d&sort_by=release_date.desc&page=%d",
-		s.baseURL, s.config.APIKey, s.config.Language, s.config.Region, genreID, page)
+	apiURL := buildTMDBAPIURL(s.baseURL, "/discover/movie", url.Values{
+		"api_key":     {s.config.APIKey},
+		"language":    {s.config.Language},
+		"page":        {strconv.Itoa(page)},
+		"region":      {s.config.Region},
+		"sort_by":     {"release_date.desc"},
+		"with_genres": {strconv.Itoa(genreID)},
+	})
 
-	req, err := http.NewRequestWithContext(context.Background(), "GET", apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("创建 TMDB 请求失败: %s", sanitizeTMDBError(err))
 	}
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("TMDB 请求失败: %s", sanitizeTMDBError(err))
 	}
 	defer func() {
 		_ = resp.Body.Close()
@@ -317,21 +393,35 @@ func (s *service) GetMoviesByGenre(genreID int, page int) ([]Movie, error) {
 }
 
 func (s *service) GetTVsByGenre(genreID int, page int) ([]TV, error) {
+	return s.GetTVsByGenreWithContext(context.Background(), genreID, page)
+}
+
+func (s *service) GetTVsByGenreWithContext(ctx context.Context, genreID int, page int) ([]TV, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	if s.config.APIKey == "" {
 		return nil, fmt.Errorf("tmdb API key is not set")
 	}
 
-	apiURL := fmt.Sprintf("%s/discover/tv?api_key=%s&language=%s&region=%s&with_genres=%d&sort_by=first_air_date.desc&page=%d",
-		s.baseURL, s.config.APIKey, s.config.Language, s.config.Region, genreID, page)
+	apiURL := buildTMDBAPIURL(s.baseURL, "/discover/tv", url.Values{
+		"api_key":     {s.config.APIKey},
+		"language":    {s.config.Language},
+		"page":        {strconv.Itoa(page)},
+		"region":      {s.config.Region},
+		"sort_by":     {"first_air_date.desc"},
+		"with_genres": {strconv.Itoa(genreID)},
+	})
 
-	req, err := http.NewRequestWithContext(context.Background(), "GET", apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("创建 TMDB 请求失败: %s", sanitizeTMDBError(err))
 	}
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("TMDB 请求失败: %s", sanitizeTMDBError(err))
 	}
 	defer func() {
 		_ = resp.Body.Close()

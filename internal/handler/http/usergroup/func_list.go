@@ -1,7 +1,6 @@
 package usergroup
 
 import (
-	"github.com/samber/lo"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	userSvi "github.com/xxcheng123/cloudpan189-share/internal/services/user"
@@ -24,6 +23,25 @@ type (
 		Data        []*userGroupInfo `json:"data"`                    // 用户组列表数据
 	}
 )
+
+func compactUserGroups(list []*models.UserGroup) []*models.UserGroup {
+	if len(list) == 0 {
+		return list
+	}
+
+	writeIndex := 0
+
+	for _, item := range list {
+		if item == nil {
+			continue
+		}
+
+		list[writeIndex] = item
+		writeIndex++
+	}
+
+	return list[:writeIndex]
+}
 
 // List 获取用户组列表
 // @Summary 获取用户组列表
@@ -51,12 +69,22 @@ func (h *handler) List() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureUserGroupService(ctx, codeListUserGroupFailed) {
+			return
+		}
+
+		if !h.ensureUserService(ctx, codeListUserGroupFailed) {
+			return
+		}
+
 		list, err := h.userGroupService.List(ctx.GetContext(), req)
 		if err != nil {
 			ctx.Fail(codeListUserGroupFailed.WithError(err))
 
 			return
 		}
+
+		list = compactUserGroups(list)
 
 		var total int64
 		if !req.NoPaginate {
@@ -71,9 +99,10 @@ func (h *handler) List() httpcontext.HandlerFunc {
 		}
 
 		// 获取每个用户组的用户数量
-		groupIds := lo.Map(list, func(item *models.UserGroup, _ int) int64 {
-			return item.ID
-		})
+		groupIds := make([]int64, 0, len(list))
+		for _, item := range list {
+			groupIds = append(groupIds, item.ID)
+		}
 
 		// 查询每个用户组的用户数量
 		userCountMap := make(map[int64]int64)

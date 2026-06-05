@@ -15,13 +15,10 @@ func (s *service) PersonFileList(ctx context.Context, token client.AuthToken, pa
 			req.PageNum = pageNum
 		})
 	if err != nil {
-		ctx.Error("获取个人文件列表失败",
-			zap.Error(err),
+		return nil, logCloudbridgeError(ctx, "获取个人文件列表失败", err,
 			zap.String("parent_id", parentId),
 			zap.Int("page_num", pageNum),
 			zap.Int("page_size", pageSize))
-
-		return nil, err
 	}
 
 	list := make([]*FileNode, 0)
@@ -63,11 +60,8 @@ func (s *service) PersonFileCount(ctx context.Context, token client.AuthToken, p
 			req.PageNum = 1
 		})
 	if err != nil {
-		ctx.Error("获取个人文件总数失败",
-			zap.Error(err),
+		return 0, logCloudbridgeError(ctx, "获取个人文件总数失败", err,
 			zap.String("parent_id", parentId))
-
-		return 0, err
 	}
 
 	return resp.FileListAO.Count, nil

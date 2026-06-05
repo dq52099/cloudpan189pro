@@ -21,7 +21,6 @@ declare namespace Models {
     id: number
     name: string
     username: string
-    accessToken: string
     expiresIn: number
     loginType: number // 1: 扫码登录 2: 密码登录
     status: number // 状态 1:正常 2: 登录失败
@@ -92,7 +91,7 @@ declare namespace Models {
     enableAutoRefresh: boolean
     refreshInterval: number
     enableDeepRefresh: boolean
-    autoRefreshBeginAt: string
+    autoRefreshBeginAt: string | null
     autoRefreshDays: number
     lastState: string
     createdAt: string
@@ -137,13 +136,14 @@ declare namespace Models {
     runningTasks: number
     completedTasks: number
     failedTasks: number
+    cancelledTasks: number
   }
 
   // 处理器结果（对应后端 ProcessorResult）
   interface ProcessorResult {
     processorId: string
     status: string
-    error: string
+    error?: string
     startTime: string
     endTime: string
     duration: number // time.Duration
@@ -153,12 +153,12 @@ declare namespace Models {
   interface TaskInfo {
     id: string // 任务唯一ID
     topic: string // 消息主题
-    payload: number[] // 载荷数据
+    payload: string | number[] // 载荷数据；当前为 base64 字符串，兼容旧版 byte array
     status: string // 状态
     workerId: string // 处理的Worker ID
     receiveAt: string // 接收时间
-    startAt: string // 开始时间
-    endAt: string // 结束时间
+    startAt: string | null // 开始时间
+    endAt: string | null // 结束时间
     results: ProcessorResult[] // 处理器结果
   }
 
@@ -229,6 +229,7 @@ declare namespace Models {
     includedSuffixes: string[] // 包括的后缀格式 不包括的将过滤 如果为空则表示不过滤
     autoRebuildEnable?: boolean // 定时重建strm开关
     autoRebuildCron?: string // 定时重建cron表达式
+    lastRebuildTime?: string // 上次重建时间
     createdAt: string
     updatedAt: string
   }

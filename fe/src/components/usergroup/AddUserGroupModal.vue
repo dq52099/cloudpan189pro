@@ -163,7 +163,7 @@ const handleSubmit = async () => {
 
     if (response.code === 200) {
       message.success('添加用户组成功')
-      showModal.value = false
+      emit('update:show', false)
       emit('success')
     } else {
       message.error(response.msg || '添加用户组失败')
@@ -177,8 +177,10 @@ const handleSubmit = async () => {
       return
     }
 
-    console.error('添加用户组失败:', error)
-    message.error(getErrorMessage(error, '添加用户组失败'))
+    const errorMessage = getErrorMessage(error, '添加用户组失败')
+
+    console.error('添加用户组失败:', errorMessage)
+    message.error(errorMessage)
   } finally {
     if (isCurrentOperation(currentOperation)) {
       loading.value = false

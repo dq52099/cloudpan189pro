@@ -31,6 +31,7 @@ export interface CategoriesResponse {
 }
 
 export interface SubscriptionConfig {
+  enabled: boolean
   enableTMDB: boolean
   enableDouban: boolean
   panSearchURL: string
@@ -46,6 +47,7 @@ export interface SubscriptionConfig {
 export interface SearchResult {
   shareUrl: string
   shareCode: string
+  shareAccessCode?: string
   name: string
   size?: string
   uploadTime: string
@@ -109,6 +111,7 @@ export const mountSubscription = (data: {
   title: string
   shareUrl: string
   shareCode?: string
+  shareAccessCode?: string
   cover?: string
   mountPath?: string
 }): Promise<ApiResponse<MountSubscriptionResponse>> => {

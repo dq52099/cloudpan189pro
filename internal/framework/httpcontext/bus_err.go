@@ -29,7 +29,7 @@ type businessError struct {
 
 func (b *businessError) GetHTTPCode() int {
 	if b.httpCode == 0 {
-		b.httpCode = http.StatusBadRequest
+		return http.StatusBadRequest
 	}
 
 	return b.httpCode
@@ -52,27 +52,41 @@ func (b *businessError) Error() string {
 }
 
 func (b *businessError) WithError(err error) BusinessError {
-	b.stackError = errors.WithStack(err)
+	br := b.clone()
+	br.stackError = errors.WithStack(err)
 
-	return b
+	return br
 }
 
 func (b *businessError) WithHTTPCode(code int) BusinessError {
-	b.httpCode = code
+	br := b.clone()
+	br.httpCode = code
 
-	return b
+	return br
 }
 
 func (b *businessError) WithMessage(message string) BusinessError {
-	b.message = message
+	br := b.clone()
+	br.message = message
 
-	return b
+	return br
 }
 
 func (b *businessError) WithBusinessCode(businessCode int) BusinessError {
-	b.businessCode = businessCode
+	br := b.clone()
+	br.businessCode = businessCode
 
-	return b
+	return br
+}
+
+func (b *businessError) clone() *businessError {
+	if b == nil {
+		return &businessError{}
+	}
+
+	br := *b
+
+	return &br
 }
 
 type BusinessGenerator interface {

@@ -55,7 +55,11 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 		}
 
 		if req.TokenID != 0 {
-			_, err := h.cloudTokenService.QueryAccessible(ctx.GetContext(), req.TokenID, userID, isAdmin)
+			if !h.ensureCloudTokenService(ctx, busCodeStorageQueryCloudTokenError) {
+				return
+			}
+
+			token, err := h.cloudTokenService.QueryAccessible(ctx.GetContext(), req.TokenID, userID, isAdmin)
 			if err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					ctx.Fail(busCodeStorageCloudTokenNotExist.WithError(err))
@@ -65,10 +69,20 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 
 				return
 			}
+
+			if token == nil {
+				ctx.Fail(busCodeStorageCloudTokenNotExist.WithError(gorm.ErrRecordNotFound))
+
+				return
+			}
 		}
 
 		mountPoints := make(map[int64]*models.MountPoint, len(requestIDs))
 		fileIDs := make([]int64, 0, len(requestIDs))
+
+		if !h.ensureMountPointService(ctx, busCodeStorageQueryMountPointError) {
+			return
+		}
 
 		for _, id := range requestIDs {
 			mp, err := h.mountPointService.QueryByID(ctx.GetContext(), id)
@@ -82,6 +96,12 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 				return
 			}
 
+			if mp == nil {
+				ctx.Fail(busCodeStorageMountPointNotFound.WithError(gorm.ErrRecordNotFound))
+
+				return
+			}
+
 			mountPoints[id] = mp
 			fileIDs = append(fileIDs, mp.FileId)
 		}
@@ -91,6 +111,10 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 			var groupFileIds []int64
 
 			if userGroupID > 0 {
+				if !h.ensureGroup2FileService(ctx, busCodeStorageQueryMountPointError) {
+					return
+				}
+
 				groupFileIDs, err := h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupID)
 				if err != nil {
 					ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
@@ -108,6 +132,12 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 
 			for _, id := range requestIDs {
 				mp := mountPoints[id]
+				if mp == nil {
+					ctx.Fail(busCodeStorageMountPointNotFound.WithError(gorm.ErrRecordNotFound))
+
+					return
+				}
+
 				if mp.CreatorUserID == userID {
 					continue
 				}
@@ -116,7 +146,7 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 					continue
 				}
 
-				if h.userMountPointTokenService != nil {
+				if h.hasUserMountPointTokenService() {
 					tokenID, err := h.userMountPointTokenService.GetTokenID(ctx.GetContext(), userID, mp.ID)
 					if err != nil {
 						ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
@@ -148,6 +178,10 @@ func (h *handler) BatchModifyToken() httpcontext.HandlerFunc {
 		if err != nil {
 			ctx.Fail(busCodeStorageSendTaskFail.WithError(err))
 
+			return
+		}
+
+		if !h.ensureTaskEngine(ctx, busCodeStorageSendTaskFail) {
 			return
 		}
 

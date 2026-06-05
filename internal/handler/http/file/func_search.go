@@ -12,7 +12,7 @@ import (
 
 type searchRequest struct {
 	Keyword     string `form:"keyword" binding:"omitempty" example:"test.txt"`                    // 搜索关键词
-	PID         int64  `form:"pid" example:"0"`                                                   // 父级ID，0表示根目录
+	PID         int64  `form:"pid" binding:"omitempty,min=0" example:"0"`                         // 父级ID，0表示根目录
 	Global      bool   `form:"global" example:"false"`                                            // 全局搜索（如果为true，忽略pid）
 	PageSize    int    `form:"pageSize,default=10" binding:"required,min=1,max=100" example:"10"` // 每页大小
 	CurrentPage int    `form:"currentPage,default=1" binding:"required,min=1" example:"1"`        // 当前页码
@@ -61,19 +61,16 @@ func (h *handler) Search() httpcontext.HandlerFunc {
 
 		userID := ctx.GetInt64(consts.CtxKeyUserId)
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
-		userGroupId := ctx.GetInt64(consts.CtxKeyUserGroupId)
 
-		var groupFileIds []int64
+		groupFileIds, err := h.getUserGroupFileIDs(ctx)
+		if err != nil {
+			ctx.Fail(busCodeQueryTopIdError.WithError(err))
 
-		if userGroupId > 0 {
-			groupFileIDs, err := h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
-			if err != nil {
-				ctx.Fail(busCodeQueryTopIdError.WithError(err))
+			return
+		}
 
-				return
-			}
-
-			groupFileIds = groupFileIDs
+		if !h.ensureMountPointService(ctx, busCodeQueryTopIdError) {
+			return
 		}
 
 		allowTopIds, err := h.mountPointService.GetAccessibleMountPointIDs(ctx.GetContext(), userID, isAdmin, groupFileIds)
@@ -94,11 +91,19 @@ func (h *handler) Search() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureVirtualFileService(ctx, busCodeList) {
+			return
+		}
+
 		listReq := &virtualfileSvi.ListRequest{
 			Name:        req.Keyword,
 			PageSize:    req.PageSize,
 			CurrentPage: req.CurrentPage,
 			TopIdList:   allowTopIds,
+		}
+
+		if shouldApplyFileSuffixLimit(isAdmin) {
+			listReq.AllowedSuffixes = allowedUserFileSuffixes()
 		}
 
 		if !req.Global {
@@ -111,6 +116,8 @@ func (h *handler) Search() httpcontext.HandlerFunc {
 
 			return
 		}
+
+		list = compactVirtualFiles(list)
 
 		count, err := h.virtualFileService.Count(ctx.GetContext(), listReq)
 		if err != nil {

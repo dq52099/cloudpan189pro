@@ -5,6 +5,7 @@ import (
 
 	"github.com/samber/lo"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -51,14 +52,19 @@ func (s *service) QueryByID(ctx context.Context, id int64) (*models.MountPoint, 
 }
 
 func (s *service) QueryByPath(ctx context.Context, fullPath string) (*models.MountPoint, error) {
+	normalizedPath, err := utils.NormalizeStoragePath(fullPath)
+	if err != nil {
+		return nil, errInvalidMountPointFullPath
+	}
+
 	var mountPoint models.MountPoint
 
-	if err := s.getDB(ctx).Where("full_path = ?", fullPath).First(&mountPoint).Error; err != nil {
+	if err = s.getDB(ctx).Where("full_path = ?", normalizedPath).First(&mountPoint).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
 
-		ctx.Error("根据路径查询挂载点失败", zap.Error(err), zap.String("fullPath", fullPath))
+		ctx.Error("根据路径查询挂载点失败", zap.Error(err), zap.String("fullPath", normalizedPath))
 
 		return nil, err
 	}
@@ -89,7 +95,7 @@ func (s *service) GetAccessibleMountPointIDs(ctx context.Context, userID int64, 
 			query = query.Or("file_id IN ?", normalizedGroupFileIDs)
 		}
 
-		if s.userMountPointTokenService != nil {
+		if !isNilDependency(s.userMountPointTokenService) {
 			boundMountPointIDs, err := s.userMountPointTokenService.GetUserMountPointIDs(ctx, userID)
 			if err != nil {
 				return nil, err

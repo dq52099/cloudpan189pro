@@ -45,6 +45,10 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensurePlanService(ctx, codePlanListFailed) {
+			return
+		}
+
 		plans, err := h.planService.ListByIDs(ctx.GetContext(), requestIDs)
 		if err != nil {
 			ctx.Fail(codePlanListFailed.WithError(err))

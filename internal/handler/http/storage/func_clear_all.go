@@ -42,13 +42,18 @@ func (h *handler) ClearAll() httpcontext.HandlerFunc {
 		mediaStoragePath := ""
 
 		if req.DeleteFiles {
-			if shared.MediaConfig == nil || strings.TrimSpace(shared.MediaConfig.StoragePath) == "" {
+			mediaConfig := shared.GetMediaConfig()
+			if mediaConfig == nil || strings.TrimSpace(mediaConfig.StoragePath) == "" {
 				ctx.AbortWithInvalidParams(errors.New("媒体存储路径未配置，无法删除本地媒体文件"))
 
 				return
 			}
 
-			mediaStoragePath = shared.MediaConfig.StoragePath
+			mediaStoragePath = mediaConfig.StoragePath
+		}
+
+		if !h.ensureMountPointService(ctx, busCodeStorageMountPointDeleteFail) {
+			return
 		}
 
 		count, err := h.mountPointService.ClearAll(ctx.GetContext())
@@ -59,11 +64,19 @@ func (h *handler) ClearAll() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureVirtualFileService(ctx, busCodeStorageMountPointDeleteFail) {
+			return
+		}
+
 		if err := h.virtualFileService.ClearAll(ctx.GetContext()); err != nil {
 			// MountPoint 已删除，尽力继续，但在响应里暴露错误
 			ctx.GetContext().Error("清空虚拟文件失败（挂载点已清空）", zap.Error(err))
 			ctx.Fail(busCodeStorageMountPointDeleteFail.WithError(err))
 
+			return
+		}
+
+		if !h.ensureMediaFileService(ctx, busCodeStorageMountPointDeleteFail) {
 			return
 		}
 

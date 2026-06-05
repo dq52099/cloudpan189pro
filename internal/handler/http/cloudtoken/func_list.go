@@ -1,6 +1,8 @@
 package cloudtoken
 
 import (
+	"time"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
@@ -11,10 +13,10 @@ type (
 	listRequest = cloudtoken.ListRequest
 
 	listResponse struct {
-		Total       int64                `json:"total" example:"100"`     // 总记录数
-		CurrentPage int                  `json:"currentPage" example:"1"` // 当前页码
-		PageSize    int                  `json:"pageSize" example:"10"`   // 每页大小
-		Data        []*models.CloudToken `json:"data"`                    // 云盘令牌列表数据
+		Total       int64                 `json:"total" example:"100"`     // 总记录数
+		CurrentPage int                   `json:"currentPage" example:"1"` // 当前页码
+		PageSize    int                   `json:"pageSize" example:"10"`   // 每页大小
+		Data        []*cloudTokenResponse `json:"data"`                    // 云盘令牌列表数据
 	}
 )
 
@@ -48,12 +50,18 @@ func (h *handler) List() httpcontext.HandlerFunc {
 		req.UserID = ctx.GetInt64(consts.CtxKeyUserId)
 		req.IsAdmin = ctx.GetBool(consts.CtxKeyIsAdmin)
 
+		if !h.ensureCloudTokenService(ctx, codeListFailed) {
+			return
+		}
+
 		cloudTokenList, err := h.cloudTokenService.List(ctx.GetContext(), req)
 		if err != nil {
 			ctx.Fail(codeListFailed.WithError(err))
 
 			return
 		}
+
+		data := newCloudTokenResponses(cloudTokenList, time.Now())
 
 		var total int64
 		if !req.NoPaginate {
@@ -64,14 +72,60 @@ func (h *handler) List() httpcontext.HandlerFunc {
 				return
 			}
 		} else {
-			total = int64(len(cloudTokenList))
+			total = int64(len(data))
 		}
 
 		ctx.Success(&listResponse{
 			Total:       total,
-			Data:        cloudTokenList,
+			Data:        data,
 			PageSize:    req.PageSize,
 			CurrentPage: req.CurrentPage,
 		})
+	}
+}
+
+type cloudTokenResponse struct {
+	ID        int64                  `json:"id"`
+	Name      string                 `json:"name"`
+	ExpiresIn int64                  `json:"expiresIn"`
+	Status    int8                   `json:"status"`
+	LoginType int8                   `json:"loginType"`
+	Username  string                 `json:"username"`
+	Addition  map[string]interface{} `json:"addition"`
+	UserID    int64                  `json:"userId"`
+	CreatedAt time.Time              `json:"createdAt"`
+	UpdatedAt time.Time              `json:"updatedAt"`
+}
+
+func newCloudTokenResponses(tokens []*models.CloudToken, now time.Time) []*cloudTokenResponse {
+	responses := make([]*cloudTokenResponse, 0, len(tokens))
+	for _, token := range tokens {
+		response := newCloudTokenResponse(token, now)
+		if response == nil {
+			continue
+		}
+
+		responses = append(responses, response)
+	}
+
+	return responses
+}
+
+func newCloudTokenResponse(token *models.CloudToken, now time.Time) *cloudTokenResponse {
+	if token == nil {
+		return nil
+	}
+
+	return &cloudTokenResponse{
+		ID:        token.ID,
+		Name:      token.Name,
+		ExpiresIn: token.RemainingSeconds(now),
+		Status:    token.Status,
+		LoginType: token.LoginType,
+		Username:  token.Username,
+		Addition:  token.SanitizedAddition(),
+		UserID:    token.UserID,
+		CreatedAt: token.CreatedAt,
+		UpdatedAt: token.UpdatedAt,
 	}
 }

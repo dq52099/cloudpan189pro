@@ -3,12 +3,14 @@ package http
 import (
 	"strings"
 
-	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
-	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
+	"go.uber.org/zap"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
+	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/user"
-	"go.uber.org/zap"
+	"github.com/xxcheng123/cloudpan189-share/internal/shared"
+	"gorm.io/gorm"
 )
 
 type AuthMiddleware struct {
@@ -29,10 +31,33 @@ func newAuthMiddleware(userService user.Service) *AuthMiddleware {
 	return &AuthMiddleware{userService: userService}
 }
 
+func setAnonymousAdminContext(ctx *httpcontext.Context) {
+	ctx.Set(consts.CtxKeyUserId, int64(0))
+	ctx.Set(consts.CtxKeyUsername, "anonymous")
+	ctx.Set(consts.CtxKeyIsAdmin, true)
+	ctx.Set(consts.CtxKeyUserGroupId, int64(0))
+}
+
+func parseBearerToken(authHeader string) (string, bool) {
+	fields := strings.Fields(authHeader)
+	if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {
+		return "", false
+	}
+
+	return fields[1], true
+}
+
 func (m *AuthMiddleware) Auth(requireAdmins ...bool) httpcontext.HandlerFunc {
 	requireAdmin := utils.UseSimplify(false, requireAdmins...)
 
 	return func(ctx *httpcontext.Context) {
+		if !shared.IsAuthEnabled() {
+			setAnonymousAdminContext(ctx)
+			ctx.Next()
+
+			return
+		}
+
 		var (
 			logger = ctx.GetContext().Logger
 		)
@@ -44,14 +69,14 @@ func (m *AuthMiddleware) Auth(requireAdmins ...bool) httpcontext.HandlerFunc {
 			return
 		}
 
-		tokenParts := strings.SplitN(authHeader, " ", 2)
-		if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
+		token, ok := parseBearerToken(authHeader)
+		if !ok {
 			ctx.Unauthorized(errMessageTokenHeaderFormatError)
 
 			return
 		}
 
-		uid, username, version, err := m.userService.ParseAccessToken(tokenParts[1])
+		uid, username, version, err := m.userService.ParseAccessToken(token)
 		if err != nil {
 			ctx.Unauthorized(errMessageTokenParseErr).WithError(err)
 
@@ -61,6 +86,12 @@ func (m *AuthMiddleware) Auth(requireAdmins ...bool) httpcontext.HandlerFunc {
 		u, err := m.userService.Query(ctx.GetContext(), uid)
 		if err != nil {
 			ctx.Unauthorized(errMessageUserInfoQueryErr).WithError(err)
+
+			return
+		}
+
+		if u == nil {
+			ctx.Unauthorized(errMessageUserInfoQueryErr).WithError(gorm.ErrRecordNotFound)
 
 			return
 		}

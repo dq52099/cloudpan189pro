@@ -24,7 +24,9 @@ export function useMountPointBind() {
       const closeWithCancel = () => {
         if (settled) return
         if (contentRef.value?.state.submitLoading) return
-        settle([])
+
+        const confirmedItems = contentRef.value?.getConfirmedItems() ?? []
+        settle(confirmedItems)
         modalInstance.destroy()
       }
 
@@ -32,7 +34,7 @@ export function useMountPointBind() {
         title: '挂载点绑定',
         preset: 'dialog',
         style: {
-          width: '1000px',
+          width: 'min(1000px, calc(100vw - 32px))',
         },
         content: () =>
           h(MountPointBindModal, {

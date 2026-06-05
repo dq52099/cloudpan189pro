@@ -170,8 +170,10 @@ const fetchUserGroups = (currentOperation = operationVersion) => {
         return
       }
 
-      console.error('获取用户组列表失败:', error)
-      message.error(getErrorMessage(error, '获取用户组列表失败'))
+      const errorMessage = getErrorMessage(error, '获取用户组列表失败')
+
+      console.error('获取用户组列表失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isCurrentOperation(currentOperation)) {
@@ -243,7 +245,7 @@ const handleConfirm = async () => {
 
     if (response.code === 200) {
       message.success('用户组绑定成功')
-      visible.value = false
+      emit('update:show', false)
       emit('success')
     } else {
       message.error(response.msg || '用户组绑定失败')
@@ -257,8 +259,10 @@ const handleConfirm = async () => {
       return
     }
 
-    console.error('绑定用户组失败:', error)
-    message.error(getErrorMessage(error, '绑定用户组失败，请稍后重试'))
+    const errorMessage = getErrorMessage(error, '绑定用户组失败，请稍后重试')
+
+    console.error('绑定用户组失败:', errorMessage)
+    message.error(errorMessage)
   } finally {
     if (isCurrentOperation(currentOperation)) {
       loading.value = false

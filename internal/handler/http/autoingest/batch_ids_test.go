@@ -531,6 +531,43 @@ func TestBatchEnableDeduplicatesIDs(t *testing.T) {
 	}
 }
 
+func TestBatchEnableAdminSkipsNilPlans(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	planService := &mockBatchAutoIngestPlanService{
+		plans: map[int64]*models.AutoIngestPlan{
+			11: nil,
+			22: {ID: 22, UserID: 100},
+		},
+	}
+	router := newBatchTestRouter(planService, &mockBatchAutoIngestTaskEngine{}, true,
+		func(router *gin.Engine, wrapper *httpcontext.HandlerFuncWrapper, handler Handler) {
+			router.POST("/batch_enable", wrapper.Wrap(handler.BatchEnable()))
+		},
+	)
+
+	recorder := postBatchRequest(router, "/batch_enable", `{"ids":[11,22]}`)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if got, want := planService.enabledIDs, []int64{22}; !int64SlicesEqual(got, want) {
+		t.Fatalf("expected only non-nil plan enabled %v, got %v", want, got)
+	}
+
+	var response struct {
+		Data map[string]int `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Data["success"] != 1 || response.Data["failed"] != 1 {
+		t.Fatalf("unexpected response: %+v", response.Data)
+	}
+}
+
 func TestBatchEnableAllowsDuplicateIDsBeyondRawLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

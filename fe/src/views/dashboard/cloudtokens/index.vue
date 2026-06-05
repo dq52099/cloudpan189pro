@@ -7,14 +7,14 @@
           v-model:value="searchKeyword"
           placeholder="请输入令牌名称搜索"
           clearable
-          style="width: 200px; margin-right: 12px"
+          class="header-search-input"
           @keyup.enter="handleSearch"
         />
-        <n-button type="primary" @click="handleSearch" style="margin-right: 8px"> 搜索 </n-button>
+        <n-button type="primary" @click="handleSearch"> 搜索 </n-button>
         <n-button @click="handleReset"> 重置 </n-button>
       </div>
       <div class="header-right">
-        <n-space>
+        <n-space class="token-actions">
           <n-button type="primary" :disabled="hasTokenModalOpen" @click="handleSelectQrcodeLogin">
             <template #icon>
               <n-icon>
@@ -416,8 +416,10 @@ const fetchTokenList = () => {
         return
       }
 
-      console.error('获取令牌列表失败:', error)
-      message.error(getErrorMessage(error, '获取令牌列表失败'))
+      const errorMessage = getErrorMessage(error, '获取令牌列表失败')
+
+      console.error('获取令牌列表失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (requestId !== tokenListRequestId) {
@@ -579,8 +581,10 @@ const handleConfirmEdit = () => {
           return
         }
 
-        console.error('修改令牌名称失败:', error)
-        message.error(getErrorMessage(error, '修改令牌名称失败'))
+        const errorMessage = getErrorMessage(error, '修改令牌名称失败')
+
+        console.error('修改令牌名称失败:', errorMessage)
+        message.error(errorMessage)
       })
       .finally(() => {
         if (!isCurrentEditSession(sessionVersion)) {
@@ -622,8 +626,10 @@ const handleDelete = (tokenId: number): Promise<void> => {
         return
       }
 
-      console.error('删除令牌失败:', error)
-      message.error(getErrorMessage(error, '删除令牌失败'))
+      const errorMessage = getErrorMessage(error, '删除令牌失败')
+
+      console.error('删除令牌失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       deleteTokenTasks.delete(tokenId)
@@ -660,11 +666,32 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .header-left {
   display: flex;
   align-items: center;
+  gap: 8px;
+  flex: 1 1 320px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.header-right {
+  display: flex;
+  justify-content: flex-end;
+  flex: 0 1 auto;
+}
+
+.header-search-input {
+  width: min(220px, 100%);
+}
+
+.token-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .tokens-table {
@@ -690,5 +717,22 @@ onUnmounted(() => {
   margin: 0 0 20px;
   color: var(--n-text-color-2);
   font-size: 16px;
+}
+
+@media (width <= 640px) {
+  .header,
+  .header-left,
+  .header-right,
+  .token-actions {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .header-search-input,
+  .header-left :deep(.n-button),
+  .token-actions :deep(.n-button) {
+    width: 100%;
+  }
 }
 </style>

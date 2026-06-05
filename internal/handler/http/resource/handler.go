@@ -146,10 +146,10 @@ func (h *handler) Summary() httpcontext.HandlerFunc {
 		)
 
 		// 媒体
-		if h.mediaConfigService != nil {
+		if h.hasMediaConfigService() {
 			config, err := h.mediaConfigService.Query(ctx.GetContext())
 			if err != nil {
-				h.logger.Warn("查询媒体配置失败", zap.Error(err))
+				h.warn("查询媒体配置失败", zap.Error(err))
 			} else if config != nil {
 				resp.Media.Enabled = config.Enable
 				if config.Enable {
@@ -174,7 +174,7 @@ func (h *handler) Summary() httpcontext.HandlerFunc {
 		)
 
 		// 任务引擎状态
-		if h.taskEngine != nil {
+		if h.hasTaskEngine() {
 			stats := h.taskEngine.GetStats()
 			resp.Tasks.Pending = stats.PendingTasks
 			resp.Tasks.Running = stats.RunningTasks
@@ -188,6 +188,12 @@ func (h *handler) Summary() httpcontext.HandlerFunc {
 
 // countWithLog 统计记录数，失败时记录日志但不中断（资源概览允许部分失败）。
 func (h *handler) countWithLog(model interface{}, where string, args []interface{}, label string) int64 {
+	if h.db == nil {
+		h.warn("资源概览数据库未初始化", zap.String("label", label))
+
+		return 0
+	}
+
 	var count int64
 
 	q := h.db.Model(model)
@@ -196,10 +202,18 @@ func (h *handler) countWithLog(model interface{}, where string, args []interface
 	}
 
 	if err := q.Count(&count).Error; err != nil {
-		h.logger.Warn("资源概览统计失败", zap.String("label", label), zap.Error(err))
+		h.warn("资源概览统计失败", zap.String("label", label), zap.Error(err))
 
 		return 0
 	}
 
 	return count
+}
+
+func (h *handler) warn(msg string, fields ...zap.Field) {
+	if h.logger == nil {
+		return
+	}
+
+	h.logger.Warn(msg, fields...)
 }

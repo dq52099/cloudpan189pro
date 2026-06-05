@@ -3,15 +3,17 @@ package taskengine
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"runtime/debug"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
-
-	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/ptr"
 
 	"github.com/pkg/errors"
 
 	"github.com/google/uuid"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"go.uber.org/zap"
 )
 
@@ -30,6 +32,14 @@ type TaskEngine interface {
 	SetWorkerCount(count int) error
 }
 
+var processorPanicURLPattern = regexp.MustCompile(`(?i)(?:[a-z][a-z0-9+.-]*://|/)[^\s"'<>]+`)
+
+const (
+	maxProcessorLogTextSize         = 4 * 1024
+	truncatedProcessorLogTextSuffix = "...[truncated]"
+	oversizeProcessorLogText        = "[processor message omitted: exceeds log limit]"
+)
+
 type taskEngine struct {
 	topicProcessors map[Topic][]MessageProcessor
 	processorMu     sync.RWMutex
@@ -39,10 +49,13 @@ type taskEngine struct {
 	options         *Options
 	logger          *zap.Logger
 
-	taskChan    chan *TaskInfo
-	topCtx      context.Context
-	topCancel   context.CancelFunc
-	workerGroup sync.WaitGroup
+	taskChan        chan *TaskInfo
+	topCtx          context.Context
+	topCancel       context.CancelFunc
+	workerGroup     sync.WaitGroup
+	workerCancels   map[string]context.CancelFunc
+	retiringWorkers map[string]struct{}
+	nextWorkerID    int
 
 	stats        *TaskStats
 	runningTasks map[string]*TaskInfo
@@ -98,11 +111,12 @@ func (t *taskEngine) Start() error {
 	t.running = true
 	t.taskChan = make(chan *TaskInfo, t.options.BufferSize)
 	t.topCtx, t.topCancel = context.WithCancel(context.Background())
+	t.workerCancels = make(map[string]context.CancelFunc, t.options.WorkerCount)
+	t.retiringWorkers = make(map[string]struct{})
+	t.nextWorkerID = 0
 
 	for idx := 0; idx < t.options.WorkerCount; idx++ {
-		t.workerGroup.Add(1)
-
-		go t.worker(fmt.Sprintf("worker_%d", idx))
+		t.startWorkerLocked()
 	}
 
 	t.logger.Info("task engine started",
@@ -140,6 +154,8 @@ func (t *taskEngine) Stop() error {
 
 	t.mu.Lock()
 	t.stopping = false
+	t.workerCancels = nil
+	t.retiringWorkers = nil
 	t.mu.Unlock()
 
 	t.logger.Info("task engine stopped")
@@ -154,14 +170,60 @@ func (t *taskEngine) IsRunning() bool {
 	return t.running
 }
 
-func (t *taskEngine) worker(workerId string) {
+func (t *taskEngine) startWorkerLocked() {
+	workerID := fmt.Sprintf("worker_%d", t.nextWorkerID)
+	t.nextWorkerID++
+
+	workerCtx, cancel := context.WithCancel(t.topCtx)
+	t.workerCancels[workerID] = cancel
+
+	t.workerGroup.Add(1)
+
+	go t.worker(workerID, workerCtx)
+}
+
+func (t *taskEngine) retireWorkersLocked(count int) {
+	if count <= 0 {
+		return
+	}
+
+	for workerID, cancel := range t.workerCancels {
+		if _, retiring := t.retiringWorkers[workerID]; retiring {
+			continue
+		}
+
+		t.retiringWorkers[workerID] = struct{}{}
+
+		cancel()
+
+		count--
+		if count == 0 {
+			return
+		}
+	}
+}
+
+func (t *taskEngine) activeWorkerCountLocked() int {
+	return len(t.workerCancels) - len(t.retiringWorkers)
+}
+
+func (t *taskEngine) unregisterWorker(workerID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	delete(t.workerCancels, workerID)
+	delete(t.retiringWorkers, workerID)
+}
+
+func (t *taskEngine) worker(workerId string, workerCtx context.Context) {
 	defer t.workerGroup.Done()
+	defer t.unregisterWorker(workerId)
 
 	t.logger.Debug("worker started", zap.String("worker_id", workerId))
 
 	for {
 		select {
-		case <-t.topCtx.Done():
+		case <-workerCtx.Done():
 			t.logger.Debug("worker stopped", zap.String("worker_id", workerId))
 
 			return
@@ -190,15 +252,11 @@ func (t *taskEngine) processMessage(taskInfo *TaskInfo, workerId string) {
 	t.tasksMu.Unlock()
 
 	// 获取处理器
-	t.processorMu.RLock()
-	processors, ok := t.topicProcessors[taskInfo.Topic]
-	t.processorMu.RUnlock()
-
+	processors, ok := t.processorsForTopic(taskInfo.Topic)
 	if !ok {
 		t.logger.Warn("no processor found for topic", zap.String("topic", string(taskInfo.Topic)))
 
-		taskInfo.WorkerId = workerId
-		taskInfo.StartAt = ptr.Of(time.Now())
+		taskInfo.markStarted(workerId, time.Now())
 		taskInfo.SetStatus(TaskStatusFailed)
 
 		if t.options.EnableStats {
@@ -239,78 +297,52 @@ func (t *taskEngine) processMessage(taskInfo *TaskInfo, workerId string) {
 	// 设置任务状态为运行中
 	taskCtx.taskInfo.SetStatus(TaskStatusRunning)
 
-	// 并发执行所有处理器
-	var (
-		wg       sync.WaitGroup
-		hasError bool
-		mu       sync.Mutex
-	)
+	processorsToRun := processors
+	hasError := false
+	wasCancelled := false
 
-	for _, processor := range processors {
-		wg.Add(1)
-
-		go func(processor MessageProcessor) {
-			defer wg.Done()
-
-			startTime := time.Now()
-			result := ProcessorResult{
-				StartTime: startTime,
-				Status:    TaskStatusCompleted,
-			}
-
-			defer func() {
-				if recovered := recover(); recovered != nil {
-					mu.Lock()
-					hasError = true
-					mu.Unlock()
-
-					result.Status = TaskStatusFailed
-					result.Error = fmt.Sprintf("processor panic: %v", recovered)
-
-					t.logger.Error("processor panic recovery",
-						zap.String("task_id", taskCtx.taskId),
-						zap.String("processor_id", result.ProcessorID),
-						zap.Any("panic", recovered),
-						zap.String("stack", string(debug.Stack())))
-				}
-
-				result.EndTime = time.Now()
-				result.Duration = result.EndTime.Sub(result.StartTime)
-
-				// 添加处理结果
-				taskCtx.taskInfo.AddResult(result)
-			}()
-
-			result.ProcessorID = processor.ProcessorID()
-
-			// 执行处理器
-			if err := processor.Process(taskCtx.ctx, taskCtx.taskInfo.Payload); err != nil {
-				mu.Lock()
-
-				hasError = true
-
-				mu.Unlock()
-
-				result.Status = TaskStatusFailed
-				result.Error = err.Error()
-
-				if errors.Is(taskCtx.ctx.Err(), context.Canceled) {
-					result.Status = TaskStatusCancelled
-				}
-
-				t.logger.Error("processor failed",
-					zap.String("task_id", taskCtx.taskId),
-					zap.String("processor_id", processor.ProcessorID()),
-					zap.Error(err))
-			}
-		}(processor)
+	maxRetry := t.options.MaxRetry
+	if maxRetry < 0 {
+		maxRetry = 0
 	}
 
-	// 等待所有处理器完成
-	wg.Wait()
+	for attempt := 0; ; attempt++ {
+		failedProcessors, attemptHasError, attemptWasCancelled := t.processAttempt(taskCtx, processorsToRun)
+		if attemptWasCancelled {
+			wasCancelled = true
 
-	// 在取消上下文之前先判断状态，避免主动取消导致的误判
-	wasCancelled := errors.Is(taskCtx.ctx.Err(), context.Canceled)
+			break
+		}
+
+		if !attemptHasError {
+			hasError = false
+
+			break
+		}
+
+		hasError = true
+
+		if attempt >= maxRetry {
+			break
+		}
+
+		t.logger.Warn("retrying failed task processors",
+			zap.String("task_id", taskCtx.taskId),
+			zap.Int("failed_processors", len(failedProcessors)),
+			zap.Int("next_attempt", attempt+2),
+			zap.Int("max_retry", maxRetry))
+
+		if !t.waitRetryDelay(taskCtx.ctx) {
+			wasCancelled = true
+
+			break
+		}
+
+		processorsToRun = failedProcessors
+	}
+
+	// 等待所有处理器完成后再判断状态，避免主动取消导致的误判。
+	wasCancelled = wasCancelled || taskCtx.ctx.Err() != nil
 
 	// 确保取消上下文
 	taskCtx.Cancel()
@@ -318,6 +350,10 @@ func (t *taskEngine) processMessage(taskInfo *TaskInfo, workerId string) {
 	// 根据执行结果设置最终状态
 	if wasCancelled {
 		taskCtx.taskInfo.SetStatus(TaskStatusCancelled)
+
+		if t.options.EnableStats {
+			t.stats.IncrementCancelled()
+		}
 	} else if hasError {
 		taskCtx.taskInfo.SetStatus(TaskStatusFailed)
 
@@ -338,12 +374,132 @@ func (t *taskEngine) processMessage(taskInfo *TaskInfo, workerId string) {
 		zap.Duration("duration", time.Since(taskCtx.taskInfo.ReceiveAt)))
 }
 
+func (t *taskEngine) processAttempt(taskCtx *TaskContext, processors []MessageProcessor) ([]MessageProcessor, bool, bool) {
+	var (
+		wg               sync.WaitGroup
+		hasError         bool
+		wasCancelled     bool
+		failedProcessors = make([]MessageProcessor, 0)
+		mu               sync.Mutex
+		attemptAbandoned atomic.Bool
+	)
+
+	for _, processor := range processors {
+		wg.Add(1)
+
+		go func(processor MessageProcessor) {
+			defer wg.Done()
+
+			startTime := time.Now()
+			result := ProcessorResult{
+				StartTime: startTime,
+				Status:    TaskStatusCompleted,
+			}
+
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					panicValue := sanitizeProcessorPanicValue(recovered)
+					result.Status = TaskStatusFailed
+					result.Error = fmt.Sprintf("processor panic: %s", panicValue)
+
+					t.logger.Error("processor panic recovery",
+						zap.String("task_id", taskCtx.taskId),
+						zap.String("processor_id", result.ProcessorID),
+						zap.String("panic", panicValue),
+						zap.String("stack", string(debug.Stack())))
+				}
+
+				if attemptAbandoned.Load() {
+					return
+				}
+
+				result.EndTime = time.Now()
+				result.Duration = result.EndTime.Sub(result.StartTime)
+
+				mu.Lock()
+				defer mu.Unlock()
+
+				if attemptAbandoned.Load() {
+					return
+				}
+
+				switch result.Status {
+				case TaskStatusFailed:
+					hasError = true
+
+					failedProcessors = append(failedProcessors, processor)
+				case TaskStatusCancelled:
+					wasCancelled = true
+				}
+
+				// 添加处理结果
+				taskCtx.taskInfo.AddResult(result)
+			}()
+
+			result.ProcessorID = processor.ProcessorID()
+
+			// 执行处理器
+			if err := processor.Process(taskCtx.ctx, taskCtx.taskInfo.payloadSnapshot()); err != nil {
+				result.Status = TaskStatusFailed
+				result.Error = sanitizeProcessorError(err)
+
+				if taskCtx.ctx.Err() != nil {
+					result.Status = TaskStatusCancelled
+				}
+
+				t.logger.Error("processor failed",
+					zap.String("task_id", taskCtx.taskId),
+					zap.String("processor_id", result.ProcessorID),
+					zap.String("error", result.Error))
+			}
+		}(processor)
+	}
+
+	done := make(chan struct{})
+
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-taskCtx.ctx.Done():
+		mu.Lock()
+		attemptAbandoned.Store(true)
+		mu.Unlock()
+
+		t.logger.Warn("task processors cancelled before all processors returned",
+			zap.String("task_id", taskCtx.taskId),
+			zap.String("error", sanitizeProcessorError(taskCtx.ctx.Err())))
+
+		return failedProcessors, hasError, true
+	}
+
+	return failedProcessors, hasError, wasCancelled
+}
+
+func (t *taskEngine) waitRetryDelay(ctx context.Context) bool {
+	if t.options.RetryDelay <= 0 {
+		return true
+	}
+
+	timer := time.NewTimer(t.options.RetryDelay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
 func (t *taskEngine) newTaskContext(taskInfo *TaskInfo, workerId string) *TaskContext {
 	// 应用超时控制
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(taskInfo.Context), t.options.ProcessTimeout)
 
-	taskInfo.WorkerId = workerId
-	taskInfo.StartAt = ptr.Of(time.Now())
+	taskInfo.markStarted(workerId, time.Now())
 
 	return &TaskContext{
 		ctx:      ctx,
@@ -351,6 +507,33 @@ func (t *taskEngine) newTaskContext(taskInfo *TaskInfo, workerId string) *TaskCo
 		taskId:   taskInfo.ID,
 		taskInfo: taskInfo,
 	}
+}
+
+func sanitizeProcessorPanicValue(value interface{}) string {
+	return sanitizeProcessorText(fmt.Sprint(value))
+}
+
+func sanitizeProcessorError(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	return sanitizeProcessorText(err.Error())
+}
+
+func sanitizeProcessorText(message string) string {
+	if len(message) > maxProcessorLogTextSize {
+		return oversizeProcessorLogText + truncatedProcessorLogTextSuffix
+	}
+
+	message = processorPanicURLPattern.ReplaceAllStringFunc(message, utils.RedactURLForLog)
+
+	sanitized := utils.RedactSensitiveText(message)
+	if len(sanitized) > maxProcessorLogTextSize {
+		return sanitized[:maxProcessorLogTextSize] + truncatedProcessorLogTextSuffix
+	}
+
+	return sanitized
 }
 
 func (t *taskEngine) addRunningTask(taskInfo *TaskInfo) {
@@ -398,27 +581,106 @@ func (t *taskEngine) cancelPendingTask(taskInfo *TaskInfo) {
 
 	if t.options.EnableStats {
 		t.stats.DecrementPending()
+		t.stats.IncrementCancelled()
 	}
 }
 
 func (t *taskEngine) RegisterProcessor(topic Topic, processor MessageProcessor) error {
+	if isNilDependency(processor) {
+		return ErrProcessorMissing
+	}
+
+	processorID, err := processorIDForRegistration(processor)
+	if err != nil {
+		return err
+	}
+
 	t.processorMu.Lock()
 	defer t.processorMu.Unlock()
+
+	for _, registered := range t.topicProcessors[topic] {
+		registeredID, err := processorIDForRegistration(registered)
+		if err != nil {
+			return err
+		}
+
+		if registeredID == processorID {
+			return fmt.Errorf("%w: topic=%s processor_id=%s", ErrProcessorRegistered, topic, processorID)
+		}
+	}
 
 	t.topicProcessors[topic] = append(t.topicProcessors[topic], processor)
 
 	t.logger.Info("processor registered",
 		zap.String("topic", string(topic)),
-		zap.String("processor_id", processor.ProcessorID()))
+		zap.String("processor_id", processorID))
 
 	return nil
 }
 
-// PushMessage 推送消息，支持可选的最大重试次数参数
-// 用法：
-//
-//	PushMessage(ctx, topic, payload)           // 使用默认重试次数
-//	PushMessage(ctx, topic, payload, 5)        // 使用指定重试次数
+func processorIDForRegistration(processor MessageProcessor) (processorID string, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("%w: processor id panic: %s", ErrProcessorInvalid, sanitizeProcessorPanicValue(recovered))
+		}
+	}()
+
+	processorID = processor.ProcessorID()
+	if strings.TrimSpace(processorID) == "" {
+		return "", fmt.Errorf("%w: processor id is empty", ErrProcessorInvalid)
+	}
+
+	return processorID, nil
+}
+
+func (t *taskEngine) UnregisterProcessor(topic Topic, processorID string) error {
+	t.processorMu.Lock()
+	defer t.processorMu.Unlock()
+
+	processors := t.topicProcessors[topic]
+	for idx, processor := range processors {
+		registeredID, err := processorIDForRegistration(processor)
+		if err != nil {
+			return err
+		}
+
+		if registeredID != processorID {
+			continue
+		}
+
+		updated := make([]MessageProcessor, 0, len(processors)-1)
+		updated = append(updated, processors[:idx]...)
+
+		updated = append(updated, processors[idx+1:]...)
+		if len(updated) == 0 {
+			delete(t.topicProcessors, topic)
+		} else {
+			t.topicProcessors[topic] = updated
+		}
+
+		t.logger.Info("processor unregistered",
+			zap.String("topic", string(topic)),
+			zap.String("processor_id", processorID))
+
+		return nil
+	}
+
+	return ErrProcessorNotFound
+}
+
+func (t *taskEngine) processorsForTopic(topic Topic) ([]MessageProcessor, bool) {
+	t.processorMu.RLock()
+	defer t.processorMu.RUnlock()
+
+	processors, ok := t.topicProcessors[topic]
+	if !ok || len(processors) == 0 {
+		return nil, false
+	}
+
+	return append([]MessageProcessor(nil), processors...), true
+}
+
+// PushMessage 推送消息，使用引擎配置的重试策略处理失败任务。
 func (t *taskEngine) PushMessage(ctx context.Context, topic Topic, payload []byte) error {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -427,10 +689,14 @@ func (t *taskEngine) PushMessage(ctx context.Context, topic Topic, payload []byt
 		return ErrEngineNotRunning
 	}
 
+	if isNilDependency(ctx) {
+		return ErrTaskContextMissing
+	}
+
 	taskInfo := &TaskInfo{
 		Context:   ctx,
 		ID:        uuid.New().String(),
-		Payload:   payload,
+		Payload:   append([]byte(nil), payload...),
 		Topic:     topic,
 		ReceiveAt: time.Now(),
 		Status:    TaskStatusPending,
@@ -468,7 +734,7 @@ func (t *taskEngine) GetRunningTasks() []*TaskInfo {
 
 	tasks := make([]*TaskInfo, 0, len(t.runningTasks))
 	for _, task := range t.runningTasks {
-		tasks = append(tasks, task)
+		tasks = append(tasks, task.snapshot())
 	}
 
 	return tasks
@@ -480,7 +746,7 @@ func (t *taskEngine) GetPendingTasks() []*TaskInfo {
 
 	tasks := make([]*TaskInfo, 0, len(t.pendingTasks))
 	for _, task := range t.pendingTasks {
-		tasks = append(tasks, task)
+		tasks = append(tasks, task.snapshot())
 	}
 
 	return tasks
@@ -498,19 +764,20 @@ func (t *taskEngine) SetWorkerCount(count int) error {
 	oldCount := t.options.WorkerCount
 	t.options.WorkerCount = count
 
-	// 如果engine已启动，需要动态调整workers
+	// 如果 engine 已启动，需要动态调整 workers。
 	if t.running {
-		if count > oldCount {
-			needAdd := count - oldCount
-			t.workerGroup.Add(needAdd)
-
+		activeWorkers := t.activeWorkerCountLocked()
+		if count > activeWorkers {
+			needAdd := count - activeWorkers
 			for i := 0; i < needAdd; i++ {
-				go t.worker(fmt.Sprintf("worker_%d", oldCount+i))
+				t.startWorkerLocked()
 			}
 
 			t.logger.Info("added workers", zap.Int("added", needAdd), zap.Int("total", count))
-		} else if count < oldCount {
-			t.logger.Info("worker count decreased, will naturally shrink on next worker exit", zap.Int("old", oldCount), zap.Int("new", count))
+		} else if count < activeWorkers {
+			needRetire := activeWorkers - count
+			t.retireWorkersLocked(needRetire)
+			t.logger.Info("retiring workers", zap.Int("retiring", needRetire), zap.Int("old", oldCount), zap.Int("new", count))
 		}
 	}
 

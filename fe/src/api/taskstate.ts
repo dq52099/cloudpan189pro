@@ -32,6 +32,13 @@ export interface TaskEngineListResponse {
   runningTasks?: Models.TaskInfo[] // 正在运行的任务列表
 }
 
+export interface NormalizedTaskEngineListResponse {
+  isRunning: boolean
+  stats: Models.TaskStats
+  pendingTasks: Models.TaskInfo[]
+  runningTasks: Models.TaskInfo[]
+}
+
 // ===== 任务状态管理接口 =====
 
 // 获取文件任务日志列表

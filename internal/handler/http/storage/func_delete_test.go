@@ -238,6 +238,33 @@ func TestDeleteReturnsNotFoundWhenMountPointMissing(t *testing.T) {
 	}
 }
 
+func TestDeleteReturnsNotFoundWhenMountPointQueryReturnsNil(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	taskEngine := &mockDeleteTaskEngine{}
+	virtualFileService := &mockDeleteVirtualFileService{}
+	mountPointService := &mockDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			77: nil,
+		},
+	}
+	router := newDeleteTestRouter(taskEngine, virtualFileService, mountPointService)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/delete", strings.NewReader(`{"id":77}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected not found, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if len(taskEngine.payloads) != 0 {
+		t.Fatalf("expected no queued task for nil mount point, got %d", len(taskEngine.payloads))
+	}
+}
+
 func TestDeleteDoesNotMutateDataWhenQueueFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -266,6 +293,48 @@ func TestDeleteDoesNotMutateDataWhenQueueFails(t *testing.T) {
 
 	if virtualFileService.clearUnusedCalled {
 		t.Fatal("did not expect ancestor cleanup when queueing fails")
+	}
+}
+
+func TestDeleteReturnsFailureWhenTaskEngineMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	virtualFileService := &mockDeleteVirtualFileService{}
+	mountPointService := &mockDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			77: {FileId: 77, FullPath: "/movies", CreatorUserID: 100},
+		},
+	}
+	router := newDeleteTestRouter(nil, virtualFileService, mountPointService)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/delete", strings.NewReader(`{"id":77}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Code int `json:"code"`
+	}
+
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Code != busCodeStorageSendTaskFail.GetCode() {
+		t.Fatalf("expected send task business code %d, got %d", busCodeStorageSendTaskFail.GetCode(), response.Code)
+	}
+
+	if mountPointService.deleteCalled {
+		t.Fatal("did not expect mount point to be deleted when task engine is missing")
+	}
+
+	if virtualFileService.clearUnusedCalled {
+		t.Fatal("did not expect ancestor cleanup when task engine is missing")
 	}
 }
 

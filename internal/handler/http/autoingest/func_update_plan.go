@@ -53,6 +53,10 @@ func (h *handler) UpdatePlan() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensurePlanService(ctx, codePlanQueryFailed) {
+			return
+		}
+
 		// 查询计划是否存在
 		plan, err := h.planService.Query(ctx.GetContext(), req.ID)
 		if err != nil {
@@ -89,7 +93,14 @@ func (h *handler) UpdatePlan() httpcontext.HandlerFunc {
 		}
 
 		if req.ParentPath != nil {
-			fields = append(fields, utils.Field{Key: "parent_path", Value: *req.ParentPath})
+			parentPath, err := normalizeAutoIngestParentPath(*req.ParentPath)
+			if err != nil {
+				ctx.AbortWithInvalidParams(err)
+
+				return
+			}
+
+			fields = append(fields, utils.Field{Key: "parent_path", Value: parentPath})
 		}
 
 		if req.OnConflict != nil {

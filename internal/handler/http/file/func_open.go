@@ -71,6 +71,8 @@ func (h *handler) Open() httpcontext.HandlerFunc {
 			return
 		}
 
+		req.FullPath = getRawOpenFullPath(ctx, req.FullPath)
+
 		// 切分路径查找文件
 		paths, err := utils.SplitPath(req.FullPath)
 		if err != nil {
@@ -78,6 +80,8 @@ func (h *handler) Open() httpcontext.HandlerFunc {
 
 			return
 		}
+
+		displayFullPath := buildDisplayPath(paths)
 
 		var (
 			file *models.VirtualFile
@@ -90,21 +94,26 @@ func (h *handler) Open() httpcontext.HandlerFunc {
 			ctx.Fail(busCodeFileInvalidPath)
 
 			return
-		} else if file, err = h.virtualFileService.QueryByPath(ctx.GetContext(), req.FullPath); err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				ctx.Fail(busCodeFileNotFound.WithError(err))
-			} else {
-				ctx.Fail(busCodeFileQueryError.WithError(err))
+		} else {
+			if !h.ensureVirtualFileService(ctx, busCodeFileQueryError) {
+				return
 			}
 
-			return
+			if file, err = h.virtualFileService.QueryByPath(ctx.GetContext(), req.FullPath); err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					ctx.Fail(busCodeFileNotFound.WithError(err))
+				} else {
+					ctx.Fail(busCodeFileQueryError.WithError(err))
+				}
+
+				return
+			}
 		}
 
 		var allowTopIds []int64
 
 		userID := ctx.GetInt64(consts.CtxKeyUserId)
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
-		userGroupId := ctx.GetInt64(consts.CtxKeyUserGroupId)
 
 		if shouldLimitFileBySuffix(file, isAdmin) {
 			ctx.Fail(busCodeFileNotFound)
@@ -113,17 +122,15 @@ func (h *handler) Open() httpcontext.HandlerFunc {
 		}
 
 		// 获取用户组绑定的文件ID
-		var groupFileIds []int64
+		groupFileIds, err := h.getUserGroupFileIDs(ctx)
+		if err != nil {
+			ctx.Fail(busCodeQueryTopIdError.WithError(err))
 
-		if userGroupId > 0 {
-			groupFileIDs, err := h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
-			if err != nil {
-				ctx.Fail(busCodeQueryTopIdError.WithError(err))
+			return
+		}
 
-				return
-			}
-
-			groupFileIds = groupFileIDs
+		if !h.ensureMountPointService(ctx, busCodeQueryTopIdError) {
+			return
 		}
 
 		accessibleIds, err := h.mountPointService.GetAccessibleMountPointIDs(ctx.GetContext(), userID, isAdmin, groupFileIds)
@@ -140,6 +147,10 @@ func (h *handler) Open() httpcontext.HandlerFunc {
 
 		accessibleIds = lo.Uniq(accessibleIds)
 
+		if !h.ensureVirtualFileService(ctx, busCodeFileQueryError) {
+			return
+		}
+
 		accessibleTopPaths, err := h.resolveAccessibleTopPaths(ctx, accessibleIds)
 		if err != nil {
 			ctx.Fail(busCodeCalFullPath.WithError(err))
@@ -147,7 +158,7 @@ func (h *handler) Open() httpcontext.HandlerFunc {
 			return
 		}
 
-		if !isVirtualFileVisible(file, req.FullPath, accessibleIds, accessibleTopPaths) {
+		if !isVirtualFileVisible(file, displayFullPath, accessibleIds, accessibleTopPaths) {
 			ctx.Forbidden("无权限访问")
 
 			return
@@ -173,13 +184,15 @@ func (h *handler) Open() httpcontext.HandlerFunc {
 			}
 		}
 
+		children = compactVirtualFiles(children)
+
 		filteredChildren := make([]*models.VirtualFile, 0, len(children))
 		for _, child := range children {
 			if shouldLimitFileBySuffix(child, isAdmin) {
 				continue
 			}
 
-			childPath := path.Join(req.FullPath, child.Name)
+			childPath := path.Join(displayFullPath, child.Name)
 			if !isVirtualFileVisible(child, childPath, allowTopIds, accessibleTopPaths) {
 				continue
 			}
@@ -194,10 +207,12 @@ func (h *handler) Open() httpcontext.HandlerFunc {
 		// 转换为 DTO
 		childrenDTO := make([]*childDTO, 0, len(children))
 		for _, child := range children {
+			childPath := path.Join(displayFullPath, child.Name)
+
 			childrenDTO = append(childrenDTO, &childDTO{
 				VirtualFile: child,
-				ApiPath:     utils.PathEscape(openBaseURL, path.Join(req.FullPath, child.Name)),
-				Href:        utils.PathEscape(path.Join(req.FullPath, child.Name)),
+				ApiPath:     utils.PathEscape(openBaseURL, childPath),
+				Href:        utils.PathEscape(childPath),
 			})
 		}
 
@@ -215,13 +230,57 @@ func (h *handler) Open() httpcontext.HandlerFunc {
 
 		ctx.Success(&openResponse{
 			VirtualFile:   file,
-			ApiPath:       utils.PathEscape(openBaseURL, req.FullPath),
-			Href:          utils.PathEscape(req.FullPath),
+			ApiPath:       utils.PathEscape(openBaseURL, displayFullPath),
+			Href:          utils.PathEscape(displayFullPath),
 			Children:      childrenDTO,
 			ChildrenTotal: childrenCount,
 			Breadcrumbs:   breadcrumbs,
 		})
 	}
+}
+
+func getRawOpenFullPath(ctx *httpcontext.Context, fallback string) string {
+	const wildcardSuffix = "/*fullPath"
+
+	routePath := ctx.FullPath()
+	if !strings.HasSuffix(routePath, wildcardSuffix) {
+		return fallback
+	}
+
+	prefix := strings.TrimSuffix(routePath, wildcardSuffix)
+
+	rawPath := ctx.Request.URL.EscapedPath()
+	if !strings.HasPrefix(rawPath, prefix) {
+		return fallback
+	}
+
+	rawFullPath := strings.TrimPrefix(rawPath, prefix)
+	if rawFullPath == "" {
+		return "/"
+	}
+
+	return rawFullPath
+}
+
+func buildDisplayPath(parts []string) string {
+	if len(parts) == 0 {
+		return "/"
+	}
+
+	return path.Join(append([]string{"/"}, parts...)...)
+}
+
+func compactVirtualFiles(list []*models.VirtualFile) []*models.VirtualFile {
+	result := make([]*models.VirtualFile, 0, len(list))
+	for _, item := range list {
+		if item == nil {
+			continue
+		}
+
+		result = append(result, item)
+	}
+
+	return result
 }
 
 func (h *handler) resolveAccessibleTopPaths(ctx *httpcontext.Context, topIds []int64) ([]string, error) {
@@ -252,7 +311,7 @@ func isVirtualFileVisible(file *models.VirtualFile, filePath string, allowTopIds
 		return true
 	}
 
-	if file.IsDir && file.TopId == 0 {
+	if file.IsDir {
 		return isPathAncestorOfAny(filePath, accessibleTopPaths)
 	}
 
@@ -277,7 +336,7 @@ func isPathAncestorOfAny(candidate string, paths []string) bool {
 }
 
 func shouldLimitFileBySuffix(file *models.VirtualFile, isAdmin bool) bool {
-	if isAdmin || file == nil || file.IsDir || !shared.SettingAddition.WebDAVUserStrmOnly {
+	if file == nil || file.IsDir || !shouldApplyFileSuffixLimit(isAdmin) {
 		return false
 	}
 
@@ -286,10 +345,18 @@ func shouldLimitFileBySuffix(file *models.VirtualFile, isAdmin bool) bool {
 		return true
 	}
 
-	allowed := models.NormalizeSuffixes(shared.SettingAddition.WebDAVAllowedSuffixes)
+	return !slices.Contains(allowedUserFileSuffixes(), extName)
+}
+
+func shouldApplyFileSuffixLimit(isAdmin bool) bool {
+	return !isAdmin && shared.GetSettingAddition().WebDAVUserStrmOnly
+}
+
+func allowedUserFileSuffixes() []string {
+	allowed := models.NormalizeSuffixes(shared.GetSettingAddition().WebDAVAllowedSuffixes)
 	if len(allowed) == 0 {
 		allowed = append([]string(nil), models.DefaultWebDAVAllowedSuffixes...)
 	}
 
-	return !slices.Contains(allowed, extName)
+	return allowed
 }

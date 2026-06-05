@@ -80,6 +80,66 @@ func TestListSkipsDefaultGroupBeforeBatchQuery(t *testing.T) {
 	}
 }
 
+func TestListSkipsNilUsersAndGroups(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userSvc := &listUserServiceStub{
+		users: []*models.User{
+			nil,
+			{ID: 1, Username: "default", GroupID: 0},
+			{ID: 2, Username: "vip-user", GroupID: 2},
+		},
+	}
+	groupSvc := &listUserGroupServiceStub{
+		groups: []*models.UserGroup{
+			nil,
+			{ID: 2, Name: "VIP"},
+		},
+	}
+
+	router := gin.New()
+	wrapper := httpcontext.NewHandlerFuncWrapper(nil)
+	router.GET("/list", wrapper.Wrap(NewHandler(userSvc, groupSvc, nil).List()))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/list?noPaginate=true", nil)
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	if len(groupSvc.batchIDs) != 1 || groupSvc.batchIDs[0] != 2 {
+		t.Fatalf("expected BatchQuery ids [2], got %#v", groupSvc.batchIDs)
+	}
+
+	var response struct {
+		Code int `json:"code"`
+		Data struct {
+			Total int64 `json:"total"`
+			Data  []struct {
+				ID        int64  `json:"id"`
+				GroupName string `json:"groupName"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.Data.Total != 2 || len(response.Data.Data) != 2 {
+		t.Fatalf("expected two non-nil users, got total=%d len=%d", response.Data.Total, len(response.Data.Data))
+	}
+
+	if response.Data.Data[0].ID != 1 || response.Data.Data[0].GroupName != "默认用户组" {
+		t.Fatalf("unexpected first user: %+v", response.Data.Data[0])
+	}
+
+	if response.Data.Data[1].ID != 2 || response.Data.Data[1].GroupName != "VIP" {
+		t.Fatalf("unexpected second user: %+v", response.Data.Data[1])
+	}
+}
+
 type listUserServiceStub struct {
 	users []*models.User
 	count int64

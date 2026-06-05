@@ -42,6 +42,10 @@ func (h *handler) ModifyToken() httpcontext.HandlerFunc {
 		userID := ctx.GetInt64(consts.CtxKeyUserId)
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
 
+		if !h.ensureMountPointService(ctx, busCodeStorageQueryMountPointError) {
+			return
+		}
+
 		// 验证挂载点是否存在
 		mp, err := h.mountPointService.QueryByID(ctx.GetContext(), req.ID)
 		if err != nil {
@@ -50,6 +54,12 @@ func (h *handler) ModifyToken() httpcontext.HandlerFunc {
 			} else {
 				ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
 			}
+
+			return
+		}
+
+		if mp == nil {
+			ctx.Fail(busCodeStorageMountPointNotFound.WithError(gorm.ErrRecordNotFound))
 
 			return
 		}
@@ -64,6 +74,10 @@ func (h *handler) ModifyToken() httpcontext.HandlerFunc {
 				// 检查用户组是否有权限
 				userGroupId := ctx.GetInt64(consts.CtxKeyUserGroupId)
 				if userGroupId > 0 {
+					if !h.ensureGroup2FileService(ctx, busCodeStorageQueryMountPointError) {
+						return
+					}
+
 					groupFileIds, err := h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
 					if err != nil {
 						ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
@@ -81,7 +95,7 @@ func (h *handler) ModifyToken() httpcontext.HandlerFunc {
 				}
 			}
 
-			if !hasAccess && h.userMountPointTokenService != nil {
+			if !hasAccess && h.hasUserMountPointTokenService() {
 				tokenID, err := h.userMountPointTokenService.GetTokenID(ctx.GetContext(), userID, mp.ID)
 				if err != nil {
 					ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
@@ -101,7 +115,11 @@ func (h *handler) ModifyToken() httpcontext.HandlerFunc {
 
 		// 验证云盘令牌是否存在（必须是用户自己的令牌）
 		if req.TokenID != 0 {
-			_, err := h.cloudTokenService.QueryAccessible(ctx.GetContext(), req.TokenID, userID, isAdmin)
+			if !h.ensureCloudTokenService(ctx, busCodeStorageQueryCloudTokenError) {
+				return
+			}
+
+			token, err := h.cloudTokenService.QueryAccessible(ctx.GetContext(), req.TokenID, userID, isAdmin)
 			if err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					ctx.Fail(busCodeStorageCloudTokenNotExist.WithError(err))
@@ -111,6 +129,16 @@ func (h *handler) ModifyToken() httpcontext.HandlerFunc {
 
 				return
 			}
+
+			if token == nil {
+				ctx.Fail(busCodeStorageCloudTokenNotExist.WithError(gorm.ErrRecordNotFound))
+
+				return
+			}
+		}
+
+		if !h.ensureUserMountPointTokenService(ctx, busCodeStorageModifyTokenFailed) {
+			return
 		}
 
 		// 绑定用户的令牌到挂载点

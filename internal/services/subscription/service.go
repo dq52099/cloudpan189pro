@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/datatypes"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
@@ -23,13 +24,19 @@ import (
 	"gorm.io/gorm"
 )
 
-const maxPanSearchResponseSize = 5 << 20
+const (
+	DefaultPanSearchURL      = "https://so.252035.xyz/api/search"
+	maxPanSearchResponseSize = 5 << 20
+)
+
+var subscriptionLogURLPattern = regexp.MustCompile(`(?i)(?:[a-z][a-z0-9+.-]*://|/)[^\s"'<>]+`)
 
 // ShareInfo 订阅模块需要的分享元数据最小子集。
 type ShareInfo struct {
 	Name       string
 	IsFolder   bool
 	ShareId    int64
+	ShareMode  int
 	ID         string
 	AccessCode string
 }
@@ -77,6 +84,7 @@ type Service interface {
 	SetOpenAIService(OpenAIService)
 	SetMountService(MountService)
 	SetShareInfoFetcher(ShareInfoFetcher)
+	UpdateConfig(SubscriptionConfig)
 }
 
 // TelegramService Telegram 服务接口
@@ -110,10 +118,11 @@ type HotResource struct {
 }
 
 type SearchResult struct {
-	Title    string
-	ShareURL string
-	FileID   int64
-	Size     string
+	Title           string
+	ShareURL        string
+	ShareAccessCode string
+	FileID          int64
+	Size            string
 }
 
 type MatchResult struct {
@@ -137,18 +146,24 @@ type service struct {
 }
 
 type SubscriptionConfig struct {
-	PanSearchURL string
-	EnableTMDB   bool
-	EnableDouban bool
+	Enabled        bool
+	PanSearchURL   string
+	EnableTMDB     bool
+	EnableDouban   bool
+	CronExpression string
 }
 
 func NewService(db *gorm.DB, logger *zap.Logger, config *SubscriptionConfig) Service {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
+	resolvedConfig := defaultSubscriptionServiceConfig()
 	if config == nil {
-		config = &SubscriptionConfig{
-			PanSearchURL: "https://so.252035.xyz/api/search",
-			EnableTMDB:   true,
-			EnableDouban: true,
-		}
+		config = &resolvedConfig
+	} else {
+		resolvedConfig = normalizeSubscriptionServiceConfig(*config)
+		config = &resolvedConfig
 	}
 
 	return &service{
@@ -156,6 +171,36 @@ func NewService(db *gorm.DB, logger *zap.Logger, config *SubscriptionConfig) Ser
 		logger: logger,
 		config: config,
 	}
+}
+
+func defaultSubscriptionServiceConfig() SubscriptionConfig {
+	return SubscriptionConfig{
+		Enabled:        false,
+		PanSearchURL:   DefaultPanSearchURL,
+		EnableTMDB:     true,
+		EnableDouban:   true,
+		CronExpression: consts.DefaultSubscriptionCronExpression,
+	}
+}
+
+func normalizeSubscriptionServiceConfig(config SubscriptionConfig) SubscriptionConfig {
+	config.PanSearchURL = strings.TrimSpace(config.PanSearchURL)
+	config.CronExpression = strings.TrimSpace(config.CronExpression)
+
+	if config.CronExpression == "" {
+		config.CronExpression = consts.DefaultSubscriptionCronExpression
+	}
+
+	return config
+}
+
+func (s *service) UpdateConfig(config SubscriptionConfig) {
+	normalized := normalizeSubscriptionServiceConfig(config)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.config = &normalized
 }
 
 func (s *service) SetTelegramService(svc TelegramService) {
@@ -208,6 +253,17 @@ func (s *service) snapshotDeps() (TMDBService, DoubanService, OpenAIService, Tel
 	return s.tmdbService, s.doubanService, s.openaiService, s.telegramService, s.mountService, s.shareInfoFetcher
 }
 
+func (s *service) configSnapshot() SubscriptionConfig {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.config == nil {
+		return defaultSubscriptionServiceConfig()
+	}
+
+	return *s.config
+}
+
 func (s *service) RunSubscriptionJob() error {
 	s.logger.Info("Starting subscription job...")
 
@@ -232,18 +288,19 @@ func (s *service) processSubscription(sub *models.Subscription) {
 	var items []HotResource
 
 	tmdbSvc, doubanSvc, _, _, _, _ := s.snapshotDeps()
+	config := s.configSnapshot()
 
 	// 根据订阅源获取热门资源
 	switch sub.Source {
 	case "tmdb":
-		if sub.Category == "movie" && s.config.EnableTMDB && tmdbSvc != nil {
-			items = s.getTMDbMovies()
-		} else if sub.Category == "tv" && s.config.EnableTMDB && tmdbSvc != nil {
-			items = s.getTMDbTVs()
+		if sub.Category == "movie" && config.EnableTMDB && !isNilDependency(tmdbSvc) {
+			items = s.getTMDbMovies(tmdbSvc)
+		} else if sub.Category == "tv" && config.EnableTMDB && !isNilDependency(tmdbSvc) {
+			items = s.getTMDbTVs(tmdbSvc)
 		}
 	case "douban":
-		if s.config.EnableDouban && doubanSvc != nil {
-			items = s.getDoubanMovies()
+		if config.EnableDouban && !isNilDependency(doubanSvc) {
+			items = s.getDoubanMovies(doubanSvc)
 		}
 	}
 
@@ -258,7 +315,10 @@ func (s *service) processSubscription(sub *models.Subscription) {
 
 			results, err := s.SearchPan(keyword)
 			if err != nil {
-				s.logger.Error("Search failed", zap.String("keyword", keyword), zap.Error(err))
+				s.logger.Error("Search failed",
+					zap.String("keyword", sanitizeSubscriptionErrorText(keyword)),
+					zap.String("error", sanitizeSubscriptionErrorText(err.Error())),
+				)
 
 				continue
 			}
@@ -356,16 +416,16 @@ func (s *service) processSubscription(sub *models.Subscription) {
 	}
 }
 
-func (s *service) getTMDbMovies() []HotResource {
+func (s *service) getTMDbMovies(tmdbSvc TMDBService) []HotResource {
 	s.logger.Info("Fetching TMDB popular movies")
 
-	if s.tmdbService == nil {
+	if isNilDependency(tmdbSvc) {
 		s.logger.Warn("TMDB service not set, skip fetch")
 
 		return nil
 	}
 
-	movies, err := s.tmdbService.GetPopularMovies(1)
+	movies, err := tmdbSvc.GetPopularMovies(1)
 	if err != nil {
 		s.logger.Error("获取 TMDB 热门电影失败", zap.Error(err))
 
@@ -392,16 +452,16 @@ func (s *service) getTMDbMovies() []HotResource {
 	return results
 }
 
-func (s *service) getTMDbTVs() []HotResource {
+func (s *service) getTMDbTVs(tmdbSvc TMDBService) []HotResource {
 	s.logger.Info("Fetching TMDB popular TVs")
 
-	if s.tmdbService == nil {
+	if isNilDependency(tmdbSvc) {
 		s.logger.Warn("TMDB service not set, skip fetch")
 
 		return nil
 	}
 
-	tvs, err := s.tmdbService.GetPopularTVs(1)
+	tvs, err := tmdbSvc.GetPopularTVs(1)
 	if err != nil {
 		s.logger.Error("获取 TMDB 热门剧集失败", zap.Error(err))
 
@@ -428,16 +488,16 @@ func (s *service) getTMDbTVs() []HotResource {
 	return results
 }
 
-func (s *service) getDoubanMovies() []HotResource {
+func (s *service) getDoubanMovies(doubanSvc DoubanService) []HotResource {
 	s.logger.Info("Fetching Douban popular movies")
 
-	if s.doubanService == nil {
+	if isNilDependency(doubanSvc) {
 		s.logger.Warn("Douban service not set, skip fetch")
 
 		return nil
 	}
 
-	subjects, err := s.doubanService.GetPopularMovies()
+	subjects, err := doubanSvc.GetPopularMovies()
 	if err != nil {
 		s.logger.Error("获取豆瓣热门电影失败", zap.Error(err))
 
@@ -487,8 +547,9 @@ func (s *service) processSearchResult(sub *models.Subscription, result SearchRes
 		}
 
 		// 发送通知
-		if s.telegramService != nil {
-			if err := s.telegramService.SendNotification(
+		_, _, _, telegramSvc, _, _ := s.snapshotDeps()
+		if !isNilDependency(telegramSvc) {
+			if err := telegramSvc.SendNotification(
 				"资源已挂载",
 				fmt.Sprintf("%s\n\nSTRM 路径：%s\n分享链接：%s", title, matchResult.STrmPath, matchResult.ShareURL),
 			); err != nil {
@@ -503,12 +564,13 @@ func (s *service) processSearchResult(sub *models.Subscription, result SearchRes
 }
 
 func (s *service) processAutoUpgrade(sub *models.Subscription, item HotResource) {
-	if s.openaiService == nil {
+	_, _, openaiSvc, _, _, _ := s.snapshotDeps()
+	if isNilDependency(openaiSvc) {
 		return
 	}
 
 	// 生成优化关键词
-	keyword, err := s.openaiService.GenerateUpgradeKeyword(item.Title, item.Category)
+	keyword, err := openaiSvc.GenerateUpgradeKeyword(item.Title, item.Category)
 	if err != nil {
 		s.logger.Error("Generate upgrade keyword failed", zap.Error(err))
 
@@ -545,8 +607,11 @@ func (s *service) processAutoUpgrade(sub *models.Subscription, item HotResource)
 func (s *service) GetDailyHotMovies() ([]HotResource, error) {
 	var results []HotResource
 
-	if s.config.EnableTMDB && s.tmdbService != nil {
-		movies, err := s.tmdbService.GetPopularMovies(1)
+	tmdbSvc, doubanSvc, _, _, _, _ := s.snapshotDeps()
+	config := s.configSnapshot()
+
+	if config.EnableTMDB && !isNilDependency(tmdbSvc) {
+		movies, err := tmdbSvc.GetPopularMovies(1)
 		if err == nil {
 			for _, movie := range movies {
 				year := ""
@@ -566,8 +631,8 @@ func (s *service) GetDailyHotMovies() ([]HotResource, error) {
 		}
 	}
 
-	if s.config.EnableDouban && s.doubanService != nil {
-		movies, err := s.doubanService.GetPopularMovies()
+	if config.EnableDouban && !isNilDependency(doubanSvc) {
+		movies, err := doubanSvc.GetPopularMovies()
 		if err == nil {
 			for _, movie := range movies {
 				results = append(results, HotResource{
@@ -588,8 +653,11 @@ func (s *service) GetDailyHotMovies() ([]HotResource, error) {
 func (s *service) GetDailyHotTVs() ([]HotResource, error) {
 	var results []HotResource
 
-	if s.config.EnableTMDB && s.tmdbService != nil {
-		tvs, err := s.tmdbService.GetPopularTVs(1)
+	tmdbSvc, _, _, _, _, _ := s.snapshotDeps()
+	config := s.configSnapshot()
+
+	if config.EnableTMDB && !isNilDependency(tmdbSvc) {
+		tvs, err := tmdbSvc.GetPopularTVs(1)
 		if err == nil {
 			for _, tv := range tvs {
 				year := ""
@@ -616,22 +684,68 @@ func (s *service) SearchPan(keyword string) ([]SearchResult, error) {
 	return s.searchPanWithContext(stdContext.Background(), keyword)
 }
 
+// BuildPanSearchRequestURL 构建盘搜请求 URL，保留配置中已有查询参数。
+func BuildPanSearchRequestURL(panSearchURL string, keyword string) (string, error) {
+	searchURL := strings.TrimSpace(panSearchURL)
+	if searchURL == "" {
+		searchURL = DefaultPanSearchURL
+	}
+
+	parsedURL, err := url.Parse(searchURL)
+	if err != nil {
+		return "", fmt.Errorf("盘搜 API 地址无效: %w", err)
+	}
+
+	if !isPanSearchAPIPath(parsedURL.Path) {
+		parsedURL.Path = strings.TrimRight(parsedURL.Path, "/") + "/api/search"
+	}
+
+	query := parsedURL.Query()
+	query.Set("kw", keyword)
+	query.Set("cloud_types", "tianyi")
+	parsedURL.RawQuery = query.Encode()
+
+	return parsedURL.String(), nil
+}
+
+func isPanSearchAPIPath(path string) bool {
+	path = strings.TrimRight(path, "/")
+
+	return path == "/api/search" || strings.HasSuffix(path, "/api/search")
+}
+
+// RedactPanSearchError removes request URL query details from pan-search errors.
+func RedactPanSearchError(searchURL string, err error) string {
+	if err == nil {
+		return ""
+	}
+
+	message := err.Error()
+	if searchURL != "" {
+		message = strings.ReplaceAll(message, searchURL, utils.RedactURLForLog(searchURL))
+	}
+
+	return sanitizeSubscriptionErrorText(message)
+}
+
+func sanitizeSubscriptionErrorText(text string) string {
+	text = subscriptionLogURLPattern.ReplaceAllStringFunc(text, utils.RedactURLForLog)
+
+	return utils.RedactSensitiveText(text)
+}
+
 // searchPanWithContext 带 ctx 的盘搜，复用给订阅定时任务。
 func (s *service) searchPanWithContext(ctx stdContext.Context, keyword string) ([]SearchResult, error) {
-	if s.config.PanSearchURL == "" {
-		s.config.PanSearchURL = "https://so.252035.xyz/api/search"
-	}
+	config := s.configSnapshot()
 
-	searchURL := s.config.PanSearchURL
-	if !strings.Contains(searchURL, "/api/search") {
-		searchURL = strings.TrimRight(searchURL, "/") + "/api/search"
+	searchURL, err := BuildPanSearchRequestURL(config.PanSearchURL, keyword)
+	if err != nil {
+		return nil, err
 	}
-
-	searchURL = fmt.Sprintf("%s?kw=%s&cloud_types=tianyi", searchURL, url.QueryEscape(keyword))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("构建请求失败: %w", err)
+		return nil, fmt.Errorf("构建请求失败: %s", RedactPanSearchError(searchURL, err))
 	}
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; cloudpan189-share/1.0)")
@@ -639,7 +753,7 @@ func (s *service) searchPanWithContext(ctx stdContext.Context, keyword string) (
 
 	resp, err := panSearchClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, errors.New(RedactPanSearchError(searchURL, err))
 	}
 	defer func() {
 		_ = resp.Body.Close()
@@ -669,7 +783,7 @@ func (s *service) searchPanWithContext(ctx stdContext.Context, keyword string) (
 
 	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxPanSearchResponseSize+1))
 	if err != nil {
-		return nil, fmt.Errorf("读取盘搜响应失败: %w", err)
+		return nil, fmt.Errorf("读取盘搜响应失败: %s", RedactPanSearchError(searchURL, err))
 	}
 
 	if len(bodyBytes) > maxPanSearchResponseSize {
@@ -681,16 +795,19 @@ func (s *service) searchPanWithContext(ctx stdContext.Context, keyword string) (
 	}
 
 	if result.Code != 0 {
-		return nil, fmt.Errorf("盘搜接口错误: %s", result.Message)
+		return nil, fmt.Errorf("盘搜接口错误: %s", sanitizeSubscriptionErrorText(result.Message))
 	}
 
 	results := make([]SearchResult, 0)
 
 	if tianyiData, ok := result.Data.MergedByType["tianyi"]; ok {
 		for _, item := range tianyiData {
+			_, accessCode := utils.ParseCloud189ShareCode(item.URL, item.Password)
+
 			results = append(results, SearchResult{
-				Title:    item.Note,
-				ShareURL: item.URL,
+				Title:           item.Note,
+				ShareURL:        item.URL,
+				ShareAccessCode: accessCode,
 			})
 		}
 	}
@@ -708,27 +825,10 @@ var panSearchClient = &http.Client{
 	},
 }
 
-// shareCodeRegex 用于从分享链接中提取 189 分享码。
-var matchShareCodeRegex = regexp.MustCompile(`/t/([a-zA-Z0-9]+)`)
-
 // MatchAndMount 将搜索到的资源挂载到对应路径，并记录匹配历史。
 // result 来自 SearchPan 的结果；title/year/category 为热门资源元信息。
 func (s *service) MatchAndMount(sub *models.Subscription, result SearchResult, title, year, category string) (*MatchResult, error) {
-	// 确定挂载路径
-	basePath := sub.MountPath
-	if basePath == "" {
-		basePath = "/热门订阅"
-	}
-
-	safeName := utils.SanitizeFileName(title)
-	if safeName == "" {
-		safeName = title
-	}
-
-	mountPath := basePath + "/" + safeName
-	if year != "" {
-		mountPath = fmt.Sprintf("%s (%s)", mountPath, year)
-	}
+	mountPath, mountPathErr := buildSubscriptionMountPath(sub.MountPath, title, year)
 
 	matchedAt := time.Now()
 	history := &models.MatchHistory{
@@ -746,9 +846,12 @@ func (s *service) MatchAndMount(sub *models.Subscription, result SearchResult, t
 	recordFailure := func(msg string, err error) (*MatchResult, error) {
 		history.Status = models.MatchStatusFailed
 
-		history.ErrorMessage = msg
+		var returnErr error
+
+		history.ErrorMessage = sanitizeSubscriptionErrorText(msg)
 		if err != nil {
-			history.ErrorMessage = fmt.Sprintf("%s: %v", msg, err)
+			history.ErrorMessage = sanitizeSubscriptionErrorText(fmt.Sprintf("%s: %v", msg, err))
+			returnErr = errors.New(history.ErrorMessage)
 		}
 
 		s.recordMatchHistory(history, "记录失败匹配历史出错")
@@ -756,7 +859,11 @@ func (s *service) MatchAndMount(sub *models.Subscription, result SearchResult, t
 		return &MatchResult{
 			Success: false,
 			Message: history.ErrorMessage,
-		}, err
+		}, returnErr
+	}
+
+	if mountPathErr != nil {
+		return recordFailure("生成挂载路径失败", mountPathErr)
 	}
 
 	// 如果没有可挂载的 ShareURL，则直接失败
@@ -764,22 +871,25 @@ func (s *service) MatchAndMount(sub *models.Subscription, result SearchResult, t
 		return recordFailure("搜索结果缺少分享链接", nil)
 	}
 
-	if s.mountService == nil || s.shareInfoFetcher == nil {
+	_, _, _, _, mountSvc, shareInfoFetcher := s.snapshotDeps()
+	if isNilDependency(mountSvc) || isNilDependency(shareInfoFetcher) {
 		return recordFailure("挂载或分享信息服务未初始化", nil)
 	}
 
-	// 从 ShareURL 提取分享码
-	matches := matchShareCodeRegex.FindStringSubmatch(result.ShareURL)
-	if len(matches) < 2 {
+	// 从 ShareURL 提取分享码和访问码。
+	shareCode, accessCode := utils.ParseCloud189ShareCode(result.ShareURL, result.ShareAccessCode)
+	if !utils.IsCloud189ShareCode(shareCode) {
 		return recordFailure("无法从分享链接中提取分享码", nil)
 	}
 
-	shareCode := matches[1]
+	if accessCode != "" && !utils.IsCloud189AccessCode(accessCode) {
+		return recordFailure("访问码格式无效", nil)
+	}
 
 	// 获取分享元数据
 	bgCtx := context.NewContext(stdContext.Background(), context.WithLogger(s.logger))
 
-	shareInfo, err := s.shareInfoFetcher.GetShareInfo(bgCtx, shareCode, "")
+	shareInfo, err := shareInfoFetcher.GetShareInfo(bgCtx, shareCode, accessCode)
 	if err != nil {
 		return recordFailure("获取分享信息失败", err)
 	}
@@ -790,12 +900,13 @@ func (s *service) MatchAndMount(sub *models.Subscription, result SearchResult, t
 		OsType:            string(models.OsTypeSubscribeShareFolder),
 		CloudToken:        0,
 		FileId:            shareInfo.ID,
+		Addition:          subscriptionShareMountAdditionWithAccessCode(shareInfo, accessCode),
 		EnableDeepRefresh: true,
 		CreatorUserID:     1,
 		IsAdmin:           true,
 	}
 
-	mountID, err := s.mountService.CreateStorage(bgCtx, storageReq)
+	mountID, err := mountSvc.CreateStorage(bgCtx, storageReq)
 	if err != nil {
 		return recordFailure("创建挂载点失败", err)
 	}
@@ -807,7 +918,7 @@ func (s *service) MatchAndMount(sub *models.Subscription, result SearchResult, t
 	s.logger.Info("订阅资源已挂载",
 		zap.String("title", title),
 		zap.String("path", mountPath),
-		zap.String("share_code", shareCode),
+		zap.String("share_code", utils.MaskShareCodeForLog(shareCode)),
 		zap.Int64("mount_id", mountID),
 	)
 
@@ -819,6 +930,25 @@ func (s *service) MatchAndMount(sub *models.Subscription, result SearchResult, t
 	}, nil
 }
 
+func buildSubscriptionMountPath(basePath, title, year string) (string, error) {
+	basePath = strings.TrimSpace(basePath)
+	if basePath == "" {
+		basePath = "/热门订阅"
+	}
+
+	name := utils.SanitizeFileName(title)
+	if name == "" {
+		return "", fmt.Errorf("资源名称不能为空")
+	}
+
+	year = utils.SanitizeFileName(strings.TrimSpace(year))
+	if year != "" {
+		name = fmt.Sprintf("%s (%s)", name, year)
+	}
+
+	return utils.JoinStoragePath(basePath, name)
+}
+
 func (s *service) recordMatchHistory(history *models.MatchHistory, message string) {
 	if history == nil {
 		return
@@ -826,15 +956,38 @@ func (s *service) recordMatchHistory(history *models.MatchHistory, message strin
 
 	if err := s.db.Create(history).Error; err != nil {
 		s.logger.Error(message,
-			zap.Error(err),
+			zap.String("error", sanitizeSubscriptionErrorText(err.Error())),
 			zap.Int64("subscription_id", history.SubscriptionID),
 			zap.String("title", history.Title),
 			zap.String("category", string(history.Category)),
 			zap.String("status", string(history.Status)),
-			zap.String("share_url", history.ShareURL),
+			zap.String("share_url", utils.MaskShareCodeForLog(history.ShareURL)),
 			zap.String("strm_path", history.STrmPath),
-			zap.String("error_message", history.ErrorMessage),
+			zap.String("error_message", sanitizeSubscriptionErrorText(history.ErrorMessage)),
 		)
+	}
+}
+
+func subscriptionShareMountAdditionWithAccessCode(shareInfo *ShareInfo, fallbackAccessCode string) datatypes.JSONMap {
+	if shareInfo == nil {
+		return datatypes.JSONMap{}
+	}
+
+	shareMode := shareInfo.ShareMode
+	if shareMode <= 0 {
+		shareMode = 1
+	}
+
+	accessCode := shareInfo.AccessCode
+	if accessCode == "" {
+		accessCode = fallbackAccessCode
+	}
+
+	return datatypes.JSONMap{
+		consts.FileAdditionKeyShareId:    shareInfo.ShareId,
+		consts.FileAdditionKeyIsFolder:   shareInfo.IsFolder,
+		consts.FileAdditionKeyAccessCode: accessCode,
+		consts.FileAdditionKeyShareMode:  shareMode,
 	}
 }
 

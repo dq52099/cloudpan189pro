@@ -3,6 +3,7 @@ package user
 import (
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	"gorm.io/gorm"
 )
 
 // refreshRequest 刷新Token请求结构
@@ -35,8 +36,12 @@ func (h *handler) RefreshToken() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureUserService(ctx, codeRefreshTokenInvalid) {
+			return
+		}
+
 		// 解析刷新Token
-		uid, _, version, err := h.userService.ParseRefreshToken(req.RefreshToken)
+		uid, parsedUsername, version, err := h.userService.ParseRefreshToken(req.RefreshToken)
 		if err != nil {
 			ctx.Fail(codeRefreshTokenInvalid.WithError(err))
 
@@ -44,10 +49,17 @@ func (h *handler) RefreshToken() httpcontext.HandlerFunc {
 		}
 
 		ctx.Set(consts.CtxKeyUserId, uid)
+		ctx.Set(consts.CtxKeyUsername, parsedUsername)
 
 		user, err := h.userService.Query(ctx.GetContext(), uid)
 		if err != nil {
 			ctx.Fail(codeRefreshTokenInvalid.WithError(err))
+
+			return
+		}
+
+		if user == nil {
+			ctx.Fail(codeRefreshTokenInvalid.WithError(gorm.ErrRecordNotFound))
 
 			return
 		}

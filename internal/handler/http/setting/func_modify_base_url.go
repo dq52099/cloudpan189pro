@@ -31,6 +31,10 @@ func (h *handler) ModifyBaseURL() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureSettingService(ctx, codeModifyBaseURLFailed) {
+			return
+		}
+
 		if err := h.settingService.Update(ctx.GetContext(),
 			utils.WithField("base_url", req.BaseURL),
 		); err != nil {

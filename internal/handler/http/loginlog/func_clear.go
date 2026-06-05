@@ -37,6 +37,10 @@ func (h *handler) Clear() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureLoginLogService(ctx, codeClearFailed) {
+			return
+		}
+
 		if req.Duration == "" {
 			count, err := h.loginLogService.ClearAll(ctx.GetContext())
 			if err != nil {

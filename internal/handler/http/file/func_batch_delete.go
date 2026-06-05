@@ -43,6 +43,10 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 
 		topMountPoints := make(map[int64]*models.MountPoint)
 
+		if !h.ensureVirtualFileService(ctx, busCodeFileQueryError) {
+			return
+		}
+
 		for _, id := range requestIDs {
 			file, err := h.virtualFileService.Query(ctx.GetContext(), id)
 			if err != nil {
@@ -51,6 +55,12 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 				} else {
 					ctx.Fail(busCodeFileQueryError.WithError(err))
 				}
+
+				return
+			}
+
+			if file == nil {
+				ctx.Fail(busCodeFileNotFound.WithError(gorm.ErrRecordNotFound))
 
 				return
 			}
@@ -67,6 +77,10 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 
 			mountPoint, ok := topMountPoints[file.TopId]
 			if !ok {
+				if !h.ensureMountPointService(ctx, busCodeQueryTopIdError) {
+					return
+				}
+
 				mountPoint, err = h.mountPointService.Query(ctx.GetContext(), file.TopId)
 				if err != nil {
 					if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -74,6 +88,12 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 					} else {
 						ctx.Fail(busCodeQueryTopIdError.WithError(err))
 					}
+
+					return
+				}
+
+				if mountPoint == nil {
+					ctx.Forbidden("无权限删除")
 
 					return
 				}
@@ -104,6 +124,10 @@ func (h *handler) BatchDelete() httpcontext.HandlerFunc {
 		}
 
 		fullPath := ctx.GetContext().String(consts.CtxKeyFullPath, "unknown")
+
+		if !h.ensureTaskEngine(ctx, busCodeBatchDeleteError) {
+			return
+		}
 
 		// 推送消息到队列
 		err = h.taskEngine.PushMessage(

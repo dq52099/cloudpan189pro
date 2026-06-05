@@ -34,6 +34,10 @@ func (h *handler) RetryPlan() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensurePlanService(ctx, codePlanQueryFailed) {
+			return
+		}
+
 		// 查询计划是否存在
 		plan, err := h.planService.Query(ctx.GetContext(), req.ID)
 		if err != nil {
@@ -55,6 +59,10 @@ func (h *handler) RetryPlan() httpcontext.HandlerFunc {
 		}
 
 		if !ensurePlanAccess(ctx, plan) {
+			return
+		}
+
+		if !h.ensureTaskEngine(ctx, codePlanRefreshFailed) {
 			return
 		}
 

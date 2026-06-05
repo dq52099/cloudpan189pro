@@ -30,6 +30,7 @@ var (
 	codeModifyBaseURLFailed    = bi.Next("更新系统基础URL失败")
 	codeToggleEnableAuthFailed = bi.Next("更新系统鉴权开关失败")
 	codeModifyAdditionFailed   = bi.Next("更新系统附加设置失败")
+	codeInvalidLocalProxyURL   = bi.Next("本地代理地址必须是有效的 http/https 地址")
 )
 
 type handler struct {

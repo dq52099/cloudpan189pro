@@ -7,6 +7,7 @@ import (
 
 	"github.com/xxcheng123/cloudpan189-share/internal/bootstrap"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 
 	cloudbridgeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
@@ -88,6 +89,7 @@ func (s *service) UpdateLastState(ctx context.Context, fileId int64, state strin
 		state = "成功"
 	}
 
+	state = sanitizeMountPointLastState(state)
 	if len([]rune(state)) > 512 {
 		state = string([]rune(state)[:512]) + "..."
 	}
@@ -109,11 +111,31 @@ func (s *service) getDB(ctx context.Context) *gorm.DB {
 }
 
 var (
-	reFolderID      = regexp.MustCompile(`^\d+$`)
-	reShareLink     = regexp.MustCompile(`cloud\.189\.cn\/t\/([a-zA-Z0-9]+)`)
-	reAccessCode    = regexp.MustCompile(`(?:\S+码|code)[:：]\s*([a-zA-Z0-9]+)`)
-	reSubscribeLink = regexp.MustCompile(`content\.21cn\.com.*[?&]uuid=([a-zA-Z0-9]+)`)
+	mountPointLastStateURLPattern = regexp.MustCompile(`(?i)(?:[a-z][a-z0-9+.-]*://|/)[^\s"'<>]+`)
+	reFolderID                    = regexp.MustCompile(`^\d+$`)
 )
+
+type batchParseCandidateKind int
+
+const (
+	batchParseCandidateShare batchParseCandidateKind = iota + 1
+	batchParseCandidateSubscribe
+	batchParseCandidatePersonFolder
+)
+
+type batchParseCandidate struct {
+	kind        batchParseCandidateKind
+	shareCode   string
+	accessCode  string
+	fileID      string
+	subscribeID string
+}
+
+func sanitizeMountPointLastState(state string) string {
+	state = mountPointLastStateURLPattern.ReplaceAllStringFunc(state, utils.RedactURLForLog)
+
+	return utils.RedactSensitiveText(state)
+}
 
 // 实现 BatchParseText
 func (s *service) BatchParseText(ctx context.Context, req *topic.BatchParseTextRequest) ([]*topic.BatchParseItem, error) {
@@ -121,135 +143,200 @@ func (s *service) BatchParseText(ctx context.Context, req *topic.BatchParseTextR
 		return nil, errInvalidMountPointParseRequest
 	}
 
-	if req.CloudToken <= 0 {
-		return nil, errInvalidMountPointCloudTokenID
+	req.Content = strings.TrimSpace(req.Content)
+	if req.Content == "" {
+		return nil, errInvalidMountPointParseRequest
 	}
 
-	// 1. 获取 Token 信息 (用于 CheckPerson)
-	tokenInfo, err := s.cloudTokenService.QueryAccessible(ctx, req.CloudToken, req.UserID, req.IsAdmin)
-	if err != nil {
-		return nil, err
-	}
-	// 构造 AuthToken
-	authToken := cloudbridgeSvi.NewAuthToken(tokenInfo.AccessToken, tokenInfo.ExpiresIn)
+	var candidates []*batchParseCandidate
 
-	var results []*topic.BatchParseItem
+	requiresCloudToken := false
 
 	lines := strings.Split(req.Content, "\n")
-
 	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
+		candidate := parseBatchTextLine(line)
+		if candidate == nil {
 			continue
 		}
 
-		// 预处理：统一中文符号
-		cleanLine := strings.ReplaceAll(line, "（", "(")
-		cleanLine = strings.ReplaceAll(cleanLine, "）", ")")
-		cleanLine = strings.ReplaceAll(cleanLine, "：", ":")
-
-		var (
-			shareCode   string
-			accessCode  string
-			fileId      string
-			isShare     bool
-			isFolder    bool
-			isSubscribe bool
-			subscribeId string
-		)
-
-		// 0. 尝试匹配订阅号链接 (优先级最高)
-		if matches := reSubscribeLink.FindStringSubmatch(cleanLine); len(matches) > 1 {
-			subscribeId = matches[1]
-			isSubscribe = true
+		candidates = append(candidates, candidate)
+		if candidate.kind == batchParseCandidatePersonFolder {
+			requiresCloudToken = true
 		}
+	}
 
-		// 1. 尝试匹配分享链接 (全行搜索)
-		if !isSubscribe {
-			if matches := reShareLink.FindStringSubmatch(cleanLine); len(matches) > 1 {
-				shareCode = matches[1]
-				isShare = true
-			}
+	var authToken cloudbridgeSvi.AuthToken
+
+	if requiresCloudToken {
+		var err error
+
+		authToken, err = s.batchParseAuthToken(ctx, req)
+		if err != nil {
+			return nil, err
 		}
+	}
 
-		// 2. 如果不是分享链接，尝试匹配纯数字文件夹ID
-		if !isShare {
-			// 这里需要严谨一点，如果是纯数字或者是 "数字" 这种格式
-			// 简单处理：如果是纯数字
-			if reFolderID.MatchString(line) {
-				fileId = line
-				isFolder = true
-			} else {
-				// 如果是 "folder_id 12345" 这种格式，尝试提取
-				parts := strings.Fields(line)
-				if len(parts) > 0 && reFolderID.MatchString(parts[0]) {
-					fileId = parts[0]
-					isFolder = true
-				}
-			}
-		}
+	var results []*topic.BatchParseItem
 
-		// 3. 提取访问码 (仅针对分享链接)
-		if isShare {
-			if codeMatch := reAccessCode.FindStringSubmatch(cleanLine); len(codeMatch) > 1 {
-				accessCode = codeMatch[1]
-			} else {
-				parts := strings.Fields(cleanLine)
-				if len(parts) > 1 {
-					lastPart := strings.Trim(parts[len(parts)-1], "()")
-					if len(lastPart) == 4 {
-						accessCode = lastPart
-					}
-				}
-			}
-		}
-
-		if isShare {
-			info, err := s.cloudBridgeService.GetShareInfo(ctx, shareCode, accessCode)
-
-			name := ""
-			if err == nil && info != nil {
-				name = info.Name
-			} else {
-				name = "未知分享_" + shareCode
-			}
-
+	for _, candidate := range candidates {
+		switch candidate.kind {
+		case batchParseCandidateShare:
 			results = append(results, &topic.BatchParseItem{
-				Name:            name,
+				Name:            s.batchParseShareName(ctx, candidate),
 				OsType:          models.OsTypeShareFolder,
-				ShareCode:       shareCode,
-				ShareAccessCode: accessCode,
+				ShareCode:       candidate.shareCode,
+				ShareAccessCode: candidate.accessCode,
 			})
-		} else if isFolder {
-			name, err := s.cloudBridgeService.CheckPerson(ctx, authToken, fileId)
-
-			if err != nil || name == "" {
-				name = "未知文件夹_" + fileId
-			}
-
-			results = append(results, &topic.BatchParseItem{
-				Name:   name,
-				OsType: models.OsTypePersonFolder,
-				FileId: fileId,
-			})
-		} else if isSubscribe {
-			userInfo, err := s.cloudBridgeService.GetSubscribeUserInfo(ctx, subscribeId)
-
-			name := ""
-			if err == nil && userInfo != nil {
-				name = userInfo.Name
-			} else {
-				name = "未知订阅号_" + subscribeId
-			}
-
+		case batchParseCandidateSubscribe:
 			// 使用 subscribe 类型，只需 SubscribeUser，不需要 ShareCode
 			results = append(results, &topic.BatchParseItem{
-				Name:          name,
+				Name:          s.batchParseSubscribeName(ctx, candidate),
 				OsType:        models.OsTypeSubscribe,
-				SubscribeUser: subscribeId,
+				SubscribeUser: candidate.subscribeID,
+			})
+		case batchParseCandidatePersonFolder:
+			results = append(results, &topic.BatchParseItem{
+				Name:   s.batchParsePersonName(ctx, authToken, candidate),
+				OsType: models.OsTypePersonFolder,
+				FileId: candidate.fileID,
 			})
 		}
 	}
 
 	return results, nil
+}
+
+func (s *service) batchParseShareName(ctx context.Context, candidate *batchParseCandidate) string {
+	if isNilDependency(s.cloudBridgeService) {
+		return "未知分享_" + candidate.shareCode
+	}
+
+	info, err := s.cloudBridgeService.GetShareInfo(ctx, candidate.shareCode, candidate.accessCode)
+	if err == nil && info != nil && info.Name != "" {
+		return info.Name
+	}
+
+	return "未知分享_" + candidate.shareCode
+}
+
+func (s *service) batchParseSubscribeName(ctx context.Context, candidate *batchParseCandidate) string {
+	if isNilDependency(s.cloudBridgeService) {
+		return "未知订阅号_" + candidate.subscribeID
+	}
+
+	userInfo, err := s.cloudBridgeService.GetSubscribeUserInfo(ctx, candidate.subscribeID)
+	if err == nil && userInfo != nil && userInfo.Name != "" {
+		return userInfo.Name
+	}
+
+	return "未知订阅号_" + candidate.subscribeID
+}
+
+func (s *service) batchParsePersonName(ctx context.Context, authToken cloudbridgeSvi.AuthToken, candidate *batchParseCandidate) string {
+	if isNilDependency(s.cloudBridgeService) {
+		return "未知文件夹_" + candidate.fileID
+	}
+
+	name, err := s.cloudBridgeService.CheckPerson(ctx, authToken, candidate.fileID)
+	if err == nil && name != "" {
+		return name
+	}
+
+	return "未知文件夹_" + candidate.fileID
+}
+
+func (s *service) batchParseAuthToken(ctx context.Context, req *topic.BatchParseTextRequest) (cloudbridgeSvi.AuthToken, error) {
+	var emptyToken cloudbridgeSvi.AuthToken
+
+	if req.CloudToken <= 0 {
+		return emptyToken, errInvalidMountPointCloudTokenID
+	}
+
+	if isNilDependency(s.cloudTokenService) {
+		return emptyToken, errMountPointCloudTokenServiceUnavailable
+	}
+
+	tokenInfo, err := s.cloudTokenService.QueryAccessible(ctx, req.CloudToken, req.UserID, req.IsAdmin)
+	if err != nil {
+		return emptyToken, err
+	}
+
+	if tokenInfo == nil {
+		return emptyToken, gorm.ErrRecordNotFound
+	}
+
+	return cloudbridgeSvi.NewAuthToken(tokenInfo.AccessToken, tokenInfo.AuthExpiresAtMillis(time.Now())), nil
+}
+
+func parseBatchTextLine(line string) *batchParseCandidate {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil
+	}
+
+	// 预处理：统一中文符号。
+	cleanLine := strings.ReplaceAll(line, "（", "(")
+	cleanLine = strings.ReplaceAll(cleanLine, "）", ")")
+	cleanLine = strings.ReplaceAll(cleanLine, "：", ":")
+
+	if parsedSubscribeID := utils.ParseCloud189SubscribeUserID(cleanLine); parsedSubscribeID != "" {
+		return &batchParseCandidate{
+			kind:        batchParseCandidateSubscribe,
+			subscribeID: parsedSubscribeID,
+		}
+	}
+
+	if parsedShareCode, parsedAccessCode := utils.ParseCloud189ShareCode(cleanLine, ""); isCloud189ShareLink(cleanLine) &&
+		isValidCloud189ShareParams(parsedShareCode, parsedAccessCode) {
+		return &batchParseCandidate{
+			kind:       batchParseCandidateShare,
+			shareCode:  parsedShareCode,
+			accessCode: parsedAccessCode,
+		}
+	}
+
+	if utils.ContainsURLLike(cleanLine) {
+		if parsedShareCode, parsedAccessCode := utils.ParseCloud189ShareCode(cleanLine, ""); isValidCloud189ShareParams(parsedShareCode, parsedAccessCode) {
+			return &batchParseCandidate{
+				kind:       batchParseCandidateShare,
+				shareCode:  parsedShareCode,
+				accessCode: parsedAccessCode,
+			}
+		}
+
+		return nil
+	}
+
+	if reFolderID.MatchString(line) {
+		return &batchParseCandidate{
+			kind:   batchParseCandidatePersonFolder,
+			fileID: line,
+		}
+	}
+
+	parts := strings.Fields(line)
+	if len(parts) > 0 && reFolderID.MatchString(parts[0]) {
+		return &batchParseCandidate{
+			kind:   batchParseCandidatePersonFolder,
+			fileID: parts[0],
+		}
+	}
+
+	if parsedShareCode, parsedAccessCode := utils.ParseCloud189ShareCode(cleanLine, ""); isValidCloud189ShareParams(parsedShareCode, parsedAccessCode) {
+		return &batchParseCandidate{
+			kind:       batchParseCandidateShare,
+			shareCode:  parsedShareCode,
+			accessCode: parsedAccessCode,
+		}
+	}
+
+	return nil
+}
+
+func isCloud189ShareLink(value string) bool {
+	return utils.IsCloud189ShareLink(value)
+}
+
+func isValidCloud189ShareParams(shareCode string, accessCode string) bool {
+	return utils.IsCloud189ShareCode(shareCode) && (accessCode == "" || utils.IsCloud189AccessCode(accessCode))
 }

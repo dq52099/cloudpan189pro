@@ -45,6 +45,10 @@ func (h *handler) Refresh() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensurePlanService(ctx, codePlanQueryFailed) {
+			return
+		}
+
 		plan, err := h.planService.Query(ctx.GetContext(), req.PlanId)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -83,6 +87,10 @@ func (h *handler) Refresh() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureTaskEngine(ctx, codePlanRefreshFailed) {
+			return
+		}
+
 		if err = h.taskEngine.PushMessage(ctx.GetContext(), taskReq.Topic(), body); err != nil {
 			ctx.Fail(codePlanRefreshFailed.WithError(err))
 
@@ -117,6 +125,10 @@ func (h *handler) RetryFailed() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensurePlanService(ctx, codePlanQueryFailed) {
+			return
+		}
+
 		plan, err := h.planService.Query(ctx.GetContext(), req.PlanId)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -141,15 +153,22 @@ func (h *handler) RetryFailed() httpcontext.HandlerFunc {
 		}
 
 		oldOffset := plan.Offset
+
+		if !h.ensureTaskEngine(ctx, codePlanRefreshFailed) {
+			return
+		}
+
 		if err = h.dispatchRetryWithRollback(ctx, plan, 0, false, false); err != nil {
 			failAutoIngestRetryError(ctx, err)
 
 			return
 		}
 
-		if _, logErr := h.logService.Create(ctx.GetContext(), req.PlanId, autoingest.LogLevelWarn,
-			fmt.Sprintf("手动重试：将偏移量从 %d 重置为 0", oldOffset)); logErr != nil {
-			ctx.GetContext().Error("创建重试日志失败", zap.Error(logErr))
+		if h.hasLogService(ctx) {
+			if _, logErr := h.logService.Create(ctx.GetContext(), req.PlanId, autoingest.LogLevelWarn,
+				fmt.Sprintf("手动重试：将偏移量从 %d 重置为 0", oldOffset)); logErr != nil {
+				ctx.GetContext().Error("创建重试日志失败", zap.Error(logErr))
+			}
 		}
 
 		ctx.Success("重试任务已下发，偏移量已重置")

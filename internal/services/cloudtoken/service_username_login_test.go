@@ -9,7 +9,10 @@ import (
 
 	"github.com/tickstep/cloudpan189-api/cloudpan"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	"gorm.io/gorm"
 )
 
@@ -261,5 +264,113 @@ func TestUsernameLoginRejectsMissingUserIDForNewTokenBeforeAppLogin(t *testing.T
 
 	if appLoginCalled {
 		t.Fatal("expected missing user id to return before app login")
+	}
+}
+
+func TestUsernameLoginRedactsLoginFailureForNewToken(t *testing.T) {
+	tDB := setupCloudTokenTestDB(t)
+	svc := NewService(tDB)
+
+	core, logs := observer.New(zap.ErrorLevel)
+	ctx := context.NewContext(stdctx.Background(), context.WithLogger(zap.New(core)))
+
+	username := "sensitive-user@example.com"
+	password := "sensitive-password"
+
+	stubAppLoginFunc(t, func(username, password string) (*cloudpan.AppLoginToken, error) {
+		return nil, fmt.Errorf(
+			"login failed username=%s password=%s GET https://proxy-user:proxy-pass@example.test/login?accessToken=query-secret&filename=private-name.mkv#refreshToken=fragment-secret accessCode=abcd Authorization: Bearer bearer-secret",
+			username,
+			password,
+		)
+	})
+
+	_, err := svc.UsernameLogin(ctx, &UsernameLoginRequest{
+		Username: username,
+		Password: password,
+		Name:     "new-token",
+		UserID:   10,
+	})
+	if err == nil {
+		t.Fatal("expected login failure")
+	}
+
+	assertCloudTokenLoginFailureRedacted(t, err.Error(), logs, username, password)
+}
+
+func TestUsernameLoginRedactsLoginFailureForRefresh(t *testing.T) {
+	tDB := setupCloudTokenTestDB(t)
+	svc := NewService(tDB)
+
+	token := &models.CloudToken{
+		Name:        "password-token",
+		AccessToken: "old-access-token",
+		ExpiresIn:   3600,
+		Status:      1,
+		LoginType:   models.LoginTypePassword,
+		Username:    "old-user",
+		Password:    "old-pass",
+		UserID:      10,
+	}
+	if err := tDB.db.Create(token).Error; err != nil {
+		t.Fatalf("create cloud token: %v", err)
+	}
+
+	core, logs := observer.New(zap.ErrorLevel)
+	ctx := context.NewContext(stdctx.Background(), context.WithLogger(zap.New(core)))
+
+	username := "refresh-user@example.com"
+	password := "refresh-password"
+
+	stubAppLoginFunc(t, func(username, password string) (*cloudpan.AppLoginToken, error) {
+		return nil, fmt.Errorf(
+			"refresh failed username=%s password=%s POST https://proxy-user:proxy-pass@example.test/login?accessToken=query-secret&filename=private-name.mkv#refreshToken=fragment-secret accessCode=abcd Authorization: Bearer bearer-secret",
+			username,
+			password,
+		)
+	})
+
+	_, err := svc.UsernameLogin(ctx, &UsernameLoginRequest{
+		ID:       token.ID,
+		Username: username,
+		Password: password,
+		UserID:   10,
+	})
+	if err == nil {
+		t.Fatal("expected refresh login failure")
+	}
+
+	assertCloudTokenLoginFailureRedacted(t, err.Error(), logs, username, password)
+}
+
+func assertCloudTokenLoginFailureRedacted(t *testing.T, errText string, logs *observer.ObservedLogs, username string, password string) {
+	t.Helper()
+
+	entries := logs.FilterMessage("用户名密码登录失败").All()
+	if len(entries) != 1 {
+		t.Fatalf("expected one login failure log, got %d", len(entries))
+	}
+
+	logText := entries[0].Message + fmt.Sprint(entries[0].Context)
+	for _, text := range []string{errText, logText} {
+		for _, leaked := range []string{
+			username,
+			password,
+			"proxy-user",
+			"proxy-pass",
+			"query-secret",
+			"private-name.mkv",
+			"fragment-secret",
+			"abcd",
+			"bearer-secret",
+		} {
+			if strings.Contains(text, leaked) {
+				t.Fatalf("expected %q to be redacted from %q", leaked, text)
+			}
+		}
+
+		if !strings.Contains(text, utils.RedactedSecret) {
+			t.Fatalf("expected redacted marker in %q", text)
+		}
 	}
 }

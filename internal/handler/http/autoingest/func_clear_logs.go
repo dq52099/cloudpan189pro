@@ -31,6 +31,10 @@ func (h *handler) ClearLogs() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureLogService(ctx, codeLogDeleteFailed) {
+			return
+		}
+
 		var (
 			count int64
 			err   error

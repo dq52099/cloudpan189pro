@@ -5,12 +5,12 @@
         <n-alert type="info" show-icon title="使用说明" class="mb-4">
           <template #default>
             <div class="usage-guide">
-              <p>输入分享链接、分享码、文件夹ID或订阅号链接，系统将自动识别名称。</p>
-              <p>支持格式：</p>
-              <p>• 分享链接：https://cloud.189.cn/t/xxxxx</p>
-              <p>• 文件夹ID：123456789</p>
-              <p>• 订阅号链接：https://content.21cn.com/h5/subscrip/... ?uuid=xxx</p>
-              <p>点击"下一步"后，您可以批量设置挂载路径前缀。</p>
+              <p>每行一个资源，系统将自动识别名称。</p>
+              <p>• 分享链接：https://cloud.189.cn/t/abcDEF 提取码：wxyz</p>
+              <p>• 分享码：xyZ123 提取码：a1b2</p>
+              <p>• 文件夹ID：123456789（需选择云盘账号）</p>
+              <p>• 订阅号链接：https://content.21cn.com/h5/subscrip/...?uuid=xxx</p>
+              <p>• 订阅号ID：订阅号：up-user</p>
             </div>
           </template>
         </n-alert>
@@ -30,7 +30,7 @@
             :options="cloudTokenOptions"
             :loading="state.loadingTokens"
             :disabled="isBusy"
-            placeholder="请选择用于解析的账号"
+            placeholder="解析文件夹ID时必选"
             clearable
           />
         </n-form-item>
@@ -40,7 +40,7 @@
           <n-input
             v-model:value="formModel.content"
             type="textarea"
-            placeholder="示例：&#10;https://cloud.189.cn/t/code&#10;123456789 (文件夹ID)"
+            placeholder="示例：&#10;https://cloud.189.cn/t/abcDEF 提取码：wxyz&#10;分享码：xyZ123 提取码：a1b2&#10;123456789&#10;https://content.21cn.com/h5/subscrip/...?uuid=xxx&#10;订阅号：up-user"
             :autosize="{ minRows: 8, maxRows: 15 }"
             :disabled="isBusy"
             class="resource-textarea"
@@ -76,7 +76,9 @@ import { getCloudTokenList } from '@/api/cloudtoken'
 import { batchParseStorageText, type BatchParseItem } from '@/api/storage'
 import { getErrorMessage } from '@/utils/api'
 import { getListItems } from '@/utils/pagination'
+import { OS_TYPES } from '@/utils/osType'
 import { normalizeCloudTokens } from '@/utils/responseGuards'
+import { containsCloud189URLLike } from '@/utils/shareCode'
 
 interface Emits {
   (e: 'parsed', payload: { items: BatchParseItem[]; token: number }): void
@@ -102,14 +104,6 @@ let operationVersion = 0
 let isComponentMounted = false
 
 const rules: FormRules = {
-  cloudToken: [
-    {
-      type: 'number',
-      required: true,
-      message: '请选择云盘账号',
-      trigger: ['blur', 'change'],
-    },
-  ],
   content: [
     {
       required: true,
@@ -132,8 +126,62 @@ const isCurrentOperation = (version: number) => {
   return isComponentMounted && operationVersion === version
 }
 
+const folderIdPattern = /^\d+$/
+
+const normalizeCloudTokenID = (value: unknown) => {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+    return null
+  }
+
+  return value
+}
+
+const contentContainsPersonFolderId = (content: string) => {
+  return content.split('\n').some((line) => {
+    const cleanLine = line.trim()
+    if (!cleanLine || containsCloud189URLLike(cleanLine)) {
+      return false
+    }
+
+    if (folderIdPattern.test(cleanLine)) {
+      return true
+    }
+
+    const [firstPart] = cleanLine.split(/\s+/)
+
+    return folderIdPattern.test(firstPart)
+  })
+}
+
 const isOptionalString = (value: unknown): value is string | undefined => {
   return value === undefined || typeof value === 'string'
+}
+
+const isNonEmptyString = (value: unknown): value is string => {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+const supportedBatchParseOsTypes = new Set<string>([
+  OS_TYPES.SHARE_FOLDER,
+  OS_TYPES.PERSON_FOLDER,
+  OS_TYPES.SUBSCRIBE,
+])
+
+const isSupportedBatchParseOsType = (value: unknown): value is BatchParseItem['osType'] => {
+  return typeof value === 'string' && supportedBatchParseOsTypes.has(value)
+}
+
+const hasRequiredBatchParseFields = (item: Record<string, unknown>) => {
+  switch (item.osType) {
+    case OS_TYPES.SHARE_FOLDER:
+      return isNonEmptyString(item.shareCode)
+    case OS_TYPES.PERSON_FOLDER:
+      return isNonEmptyString(item.fileId)
+    case OS_TYPES.SUBSCRIBE:
+      return isNonEmptyString(item.subscribeUser)
+    default:
+      return false
+  }
 }
 
 const isBatchParseItem = (value: unknown): value is BatchParseItem => {
@@ -146,12 +194,12 @@ const isBatchParseItem = (value: unknown): value is BatchParseItem => {
   return (
     typeof item.name === 'string' &&
     item.name.trim().length > 0 &&
-    typeof item.osType === 'string' &&
-    item.osType.trim().length > 0 &&
+    isSupportedBatchParseOsType(item.osType) &&
     isOptionalString(item.shareCode) &&
     isOptionalString(item.shareAccessCode) &&
     isOptionalString(item.fileId) &&
-    isOptionalString(item.subscribeUser)
+    isOptionalString(item.subscribeUser) &&
+    hasRequiredBatchParseFields(item)
   )
 }
 
@@ -224,14 +272,27 @@ const handleNext = async () => {
     return
   }
 
-  if (!formModel.cloudToken) return
+  const content = formModel.content.trim()
+  if (!content) {
+    message.warning('请输入有效资源内容')
 
-  const cloudToken = formModel.cloudToken
+    return
+  }
+
+  const requiresFolderToken = contentContainsPersonFolderId(content)
+  const selectedCloudToken = normalizeCloudTokenID(formModel.cloudToken)
+  if (requiresFolderToken && selectedCloudToken === null) {
+    message.warning('解析文件夹ID需要选择云盘账号')
+
+    return
+  }
+
+  const cloudToken = requiresFolderToken ? (selectedCloudToken ?? 0) : 0
 
   state.submitting = true
 
   batchParseStorageText({
-    content: formModel.content,
+    content,
     cloudToken,
   })
     .then((res) => {
@@ -316,6 +377,15 @@ onUnmounted(() => {
   line-height: 1.6;
 }
 
+.usage-guide p {
+  margin: 0;
+  word-break: break-all;
+}
+
+.usage-guide p + p {
+  margin-top: 4px;
+}
+
 .resource-textarea {
   font-family: monospace;
 }
@@ -327,5 +397,15 @@ onUnmounted(() => {
   padding-top: 20px;
   margin-top: 10px;
   border-top: 1px solid var(--n-border-color);
+}
+
+@media (width <= 640px) {
+  .modal-actions {
+    flex-direction: column;
+  }
+
+  .modal-actions :deep(.n-button) {
+    width: 100%;
+  }
 }
 </style>

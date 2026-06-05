@@ -15,7 +15,6 @@
               :options="tmdbCategories"
               @update:value="handleCategoryChange"
               placeholder="选择分类"
-              style="width: 300px"
             />
           </div>
           <div class="category-tabs" v-else>
@@ -24,7 +23,6 @@
               :options="doubanCategories"
               @update:value="handleCategoryChange"
               placeholder="选择分类"
-              style="width: 300px"
             />
           </div>
           <n-spin :show="loading">
@@ -37,8 +35,8 @@
               >
                 <div class="movie-cover">
                   <img :src="movie.cover" :alt="movie.title" />
-                  <div class="movie-rating" v-if="movie.rating">
-                    <span>{{ movie.rating.toFixed(1) }}</span>
+                  <div class="movie-rating" v-if="hasRating(movie.rating)">
+                    <span>{{ formatRating(movie.rating) }}</span>
                   </div>
                 </div>
                 <div class="movie-info">
@@ -60,19 +58,13 @@
               placeholder="输入关键词搜索天翼云盘资源"
               clearable
               @keyup.enter="handleSearch"
-              style="width: 400px"
             >
               <template #prefix>
                 <n-icon><SearchOutline /></n-icon>
               </template>
             </n-input>
             <n-button type="primary" @click="handleSearch" :loading="searching"> 搜索 </n-button>
-            <n-button
-              type="success"
-              @click="handleAISearch"
-              :loading="searching"
-              style="margin-left: 8px"
-            >
+            <n-button type="success" @click="handleAISearch" :loading="searching">
               AI 智能推荐
             </n-button>
           </div>
@@ -108,6 +100,14 @@
       <n-tab-pane name="settings" tab="定时任务">
         <div class="settings-section">
           <n-form :model="configForm" label-placement="left" label-width="140px">
+            <n-form-item label="启用定时任务">
+              <n-switch v-model:value="configForm.enabled" />
+              <template #feedback>
+                <span style="font-size: 12px; color: #999"
+                  >关闭后后台不会按定时表达式执行订阅任务</span
+                >
+              </template>
+            </n-form-item>
             <n-form-item label="启用 TMDB 数据">
               <n-switch v-model:value="configForm.enableTMDB" />
             </n-form-item>
@@ -125,7 +125,7 @@
             <n-form-item label="盘搜 API 地址">
               <n-input
                 v-model:value="configForm.panSearchURL"
-                placeholder="https://tg.252035.xyz"
+                placeholder="https://so.252035.xyz/api/search"
               />
             </n-form-item>
             <n-form-item label="默认挂载路径">
@@ -184,13 +184,18 @@
     </n-tabs>
 
     <!-- 资源详情弹窗 -->
-    <n-modal v-model:show="showDetailModal" preset="card" title="资源详情" style="width: 600px">
+    <n-modal
+      v-model:show="showDetailModal"
+      preset="card"
+      title="资源详情"
+      style="width: min(600px, calc(100vw - 32px))"
+    >
       <n-descriptions v-if="selectedMovie" :column="2" label-placement="left">
         <n-descriptions-item label="标题">{{ selectedMovie.title }}</n-descriptions-item>
         <n-descriptions-item label="原名">{{ selectedMovie.originalTitle }}</n-descriptions-item>
         <n-descriptions-item label="年份">{{ selectedMovie.year }}</n-descriptions-item>
         <n-descriptions-item label="评分">{{
-          selectedMovie.rating?.toFixed(1)
+          formatRating(selectedMovie.rating)
         }}</n-descriptions-item>
         <n-descriptions-item label="类型">{{
           selectedMovie.type === 'movie' ? '电影' : '电视剧'
@@ -211,7 +216,7 @@
       :show="showMountModal"
       preset="card"
       title="挂载资源"
-      style="width: 500px"
+      style="width: min(500px, calc(100vw - 32px))"
       :closable="!mounting"
       :mask-closable="!mounting"
       :close-on-esc="!mounting"
@@ -226,6 +231,9 @@
         </n-form-item>
         <n-form-item label="分享码">
           <n-input v-model:value="mountForm.shareCode" :disabled="mounting" />
+        </n-form-item>
+        <n-form-item label="访问码">
+          <n-input v-model:value="mountForm.shareAccessCode" :disabled="mounting" />
         </n-form-item>
         <n-form-item label="挂载路径">
           <n-input v-model:value="mountForm.mountPath" :disabled="mounting" />
@@ -269,6 +277,12 @@ import {
   normalizeSubscriptionConfigResponse,
 } from '@/utils/responseGuards'
 import { getErrorMessage } from '@/utils/api'
+import {
+  isCloud189AccessCode,
+  isCloud189ShareCode,
+  parseCloud189ShareCode,
+  type Cloud189ShareParams,
+} from '@/utils/shareCode'
 
 const message = useMessage()
 
@@ -288,6 +302,7 @@ const searchResults = ref<SearchResult[]>([])
 const tmdbApiKey = ref(true)
 
 const configForm = ref<SubscriptionConfig>({
+  enabled: false,
   enableTMDB: true,
   enableDouban: true,
   panSearchURL: 'https://so.252035.xyz/api/search',
@@ -309,6 +324,7 @@ const mountForm = ref({
   title: '',
   shareUrl: '',
   shareCode: '',
+  shareAccessCode: '',
   cover: '',
   mountPath: '',
 })
@@ -330,6 +346,14 @@ const isString = (value: unknown): value is string => {
 
 const isFiniteNumber = (value: unknown): value is number => {
   return typeof value === 'number' && Number.isFinite(value)
+}
+
+const hasRating = (value: unknown): value is number => {
+  return isFiniteNumber(value)
+}
+
+const formatRating = (value: unknown) => {
+  return hasRating(value) ? value.toFixed(1) : '-'
 }
 
 const isMountSubscriptionResponse = (value: unknown): value is MountSubscriptionResponse => {
@@ -366,8 +390,10 @@ const loadCategories = async () => {
 
     message.error(res.msg || '加载分类失败')
   } catch (error) {
-    console.error('加载分类失败', error)
-    message.error(getErrorMessage(error, '加载分类失败'))
+    const errorMessage = getErrorMessage(error, '加载分类失败')
+
+    console.error('加载分类失败', errorMessage)
+    message.error(errorMessage)
   }
 
   return false
@@ -468,8 +494,10 @@ const loadConfig = async () => {
 
     message.error(res.msg || '加载配置失败')
   } catch (error) {
-    console.error('加载配置失败', error)
-    message.error(getErrorMessage(error, '加载配置失败'))
+    const errorMessage = getErrorMessage(error, '加载配置失败')
+
+    console.error('加载配置失败', errorMessage)
+    message.error(errorMessage)
   }
 
   return false
@@ -613,6 +641,7 @@ const selectSearchResult = (item: SearchResult) => {
     title: item.name,
     shareUrl: item.shareUrl,
     shareCode: item.shareCode,
+    shareAccessCode: item.shareAccessCode || '',
     cover: item.cover || '',
     mountPath: buildDefaultMountPath(item.name),
   }
@@ -624,6 +653,49 @@ const buildDefaultMountPath = (title: string) => {
   const safeTitle = title.trim().replace(/^\/+/, '')
 
   return `${basePath || ''}/${safeTitle}`.replace(/\/+/g, '/')
+}
+
+const normalizeMountShareFields = (): Cloud189ShareParams | null => {
+  let normalized = parseCloud189ShareCode(
+    mountForm.value.shareCode,
+    mountForm.value.shareAccessCode
+  )
+
+  if (!isCloud189ShareCode(normalized.shareCode)) {
+    normalized = parseCloud189ShareCode(mountForm.value.shareUrl, mountForm.value.shareAccessCode)
+  } else if (!normalized.accessCode) {
+    normalized.accessCode = parseCloud189ShareCode(mountForm.value.shareUrl).accessCode
+  }
+
+  if (!isCloud189ShareCode(normalized.shareCode)) {
+    message.warning('请输入有效的分享码或分享链接')
+
+    return null
+  }
+
+  if (normalized.accessCode && !isCloud189AccessCode(normalized.accessCode)) {
+    message.warning('访问码只能包含字母和数字')
+
+    return null
+  }
+
+  return normalized
+}
+
+const isSameSubscriptionConfig = (a: SubscriptionConfig, b: SubscriptionConfig) => {
+  return (
+    a.enabled === b.enabled &&
+    a.enableTMDB === b.enableTMDB &&
+    a.enableDouban === b.enableDouban &&
+    a.panSearchURL === b.panSearchURL &&
+    a.defaultMountPath === b.defaultMountPath &&
+    a.autoMount === b.autoMount &&
+    a.cronExpression === b.cronExpression &&
+    a.tmdbAPIKey === b.tmdbAPIKey &&
+    a.openaiAPIKey === b.openaiAPIKey &&
+    a.openaiBaseURL === b.openaiBaseURL &&
+    a.openaiModel === b.openaiModel
+  )
 }
 
 const handleMountModalShowUpdate = (show: boolean) => {
@@ -660,10 +732,11 @@ const handleSaveConfig = async () => {
   }
 
   const requestId = ++saveConfigRequestId
+  const payload = { ...configForm.value }
 
   savingConfig.value = true
   try {
-    const res = await updateSubscriptionConfig(configForm.value)
+    const res = await updateSubscriptionConfig(payload)
     if (!isPageMounted || requestId !== saveConfigRequestId) {
       return
     }
@@ -676,8 +749,10 @@ const handleSaveConfig = async () => {
         return
       }
 
-      configForm.value = config
       tmdbApiKey.value = !!config.tmdbAPIKey
+      if (isSameSubscriptionConfig(configForm.value, payload)) {
+        configForm.value = config
+      }
       message.success('保存成功')
     } else {
       message.error(res.msg || '保存失败')
@@ -711,6 +786,14 @@ const handleMount = async () => {
     message.warning('挂载路径必须以 / 开头')
     return
   }
+
+  const normalizedShare = normalizeMountShareFields()
+  if (!normalizedShare) {
+    return
+  }
+
+  mountForm.value.shareCode = normalizedShare.shareCode
+  mountForm.value.shareAccessCode = normalizedShare.accessCode
 
   const requestId = ++mountRequestId
   const session = mountModalSession
@@ -821,6 +904,10 @@ onUnmounted(() => {
   margin-bottom: 20px;
 }
 
+.category-tabs :deep(.n-cascader) {
+  width: min(300px, 100%) !important;
+}
+
 .movies-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -886,6 +973,10 @@ onUnmounted(() => {
   margin-bottom: 20px;
 }
 
+.search-bar :deep(.n-input) {
+  width: min(400px, 100%) !important;
+}
+
 .search-result-meta {
   display: flex;
   align-items: center;
@@ -895,5 +986,21 @@ onUnmounted(() => {
 .upload-time {
   color: #999;
   font-size: 12px;
+}
+
+@media (width <= 768px) {
+  .search-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .search-bar > * {
+    width: 100%;
+    margin-left: 0 !important;
+  }
+
+  .movies-grid {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  }
 }
 </style>

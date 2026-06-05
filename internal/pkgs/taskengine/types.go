@@ -10,8 +10,9 @@ import (
 
 // TaskInfo 任务信息
 type TaskInfo struct {
-	Context   context.Context   `json:"-"`
-	Payload   []byte            `json:"payload"`
+	Context context.Context `json:"-"`
+	// Payload 载荷数据，JSON 中为 base64 字符串
+	Payload   []byte            `json:"payload" swaggertype:"string" format:"base64"`
 	ID        string            `json:"id"`        // 任务唯一ID
 	Topic     Topic             `json:"topic"`     // 消息主题
 	WorkerId  string            `json:"workerId"`  // 处理的Worker ID
@@ -49,6 +50,58 @@ func (t *TaskInfo) AddResult(result ProcessorResult) {
 	defer t.mu.Unlock()
 
 	t.Results = append(t.Results, result)
+}
+
+func (t *TaskInfo) markStarted(workerID string, startAt time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.WorkerId = workerID
+	t.StartAt = &startAt
+}
+
+func (t *TaskInfo) payloadSnapshot() []byte {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	return append([]byte(nil), t.Payload...)
+}
+
+func (t *TaskInfo) snapshot() *TaskInfo {
+	if t == nil {
+		return nil
+	}
+
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	task := &TaskInfo{
+		Context:   t.Context,
+		ID:        t.ID,
+		Topic:     t.Topic,
+		WorkerId:  t.WorkerId,
+		ReceiveAt: t.ReceiveAt,
+		Status:    t.Status,
+	}
+	if t.Payload != nil {
+		task.Payload = append([]byte(nil), t.Payload...)
+	}
+
+	if t.StartAt != nil {
+		startAt := *t.StartAt
+		task.StartAt = &startAt
+	}
+
+	if t.EndAt != nil {
+		endAt := *t.EndAt
+		task.EndAt = &endAt
+	}
+
+	if t.Results != nil {
+		task.Results = append([]ProcessorResult(nil), t.Results...)
+	}
+
+	return task
 }
 
 // ProcessorResult 处理器执行结果
@@ -116,6 +169,7 @@ type TaskStats struct {
 	TotalTasks     int64 `json:"totalTasks"`
 	CompletedTasks int64 `json:"completedTasks"`
 	FailedTasks    int64 `json:"failedTasks"`
+	CancelledTasks int64 `json:"cancelledTasks"`
 	RunningTasks   int64 `json:"runningTasks"`
 	PendingTasks   int64 `json:"pendingTasks"`
 	mu             *sync.RWMutex
@@ -143,6 +197,14 @@ func (s *TaskStats) IncrementFailed() {
 	defer s.mu.Unlock()
 
 	s.FailedTasks++
+}
+
+// IncrementCancelled 增加已取消任务数
+func (s *TaskStats) IncrementCancelled() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.CancelledTasks++
 }
 
 // IncrementRunning 增加运行中任务数
@@ -184,6 +246,7 @@ func (s *TaskStats) GetStats() TaskStats {
 		TotalTasks:     s.TotalTasks,
 		CompletedTasks: s.CompletedTasks,
 		FailedTasks:    s.FailedTasks,
+		CancelledTasks: s.CancelledTasks,
 		RunningTasks:   s.RunningTasks,
 		PendingTasks:   s.PendingTasks,
 	}

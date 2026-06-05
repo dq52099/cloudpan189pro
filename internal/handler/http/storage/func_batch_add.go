@@ -3,6 +3,7 @@ package storage
 import (
 	stdContext "context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
@@ -71,6 +72,10 @@ func (h *handler) BatchAdd() httpcontext.HandlerFunc {
 
 		ctx.GetContext().Info("batch_add请求收到", zap.Int("items", len(req.Items)))
 
+		if !h.ensureMountPointService(ctx, busCodeStorageQueryMountPointError) {
+			return
+		}
+
 		// 获取当前用户ID
 		userID := ctx.GetInt64(consts.CtxKeyUserId)
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
@@ -83,9 +88,20 @@ func (h *handler) BatchAdd() httpcontext.HandlerFunc {
 			item := req.Items[i]
 			result := addResponseItem{LocalPath: item.LocalPath}
 
+			localPath, err := normalizeLocalPathForAdd(item.LocalPath)
+			if err != nil {
+				result.Error = sanitizeStorageError(err)
+				results = append(results, result)
+
+				continue
+			}
+
+			item.LocalPath = localPath
+			result.LocalPath = localPath
+
 			existingMountPoint, err := h.mountPointService.QueryByPath(ctx.GetContext(), item.LocalPath)
 			if err != nil {
-				result.Error = err.Error()
+				result.Error = sanitizeStorageError(err)
 				results = append(results, result)
 
 				continue
@@ -101,7 +117,14 @@ func (h *handler) BatchAdd() httpcontext.HandlerFunc {
 			// 走和 Add 相同的校验链，而非简单拼 addition
 			addition, fileId, err := h.buildBatchAddAddition(ctx.GetContext(), &item, userID, isAdmin)
 			if err != nil {
-				result.Error = err.Error()
+				result.Error = sanitizeStorageError(err)
+				results = append(results, result)
+
+				continue
+			}
+
+			if isNilDependency(h.storageFacadeService) {
+				result.Error = sanitizeStorageError(errors.New("存储组合服务未初始化"))
 				results = append(results, result)
 
 				continue
@@ -122,7 +145,7 @@ func (h *handler) BatchAdd() httpcontext.HandlerFunc {
 				AllowExisting:     true, // 批量场景下允许幂等
 			})
 			if createErr != nil {
-				result.Error = createErr.Error()
+				result.Error = sanitizeStorageError(createErr)
 				results = append(results, result)
 
 				continue
@@ -169,7 +192,20 @@ func (h *handler) BatchAdd() httpcontext.HandlerFunc {
 				h.markInitialScanFailed(ctx.GetContext(), ref.fileID, "准备失败", err)
 
 				for _, resultIndex := range ref.resultIndexes {
-					results[resultIndex].ScanError = err.Error()
+					results[resultIndex].ScanError = sanitizeStorageError(err)
+				}
+
+				continue
+			}
+
+			if mountPoint == nil {
+				err = fmt.Errorf("挂载点不存在")
+
+				scanFailedCount += len(ref.resultIndexes)
+				h.markInitialScanFailed(ctx.GetContext(), ref.fileID, "准备失败", err)
+
+				for _, resultIndex := range ref.resultIndexes {
+					results[resultIndex].ScanError = sanitizeStorageError(err)
 				}
 
 				continue
@@ -190,7 +226,7 @@ func (h *handler) BatchAdd() httpcontext.HandlerFunc {
 				h.markInitialScanFailed(ctx.GetContext(), ref.fileID, "序列化失败", err)
 
 				for _, resultIndex := range ref.resultIndexes {
-					results[resultIndex].ScanError = err.Error()
+					results[resultIndex].ScanError = sanitizeStorageError(err)
 				}
 
 				continue
@@ -201,6 +237,20 @@ func (h *handler) BatchAdd() httpcontext.HandlerFunc {
 			fullPath := mountPoint.FullPath
 			if fullPath == "" {
 				fullPath = mountPoint.Name
+			}
+
+			if !h.hasTaskEngine() {
+				err = errors.New("任务引擎未初始化")
+				ctx.GetContext().Warn("推送批量挂载扫描任务失败", zap.Int64("id", ref.fileID), zap.Error(err))
+
+				scanFailedCount += len(ref.resultIndexes)
+				h.markInitialScanFailed(ctx.GetContext(), ref.fileID, "入队失败", err)
+
+				for _, resultIndex := range ref.resultIndexes {
+					results[resultIndex].ScanError = sanitizeStorageError(err)
+				}
+
+				continue
 			}
 
 			if err := h.taskEngine.PushMessage(
@@ -214,7 +264,7 @@ func (h *handler) BatchAdd() httpcontext.HandlerFunc {
 				h.markInitialScanFailed(ctx.GetContext(), ref.fileID, "入队失败", err)
 
 				for _, resultIndex := range ref.resultIndexes {
-					results[resultIndex].ScanError = err.Error()
+					results[resultIndex].ScanError = sanitizeStorageError(err)
 				}
 
 				continue

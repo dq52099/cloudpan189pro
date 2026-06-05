@@ -49,6 +49,10 @@ func (h *handler) RebuildStrmFile() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureMediaConfigService(ctx, codeConfigQueryFailed) {
+			return
+		}
+
 		// 检查媒体功能是否启用
 		cfg, err := h.mediaConfigService.Query(ctx.GetContext())
 		if err != nil {
@@ -63,6 +67,12 @@ func (h *handler) RebuildStrmFile() httpcontext.HandlerFunc {
 			return
 		}
 
+		if cfg == nil {
+			ctx.Fail(codeConfigNotInit.WithError(gorm.ErrRecordNotFound))
+
+			return
+		}
+
 		if !cfg.Enable {
 			ctx.Fail(codeMediaNotEnabled)
 
@@ -71,6 +81,10 @@ func (h *handler) RebuildStrmFile() httpcontext.HandlerFunc {
 
 		// 未指定挂载点：下发全量重建任务（消费侧自带挂载点级并发）
 		if req.MountPointIDs == nil {
+			if !h.ensureTaskEngine(ctx, codeRebuildFailed) {
+				return
+			}
+
 			fullReq := &topic.MediaRebuildStrmFileRequest{}
 
 			body, err := json.Marshal(fullReq)
@@ -111,6 +125,14 @@ func (h *handler) RebuildStrmFile() httpcontext.HandlerFunc {
 		}
 
 		// 指定了挂载点：逐个派发单挂载点重建任务
+		if !h.ensureMountPointService(ctx, codeRebuildFailed) {
+			return
+		}
+
+		if !h.ensureTaskEngine(ctx, codeRebuildFailed) {
+			return
+		}
+
 		mountpoints, err := h.mountpointService.List(ctx.GetContext(), &mountpointSvi.ListRequest{
 			NoPaginate: true,
 			IsAdmin:    true,
@@ -131,6 +153,12 @@ func (h *handler) RebuildStrmFile() httpcontext.HandlerFunc {
 		totalRequested := len(idSet)
 
 		for _, mp := range mountpoints {
+			if mp == nil {
+				ctx.GetContext().Warn("挂载点列表包含空记录，跳过")
+
+				continue
+			}
+
 			if _, ok := idSet[mp.ID]; !ok {
 				continue
 			}

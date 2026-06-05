@@ -202,10 +202,9 @@ func (h *handler) HandleBatchDelete() taskcontext.HandlerFunc {
 			} else {
 				h.logger.Info("后台删除虚拟文件完成", zap.Int64("fid", targetFileID))
 				// 4. 本地空目录清理 (确保 strm 删完后执行)
-				if shared.MediaConfig != nil && shared.MediaConfig.Enable {
-					if err := h.mediaFileService.ClearEmptyDir(ctx.GetContext(), shared.MediaConfig.StoragePath); err != nil {
-						h.logger.Warn("清理本地空目录失败", zap.Error(err))
-					}
+				mediaConfig := shared.GetMediaConfig()
+				if mediaConfig != nil && mediaConfig.Enable {
+					h.clearMediaEmptyDir(ctx.GetContext(), mediaConfig.StoragePath)
 				}
 
 				// 5. 手动清理数据库中的空祖先目录。
@@ -368,10 +367,9 @@ func (h *handler) HandleDelete() taskcontext.HandlerFunc {
 
 			h.logger.Info("后台删除虚拟文件完成", zap.Int64("fid", targetFileID))
 			// 4. 本地空目录清理 (确保 strm 删完后执行)
-			if shared.MediaConfig != nil && shared.MediaConfig.Enable {
-				if err := h.mediaFileService.ClearEmptyDir(ctx.GetContext(), shared.MediaConfig.StoragePath); err != nil {
-					h.logger.Warn("清理本地空目录失败", zap.Error(err))
-				}
+			mediaConfig := shared.GetMediaConfig()
+			if mediaConfig != nil && mediaConfig.Enable {
+				h.clearMediaEmptyDir(ctx.GetContext(), mediaConfig.StoragePath)
 			}
 
 			// 5. 手动清理数据库中的空祖先目录。
@@ -448,6 +446,10 @@ func (h *handler) ensureDeleteTaskMountPointOwner(ctx appContext.Context, fileID
 	mountPoint, err := h.mountPointService.Query(ctx, fileID)
 	if err != nil {
 		return err
+	}
+
+	if mountPoint == nil {
+		return gorm.ErrRecordNotFound
 	}
 
 	if mountPoint.CreatorUserID != access.userID {

@@ -1,11 +1,11 @@
 package mountpoint
 
 import (
-	"strings"
 	"time"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/ptr"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"go.uber.org/zap"
 )
@@ -32,13 +32,16 @@ func (s *service) Create(ctx context.Context, req *CreateRequest) (int64, error)
 		return 0, errInvalidMountPointTokenID
 	}
 
-	// 从完整路径中提取名称 - 使用 split "/" 取最后一个
-	parts := strings.Split(req.FullPath, "/")
-	name := parts[len(parts)-1]
-
-	if name == "" {
-		name = "root"
+	fullPath, paths, err := utils.NormalizeStoragePathParts(req.FullPath)
+	if err != nil {
+		return 0, errInvalidMountPointFullPath
 	}
+
+	if len(paths) == 0 {
+		return 0, errInvalidMountPointFullPath
+	}
+
+	name := paths[len(paths)-1]
 
 	if req.RefreshInterval < 30 {
 		req.RefreshInterval = 30
@@ -52,7 +55,7 @@ func (s *service) Create(ctx context.Context, req *CreateRequest) (int64, error)
 	mountPoint := &models.MountPoint{
 		FileId:        req.FileId,
 		Name:          name,
-		FullPath:      req.FullPath,
+		FullPath:      fullPath,
 		OsType:        req.OsType,
 		TokenId:       req.TokenId,
 		CreatorUserID: req.CreatorUserID,
@@ -65,7 +68,7 @@ func (s *service) Create(ctx context.Context, req *CreateRequest) (int64, error)
 	}
 
 	if err := s.getDB(ctx).Create(mountPoint).Error; err != nil {
-		ctx.Error("创建挂载点失败", zap.Error(err), zap.Int64("fileId", req.FileId), zap.String("fullPath", req.FullPath))
+		ctx.Error("创建挂载点失败", zap.Error(err), zap.Int64("fileId", req.FileId), zap.String("fullPath", fullPath))
 
 		return 0, err
 	}

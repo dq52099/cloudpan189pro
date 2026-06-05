@@ -185,6 +185,42 @@ func TestInitDefaultsAutoRebuildCron(t *testing.T) {
 	}
 }
 
+func TestInitRejectsInvalidAutoRebuildCron(t *testing.T) {
+	restoreSharedMediaConfig(t)
+
+	tDB := setupMediaConfigTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+	shared.MediaConfig = &models.MediaConfig{AutoRebuildCron: "0 1 * * *"}
+
+	err := svc.Init(ctx, &InitRequest{
+		Enable:              true,
+		StoragePath:         "/tmp/media",
+		AutoClean:           true,
+		ConflictPolicy:      media.FileConflictPolicySkip,
+		BaseURL:             "http://media.example.test",
+		AutoRebuildEnable:   true,
+		AutoRebuildInterval: 12,
+		AutoRebuildCron:     "not a cron",
+	})
+	if !errors.Is(err, errInvalidAutoRebuildCron) {
+		t.Fatalf("expected invalid auto rebuild cron, got %v", err)
+	}
+
+	var count int64
+	if countErr := tDB.db.Model(&models.MediaConfig{}).Count(&count).Error; countErr != nil {
+		t.Fatalf("count media configs: %v", countErr)
+	}
+
+	if count != 0 {
+		t.Fatalf("expected invalid cron not to create media config, got %d", count)
+	}
+
+	if shared.MediaConfig == nil || shared.MediaConfig.AutoRebuildCron != "0 1 * * *" {
+		t.Fatalf("expected shared media config unchanged, got %#v", shared.MediaConfig)
+	}
+}
+
 func TestInitRejectsExistingSingletonConfig(t *testing.T) {
 	restoreSharedMediaConfig(t)
 
@@ -254,6 +290,62 @@ func TestUpdateRefreshesSharedMediaConfig(t *testing.T) {
 
 	if shared.MediaConfig.AutoRebuildCron != "0 5 * * *" {
 		t.Fatalf("expected updated auto rebuild cron, got %q", shared.MediaConfig.AutoRebuildCron)
+	}
+}
+
+func TestUpdateDefaultsBlankAutoRebuildCron(t *testing.T) {
+	restoreSharedMediaConfig(t)
+
+	tDB := setupMediaConfigTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+	cfg := createMediaConfig(t, tDB.db)
+	shared.MediaConfig = cfg
+
+	err := svc.Update(ctx, utils.WithField("auto_rebuild_cron", "   "))
+	if err != nil {
+		t.Fatalf("update media config: %v", err)
+	}
+
+	if shared.MediaConfig == nil || shared.MediaConfig.AutoRebuildCron != defaultAutoRebuildCron {
+		t.Fatalf("expected shared cron defaulted, got %#v", shared.MediaConfig)
+	}
+
+	var stored models.MediaConfig
+	if err := tDB.db.First(&stored, cfg.ID).Error; err != nil {
+		t.Fatalf("query media config: %v", err)
+	}
+
+	if stored.AutoRebuildCron != defaultAutoRebuildCron {
+		t.Fatalf("expected stored cron defaulted, got %q", stored.AutoRebuildCron)
+	}
+}
+
+func TestUpdateRejectsInvalidAutoRebuildCronWithoutSyncingSharedMediaConfig(t *testing.T) {
+	restoreSharedMediaConfig(t)
+
+	tDB := setupMediaConfigTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+	cfg := createMediaConfig(t, tDB.db)
+	shared.MediaConfig = &models.MediaConfig{AutoRebuildCron: "0 1 * * *"}
+
+	err := svc.Update(ctx, utils.WithField("auto_rebuild_cron", "not a cron"))
+	if !errors.Is(err, errInvalidAutoRebuildCron) {
+		t.Fatalf("expected invalid auto rebuild cron, got %v", err)
+	}
+
+	if shared.MediaConfig == nil || shared.MediaConfig.AutoRebuildCron != "0 1 * * *" {
+		t.Fatalf("expected shared media config unchanged, got %#v", shared.MediaConfig)
+	}
+
+	var stored models.MediaConfig
+	if err := tDB.db.First(&stored, cfg.ID).Error; err != nil {
+		t.Fatalf("query media config: %v", err)
+	}
+
+	if stored.AutoRebuildCron != "0 2 * * *" {
+		t.Fatalf("expected stored cron unchanged, got %q", stored.AutoRebuildCron)
 	}
 }
 

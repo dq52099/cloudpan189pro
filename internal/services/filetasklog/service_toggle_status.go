@@ -23,7 +23,7 @@ func (s *service) ToggleStatus(ctx context.Context, key LogKey, status string, o
 	hasCompletedField := false
 
 	for _, opt := range opts {
-		mp[opt.Key] = opt.Value
+		mp[opt.Key] = sanitizeTaskLogField(opt.Key, opt.Value)
 		if opt.Key == "completed" {
 			hasCompletedField = true
 		}
@@ -83,7 +83,7 @@ func (s *service) CompleteIfProgressDone(ctx context.Context, key LogKey, opts .
 		"end_at": time.Now(),
 	}
 	for _, opt := range opts {
-		mp[opt.Key] = opt.Value
+		mp[opt.Key] = sanitizeTaskLogField(opt.Key, opt.Value)
 	}
 
 	completedResult := s.getDB(ctx).

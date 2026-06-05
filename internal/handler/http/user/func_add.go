@@ -32,6 +32,10 @@ func (h *handler) Add() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureUserService(ctx, codeAddUserFailed) {
+			return
+		}
+
 		var (
 			resp *addResponse
 			err  error

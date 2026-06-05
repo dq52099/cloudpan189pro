@@ -37,6 +37,10 @@ func (h *handler) ModifyName() httpcontext.HandlerFunc {
 		req.UserID = ctx.GetInt64(consts.CtxKeyUserId)
 		req.IsAdmin = ctx.GetBool(consts.CtxKeyIsAdmin)
 
+		if !h.ensureCloudTokenService(ctx, codeModifyNameFailed) {
+			return
+		}
+
 		if err := h.cloudTokenService.ModifyName(ctx.GetContext(), req); err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				ctx.Fail(codeTokenNotFound.WithError(err))

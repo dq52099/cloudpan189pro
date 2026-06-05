@@ -10,6 +10,12 @@ import (
 )
 
 func (h *handler) queryAccessibleCloudToken(ctx *httpcontext.Context, cloudTokenID int64) (*models.CloudToken, bool) {
+	if isNilDependency(h.cloudTokenService) {
+		ctx.Fail(codeStorageAdvanceQueryCloudTokenError.WithError(errors.New("云盘令牌服务未初始化")))
+
+		return nil, false
+	}
+
 	token, err := h.cloudTokenService.QueryAccessible(
 		ctx.GetContext(),
 		cloudTokenID,

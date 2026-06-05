@@ -9,7 +9,7 @@
             v-model:value="searchKeyword"
             placeholder="请输入路径搜索"
             clearable
-            style="width: 200px; margin-right: 12px"
+            class="header-search-input"
             @keyup.enter="handleSearch"
           >
             <template #prefix>
@@ -22,11 +22,11 @@
             v-model:value="selectedTaskLogStatus"
             placeholder="扫描状态"
             clearable
-            style="width: 120px; margin-right: 12px"
+            class="header-status-select"
             :options="taskLogStatusOptions"
             @update:value="handleSearch"
           />
-          <n-button type="primary" @click="handleSearch" style="margin-right: 8px">
+          <n-button type="primary" @click="handleSearch">
             <template #icon>
               <n-icon>
                 <SearchOutline />
@@ -42,14 +42,18 @@
             </template>
             重置
           </n-button>
-          <n-text v-if="pageAutoRefreshStore.autoRefreshEnabled" depth="3" style="margin-left: 8px">
+          <n-text
+            v-if="pageAutoRefreshStore.autoRefreshEnabled"
+            depth="3"
+            class="auto-refresh-time"
+          >
             上次刷新：{{ refreshTime.format('YYYY-MM-DD HH:mm:ss') }}
           </n-text>
         </div>
         <div class="header-actions-left">
           <n-tooltip trigger="hover">
             <template #trigger>
-              <n-button text @click="handlePageSettings" style="font-size: 16px">
+              <n-button text class="page-settings-button" @click="handlePageSettings">
                 <template #icon>
                   <n-icon>
                     <SettingsOutline />
@@ -89,7 +93,7 @@
         </div>
       </div>
       <!-- 第二行 -->
-      <div v-if="isBatchMode" class="header-row" style="justify-content: flex-end; gap: 24px">
+      <div v-if="isBatchMode" class="header-row batch-header-row">
         <n-button
           :type="isAllSelected ? 'warning' : 'default'"
           @click="toggleSelectAll"
@@ -532,7 +536,7 @@
       v-model:show="showPageSettingsModal"
       preset="dialog"
       title="页面设置"
-      style="width: 420px"
+      style="width: min(420px, calc(100vw - 32px))"
     >
       <div class="page-settings-config">
         <div class="settings-section">
@@ -553,7 +557,7 @@
             <n-select
               v-model:value="pageSettingsForm.refreshInterval"
               :options="refreshIntervalOptions"
-              style="width: 160px"
+              class="page-refresh-select"
               @update:value="handlePageRefreshIntervalChange"
               size="small"
             />
@@ -842,8 +846,10 @@ const loadCloudTokenOptions = (requestId: number) => {
         return false
       }
 
-      console.error('获取云盘令牌列表失败:', error)
-      message.error(getErrorMessage(error, '获取令牌列表失败'))
+      const errorMessage = getErrorMessage(error, '获取令牌列表失败')
+
+      console.error('获取云盘令牌列表失败:', errorMessage)
+      message.error(errorMessage)
       return false
     })
 }
@@ -917,16 +923,33 @@ const handlePageSizeChange = (pageSize: number) => {
 
 const refreshTime = ref(dayjs())
 
-// 计算下一次运行时间
-const getNextRunTime = (storage: StorageInfo) => {
-  if (!storage.enableAutoRefresh || !storage.refreshInterval) return null
-  if ('nextRefreshTime' in storage && !storage.nextRefreshTime) return null
-  if (storage.nextRefreshTime) {
-    const serverNextRun = dayjs(storage.nextRefreshTime)
-    if (serverNextRun.isValid()) return serverNextRun
+const parseStorageDateTime = (value: string | null | undefined) => {
+  if (!value) {
+    return null
   }
 
-  const lastRun = storage.updatedAt ? dayjs(storage.updatedAt) : null
+  const date = dayjs(value)
+
+  return date.isValid() ? date : null
+}
+
+// 计算下一次运行时间
+const getNextRunTime = (storage: StorageInfo) => {
+  if (
+    !storage.enableAutoRefresh ||
+    !Number.isFinite(storage.refreshInterval) ||
+    storage.refreshInterval <= 0
+  ) {
+    return null
+  }
+
+  if ('nextRefreshTime' in storage && !storage.nextRefreshTime) return null
+  if (storage.nextRefreshTime) {
+    const serverNextRun = parseStorageDateTime(storage.nextRefreshTime)
+    if (serverNextRun) return serverNextRun
+  }
+
+  const lastRun = parseStorageDateTime(storage.updatedAt)
   if (!lastRun) return null
 
   const interval = storage.refreshInterval
@@ -1089,29 +1112,40 @@ const fetchStorageList = (silent = false) => {
         const total = getListTotal(response.data)
 
         if (!items) {
-          message.error('获取存储列表失败：响应数据格式异常')
+          if (!silent) {
+            message.error('获取存储列表失败：响应数据格式异常')
+          }
 
           return
         }
 
         tableData.splice(0, tableData.length, ...items)
         if (total === null) {
-          message.warning('存储列表响应缺少有效总数，已保留原分页统计')
+          if (!silent) {
+            message.warning('存储列表响应缺少有效总数，已保留原分页统计')
+          }
         } else {
           paginationReactive.itemCount = total
         }
 
         return
       }
-      message.error(response.msg || '获取存储列表失败')
+
+      if (!silent) {
+        message.error(response.msg || '获取存储列表失败')
+      }
     })
     .catch((error) => {
       if (!isPageMounted || requestId !== storageListRequestId) {
         return
       }
 
-      console.error('获取存储列表失败:', error)
-      message.error(getErrorMessage(error, '获取存储列表失败'))
+      if (!silent) {
+        const errorMessage = getErrorMessage(error, '获取存储列表失败')
+
+        console.error('获取存储列表失败:', errorMessage)
+        message.error(errorMessage)
+      }
     })
     .finally(() => {
       if (isPageMounted && requestId === storageListRequestId) {
@@ -1261,8 +1295,10 @@ const handleRefresh = (mountPointId: number, deep: boolean) => {
         return
       }
 
-      console.error('刷新存储失败:', error)
-      message.error(getErrorMessage(error, '刷新失败'))
+      const errorMessage = getErrorMessage(error, '刷新失败')
+
+      console.error('刷新存储失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isCurrentStorageAction(actionSession)) {
@@ -1314,8 +1350,10 @@ const handleDelete = (storage: StorageInfo) => {
             return
           }
 
-          console.error('删除存储失败:', error)
-          message.error(getErrorMessage(error, '删除失败'))
+          const errorMessage = getErrorMessage(error, '删除失败')
+
+          console.error('删除存储失败:', errorMessage)
+          message.error(errorMessage)
         })
         .finally(() => {
           if (isCurrentStorageAction(actionSession)) {
@@ -1419,8 +1457,10 @@ const selectAllPages = async () => {
       return
     }
 
-    console.error('获取全量数据失败:', error)
-    message.error(getErrorMessage(error, '获取全量数据失败'))
+    const errorMessage = getErrorMessage(error, '获取全量数据失败')
+
+    console.error('获取全量数据失败:', errorMessage)
+    message.error(errorMessage)
   } finally {
     if (isPageMounted && requestId === selectAllPagesRequestId) {
       isSelectingAllPages.value = false
@@ -1797,8 +1837,10 @@ const handleBatchModifyTokenConfirm = () => {
         return
       }
 
-      console.error('批量修改令牌失败:', error)
-      message.error(getErrorMessage(error, '批量修改令牌失败'))
+      const errorMessage = getErrorMessage(error, '批量修改令牌失败')
+
+      console.error('批量修改令牌失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (
@@ -1837,6 +1879,10 @@ const closeAutoRefreshModal = (force = false) => {
   currentEditStorage.value = null
 }
 
+const parseAutoRefreshBeginAt = (value: string | null | undefined) => {
+  return parseStorageDateTime(value)
+}
+
 // 处理编辑自动刷新
 const handleEditAutoRefresh = (storage: StorageInfo) => {
   if (!isPageMounted || isStorageActionBlocked(storage.mountPointId)) {
@@ -1845,13 +1891,12 @@ const handleEditAutoRefresh = (storage: StorageInfo) => {
 
   autoRefreshModalSession++
   currentEditStorage.value = storage
+  const refreshBeginAt = parseAutoRefreshBeginAt(storage.autoRefreshBeginAt)
   autoRefreshForm.value = {
     enableAutoRefresh: storage.enableAutoRefresh || false,
     refreshInterval: storage.refreshInterval || 60,
     autoRefreshDays: storage.autoRefreshDays || 7,
-    refreshBeginAt: storage.autoRefreshBeginAt
-      ? new Date(storage.autoRefreshBeginAt).getTime()
-      : Date.now(),
+    refreshBeginAt: refreshBeginAt ? refreshBeginAt.valueOf() : Date.now(),
     enableDeepRefresh: storage.enableDeepRefresh || false,
   }
   showAutoRefreshModal.value = true
@@ -1933,8 +1978,10 @@ const handleAutoRefreshConfirm = () => {
           return
         }
 
-        console.error('更新自动刷新配置失败:', error)
-        message.error(getErrorMessage(error, '配置更新失败'))
+        const errorMessage = getErrorMessage(error, '配置更新失败')
+
+        console.error('更新自动刷新配置失败:', errorMessage)
+        message.error(errorMessage)
       })
       .finally(() => {
         if (
@@ -1954,18 +2001,15 @@ const formatRefreshPeriod = (storage: StorageInfo) => {
   if (!storage.autoRefreshBeginAt || !storage.autoRefreshDays) {
     return '未设置刷新周期'
   }
-  const beginDate = new Date(storage.autoRefreshBeginAt)
-  const endDate = new Date(beginDate)
-  endDate.setDate(beginDate.getDate() + storage.autoRefreshDays)
 
-  const formatDate = (date: Date) => {
-    return date.toLocaleDateString('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    })
+  const beginDate = parseAutoRefreshBeginAt(storage.autoRefreshBeginAt)
+  if (!beginDate) {
+    return '未设置刷新周期'
   }
-  return `${formatDate(beginDate)} ~ ${formatDate(endDate)} (${storage.autoRefreshDays}天)`
+
+  const endDate = beginDate.add(storage.autoRefreshDays, 'day')
+
+  return `${beginDate.format('YYYY/MM/DD')} ~ ${endDate.format('YYYY/MM/DD')} (${storage.autoRefreshDays}天)`
 }
 
 const computedRefreshStatusText = (storage: StorageInfo): string => {
@@ -2148,8 +2192,10 @@ const handleModifyTokenConfirm = () => {
         return
       }
 
-      console.error('修改令牌失败:', error)
-      message.error(getErrorMessage(error, '令牌修改失败'))
+      const errorMessage = getErrorMessage(error, '令牌修改失败')
+
+      console.error('修改令牌失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (
@@ -2166,10 +2212,16 @@ const handleModifyTokenConfirm = () => {
 // 格式化任务日志时间
 const formatTaskLogTime = (taskLog: Models.FileTaskLog) => {
   if (!taskLog.beginAt) return '未知时间'
-  const beginTime = dayjs(taskLog.beginAt)
+  const beginTime = parseStorageDateTime(taskLog.beginAt)
+  if (!beginTime) return '未知时间'
+
   const startTime = beginTime.format('MM-DD HH:mm')
 
-  if ((taskLog.status === 'completed' || taskLog.status === 'failed') && taskLog.duration) {
+  if (
+    (taskLog.status === 'completed' || taskLog.status === 'failed') &&
+    Number.isFinite(taskLog.duration) &&
+    taskLog.duration > 0
+  ) {
     const duration = taskLog.duration
     let durationText = ''
     if (duration < 1000) {
@@ -2241,6 +2293,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+  justify-content: space-between;
 }
 
 .header-row + .header-row {
@@ -2256,7 +2310,21 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-shrink: 0;
+  flex: 1 1 420px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.header-search-input {
+  width: min(220px, 100%);
+}
+
+.header-status-select {
+  width: min(140px, 100%);
+}
+
+.auto-refresh-time {
+  margin-left: 0;
 }
 
 .header-actions {
@@ -2271,7 +2339,17 @@ onUnmounted(() => {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+}
+
+.page-settings-button {
+  font-size: 16px;
+}
+
+.batch-header-row {
+  justify-content: flex-end;
+  gap: 24px;
 }
 
 .header-actions.batch-mode {
@@ -2313,6 +2391,10 @@ onUnmounted(() => {
   font-weight: 500;
   color: var(--n-text-color);
   min-width: 80px;
+}
+
+.page-refresh-select {
+  width: min(160px, 100%);
 }
 
 .header-right {
@@ -2751,6 +2833,42 @@ onUnmounted(() => {
     flex-direction: column;
     gap: 16px;
     align-items: stretch;
+  }
+
+  .header-row,
+  .header-search,
+  .header-actions-left {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .batch-header-row {
+    gap: 12px;
+  }
+
+  .header-search-input,
+  .header-status-select,
+  .header-search :deep(.n-button) {
+    width: 100%;
+  }
+
+  .header-actions-left {
+    justify-content: flex-start;
+  }
+
+  .page-settings-button {
+    align-self: flex-start;
+  }
+
+  .setting-item {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .page-refresh-select {
+    width: 100%;
   }
 
   .header-left {

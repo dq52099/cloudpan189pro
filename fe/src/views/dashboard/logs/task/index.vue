@@ -7,35 +7,35 @@
           v-model:value="state.searchKeyword"
           placeholder="请输入任务标题搜索"
           clearable
-          style="width: 200px; margin-right: 12px"
+          class="log-search-input"
           @keyup.enter="handleSearch"
         />
         <n-select
           v-model:value="state.statusFilter"
           placeholder="任务状态"
           clearable
-          style="width: 120px; margin-right: 12px"
+          class="log-filter-select"
           :options="statusOptions"
         />
         <n-select
           v-model:value="state.typeFilter"
           placeholder="任务类型"
           clearable
-          style="width: 120px; margin-right: 12px"
+          class="log-filter-select"
           :options="typeOptions"
         />
         <n-date-picker
           v-model:value="state.dateRange"
           type="datetimerange"
           clearable
-          style="width: 300px; margin-right: 12px"
+          class="log-date-range"
           format="yyyy-MM-dd HH:mm:ss"
           value-format="yyyy-MM-ddTHH:mm:ssXXX"
           placeholder="选择时间范围"
         />
-        <n-button type="primary" @click="handleSearch" style="margin-right: 8px"> 搜索 </n-button>
-        <n-button @click="handleReset" style="margin-right: 8px"> 重置 </n-button>
-        <n-button :loading="state.loading" @click="handleRefresh" style="margin-right: 8px">
+        <n-button type="primary" @click="handleSearch"> 搜索 </n-button>
+        <n-button @click="handleReset"> 重置 </n-button>
+        <n-button :loading="state.loading" @click="handleRefresh">
           <template #icon>
             <n-icon>
               <RefreshOutline />
@@ -49,7 +49,6 @@
             ghost
             :loading="state.clearing"
             :disabled="state.clearing || state.clearDialogOpen"
-            style="margin-left: 8px"
           >
             <template #icon>
               <n-icon>
@@ -79,7 +78,7 @@
       v-model:show="state.showDetailModal"
       preset="card"
       title="任务详情"
-      style="width: 800px"
+      style="width: min(800px, calc(100vw - 32px))"
     >
       <div v-if="state.currentTask" class="task-detail">
         <n-descriptions :column="2" label-placement="left" bordered>
@@ -131,7 +130,7 @@
 
         <div v-if="state.currentTask.result" class="task-result">
           <h4>执行结果</h4>
-          <n-code :code="state.currentTask.result" language="json" />
+          <pre class="log-code-block">{{ state.currentTask.result }}</pre>
         </div>
 
         <div v-if="state.currentTask.errorMsg" class="task-error">
@@ -146,7 +145,7 @@
           class="task-addition"
         >
           <h4>附加信息</h4>
-          <n-code :code="JSON.stringify(state.currentTask.addition, null, 2)" language="json" />
+          <pre class="log-code-block">{{ formatJsonBlock(state.currentTask.addition) }}</pre>
         </div>
       </div>
     </n-modal>
@@ -168,7 +167,6 @@ import {
   NDescriptionsItem,
   NDivider,
   NText,
-  NCode,
   NAlert,
   NProgress,
   useMessage,
@@ -189,6 +187,7 @@ import {
 } from '@vicons/ionicons5'
 import { getFileLogList, clearTaskLogs } from '@/api/taskstate'
 import { formatDate } from '@/utils/format'
+import { formatDateRangeQuery } from '@/utils/time'
 import { getListItems, getListTotal } from '@/utils/pagination'
 import { normalizeFileTaskLogs } from '@/utils/responseGuards'
 import { getErrorMessage } from '@/utils/api'
@@ -323,6 +322,10 @@ const isLatestClearRequest = (requestId: number) => {
 }
 
 const fetchTaskLogList = (silent = false) => {
+  if (!isComponentMounted) {
+    return
+  }
+
   if (silent && listRequestInFlight) {
     return
   }
@@ -349,9 +352,10 @@ const fetchTaskLogList = (silent = false) => {
   if (state.typeFilter) {
     params.type = state.typeFilter
   }
-  if (state.dateRange && state.dateRange.length === 2) {
-    params.beginAt = new Date(state.dateRange[0]).toISOString()
-    params.endAt = new Date(state.dateRange[1]).toISOString()
+  const dateRangeParams = formatDateRangeQuery(state.dateRange)
+  if (dateRangeParams) {
+    params.beginAt = dateRangeParams.beginAt
+    params.endAt = dateRangeParams.endAt
   }
 
   getFileLogList(params)
@@ -398,10 +402,12 @@ const fetchTaskLogList = (silent = false) => {
         return
       }
 
-      console.error('获取任务日志失败:', error)
+      const errorMessage = getErrorMessage(error, '获取任务日志失败')
+
+      console.error('获取任务日志失败:', errorMessage)
       stopAutoRefresh()
       if (!silent) {
-        message.error(getErrorMessage(error, '获取任务日志失败'))
+        message.error(errorMessage)
       }
     })
     .finally(() => {
@@ -505,6 +511,10 @@ const handleClearLogs = (key: string | number) => {
 const handleViewDetail = (task: Models.FileTaskLog) => {
   state.currentTask = task
   state.showDetailModal = true
+}
+
+const formatJsonBlock = (value: unknown) => {
+  return JSON.stringify(value, null, 2)
 }
 
 // 获取状态标签类型
@@ -781,8 +791,21 @@ onUnmounted(() => {
 .header-left {
   display: flex;
   align-items: center;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 8px;
+  min-width: 0;
+}
+
+.log-search-input {
+  width: min(220px, 100%);
+}
+
+.log-filter-select {
+  width: min(140px, 100%);
+}
+
+.log-date-range {
+  width: min(320px, 100%);
 }
 
 .header-right {
@@ -826,7 +849,7 @@ onUnmounted(() => {
 }
 
 .task-detail {
-  max-height: 600px;
+  max-height: min(600px, calc(100vh - 180px));
   overflow-y: auto;
   padding: 8px;
 }
@@ -845,11 +868,20 @@ onUnmounted(() => {
   margin-top: 16px;
 }
 
-.task-result :deep(.n-code),
-.task-addition :deep(.n-code) {
+.log-code-block {
+  max-width: 100%;
   max-height: 200px;
-  overflow-y: auto;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  color: var(--n-text-color);
+  background: var(--n-color-hover);
   border-radius: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 /* 响应式设计 */
@@ -878,6 +910,13 @@ onUnmounted(() => {
     width: 100%;
     margin-right: 0 !important;
     margin-bottom: 8px;
+  }
+
+  .header-left :deep(.n-input),
+  .header-left :deep(.n-select),
+  .header-left :deep(.n-date-picker),
+  .header-left :deep(.n-button) {
+    width: 100% !important;
   }
 
   .header-left > *:last-child {

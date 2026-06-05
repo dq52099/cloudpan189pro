@@ -3,14 +3,18 @@ package taskcontext
 import (
 	stdContext "context"
 	"fmt"
+	"regexp"
 	"runtime/debug"
 
 	"github.com/google/uuid"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/taskengine"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"go.uber.org/zap"
 )
 
 type HandlerFunc func(ctx *Context) error
+
+var panicURLPattern = regexp.MustCompile(`(?i)(?:[a-z][a-z0-9+.-]*://|/)[^\s"'<>]+`)
 
 type messageProcessor struct {
 	handlerFunc HandlerFunc
@@ -23,13 +27,20 @@ func (p *messageProcessor) Process(ctx stdContext.Context, message []byte) (err 
 		// 捕获panic并记录日志
 		if recovered := recover(); recovered != nil {
 			stackInfo := string(debug.Stack())
-			p.logger.Error("task processor panic recovery",
-				zap.Any("panic", recovered),
+			panicValue := sanitizePanicValue(recovered)
+
+			logger := p.logger
+			if logger == nil {
+				logger = zap.NewNop()
+			}
+
+			logger.Error("task processor panic recovery",
+				zap.String("panic", panicValue),
 				zap.String("stack", stackInfo),
 				zap.String("processor_id", p.processorId),
 			)
 
-			err = fmt.Errorf("task processor panic: %v", recovered)
+			err = fmt.Errorf("task processor panic: %s", panicValue)
 		}
 	}()
 
@@ -41,6 +52,10 @@ func (p *messageProcessor) ProcessorID() string {
 }
 
 func newMessageProcessor(handlerFunc HandlerFunc, logger *zap.Logger) *messageProcessor {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
 	return &messageProcessor{
 		handlerFunc: handlerFunc,
 		logger:      logger,
@@ -48,14 +63,30 @@ func newMessageProcessor(handlerFunc HandlerFunc, logger *zap.Logger) *messagePr
 	}
 }
 
+func sanitizePanicValue(recovered interface{}) string {
+	message := fmt.Sprint(recovered)
+	message = panicURLPattern.ReplaceAllStringFunc(message, utils.RedactURLForLog)
+
+	return utils.RedactSensitiveText(message)
+}
+
 type HandlerFuncWrapper struct {
 	logger *zap.Logger
 }
 
 func (h *HandlerFuncWrapper) Wrap(fn HandlerFunc) taskengine.MessageProcessor {
-	return newMessageProcessor(fn, h.logger)
+	var logger *zap.Logger
+	if h != nil {
+		logger = h.logger
+	}
+
+	return newMessageProcessor(fn, logger)
 }
 
 func NewHandlerFuncWrapper(logger *zap.Logger) *HandlerFuncWrapper {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
 	return &HandlerFuncWrapper{logger: logger}
 }

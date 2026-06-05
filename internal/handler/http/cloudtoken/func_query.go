@@ -3,15 +3,12 @@ package cloudtoken
 import (
 	"errors"
 	"strconv"
+	"time"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
-	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"gorm.io/gorm"
 )
-
-// CloudToken 云盘令牌模型类型别名
-type CloudToken = models.CloudToken
 
 // Query 查询云盘令牌详情
 // @Summary 查询云盘令牌详情
@@ -21,7 +18,7 @@ type CloudToken = models.CloudToken
 // @Produce json
 // @Param Authorization header string true "Bearer token"
 // @Param id path int true "云盘令牌ID"
-// @Success 200 {object} httpcontext.Response{data=models.CloudToken} "查询成功"
+// @Success 200 {object} httpcontext.Response{data=cloudTokenResponse} "查询成功"
 // @Failure 400 {object} httpcontext.Response "参数验证失败，code=99998"
 // @Failure 400 {object} httpcontext.Response "查询云盘令牌失败，code=5007"
 // @Failure 401 {object} httpcontext.Response "未授权访问"
@@ -36,6 +33,10 @@ func (h *handler) Query() httpcontext.HandlerFunc {
 		if err != nil {
 			ctx.AbortWithInvalidParams(err)
 
+			return
+		}
+
+		if !h.ensureCloudTokenService(ctx, codeQueryFailed) {
 			return
 		}
 
@@ -57,6 +58,12 @@ func (h *handler) Query() httpcontext.HandlerFunc {
 			return
 		}
 
-		ctx.Success(cloudToken)
+		if cloudToken == nil {
+			ctx.Fail(codeTokenNotFound.WithError(gorm.ErrRecordNotFound))
+
+			return
+		}
+
+		ctx.Success(newCloudTokenResponse(cloudToken, time.Now()))
 	}
 }

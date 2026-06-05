@@ -210,6 +210,176 @@ func TestUpdateReturnsNotFoundWithoutSyncingSharedSetting(t *testing.T) {
 	}
 }
 
+func TestUpdateNormalizesBaseURL(t *testing.T) {
+	restoreSharedSetting(t)
+
+	tDB := setupSettingTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	createSetting(t, tDB.db)
+
+	err := svc.Update(ctx, utils.WithField("base_url", " https://new.example.test/app "))
+	if err != nil {
+		t.Fatalf("update setting: %v", err)
+	}
+
+	if shared.BaseURL != "https://new.example.test/app" {
+		t.Fatalf("expected shared base url normalized, got %q", shared.BaseURL)
+	}
+
+	var setting models.Setting
+	if err := tDB.db.First(&setting).Error; err != nil {
+		t.Fatalf("query setting: %v", err)
+	}
+
+	if setting.BaseURL != "https://new.example.test/app" {
+		t.Fatalf("expected stored base url normalized, got %q", setting.BaseURL)
+	}
+}
+
+func TestUpdateNormalizesAdditionLocalProxyURL(t *testing.T) {
+	restoreSharedSetting(t)
+
+	tDB := setupSettingTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	createSetting(t, tDB.db)
+
+	addition := models.SettingAddition{
+		LocalProxy:    true,
+		LocalProxyURL: " https://proxy-user:proxy-pass@proxy.example.test:8443 ",
+		WorkerCount:   5,
+	}
+
+	err := svc.Update(ctx, utils.WithField("addition", addition))
+	if err != nil {
+		t.Fatalf("update setting addition: %v", err)
+	}
+
+	if shared.SettingAddition.LocalProxyURL != "https://proxy-user:proxy-pass@proxy.example.test:8443" {
+		t.Fatalf("expected shared local proxy URL normalized, got %q", shared.SettingAddition.LocalProxyURL)
+	}
+
+	var setting models.Setting
+	if err := tDB.db.First(&setting).Error; err != nil {
+		t.Fatalf("query setting: %v", err)
+	}
+
+	if setting.Addition.LocalProxyURL != "https://proxy-user:proxy-pass@proxy.example.test:8443" {
+		t.Fatalf("expected stored local proxy URL normalized, got %q", setting.Addition.LocalProxyURL)
+	}
+}
+
+func TestUpdateRejectsInvalidBaseURLWithoutSyncingSharedSetting(t *testing.T) {
+	restoreSharedSetting(t)
+
+	tests := []struct {
+		name  string
+		value any
+	}{
+		{name: "blank", value: "   "},
+		{name: "relative", value: "/cloudpan"},
+		{name: "unsupported scheme", value: "ftp://example.test"},
+		{name: "missing host", value: "https:///cloudpan"},
+		{name: "non string", value: 123},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tDB := setupSettingTestDB(t)
+			svc := NewService(tDB)
+			ctx := context.NewContext(stdctx.Background())
+
+			createSetting(t, tDB.db)
+
+			shared.BaseURL = "http://shared-before.example.test"
+
+			err := svc.Update(ctx, utils.WithField("base_url", tt.value))
+			if !errors.Is(err, errInvalidSettingBaseURL) {
+				t.Fatalf("expected invalid setting base URL, got %v", err)
+			}
+
+			if shared.BaseURL != "http://shared-before.example.test" {
+				t.Fatalf("expected shared base url unchanged, got %q", shared.BaseURL)
+			}
+
+			var setting models.Setting
+			if err := tDB.db.First(&setting).Error; err != nil {
+				t.Fatalf("query setting: %v", err)
+			}
+
+			if setting.BaseURL != "http://old.example.test" {
+				t.Fatalf("expected stored base url unchanged, got %q", setting.BaseURL)
+			}
+		})
+	}
+}
+
+func TestUpdateRejectsInvalidAdditionWithoutSyncingSharedSetting(t *testing.T) {
+	restoreSharedSetting(t)
+
+	tests := []struct {
+		name    string
+		value   any
+		wantErr error
+	}{
+		{
+			name: "unsupported proxy scheme",
+			value: models.SettingAddition{
+				LocalProxyURL: "socks5://127.0.0.1:1080",
+			},
+			wantErr: errInvalidSettingLocalProxyURL,
+		},
+		{
+			name: "invalid proxy escape",
+			value: models.SettingAddition{
+				LocalProxyURL: "http://proxy-user:proxy-pass@%zz?token=secret-token",
+			},
+			wantErr: errInvalidSettingLocalProxyURL,
+		},
+		{
+			name: "multiple stream chunk size too large",
+			value: models.SettingAddition{
+				MultipleStreamChunkSize: 64*1024*1024 + 1,
+			},
+			wantErr: errInvalidSettingAddition,
+		},
+		{name: "non addition", value: map[string]interface{}{}, wantErr: errInvalidSettingAddition},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tDB := setupSettingTestDB(t)
+			svc := NewService(tDB)
+			ctx := context.NewContext(stdctx.Background())
+
+			createSetting(t, tDB.db)
+
+			shared.SettingAddition.LocalProxyURL = "http://shared-before.example.test"
+
+			err := svc.Update(ctx, utils.WithField("addition", tt.value))
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected %v, got %v", tt.wantErr, err)
+			}
+
+			if shared.SettingAddition.LocalProxyURL != "http://shared-before.example.test" {
+				t.Fatalf("expected shared local proxy URL unchanged, got %q", shared.SettingAddition.LocalProxyURL)
+			}
+
+			var setting models.Setting
+			if err := tDB.db.First(&setting).Error; err != nil {
+				t.Fatalf("query setting: %v", err)
+			}
+
+			if setting.Addition.LocalProxyURL != "http://old-proxy.example.test" {
+				t.Fatalf("expected stored local proxy URL unchanged, got %q", setting.Addition.LocalProxyURL)
+			}
+		})
+	}
+}
+
 func TestCheckSettingUpdateResultAllowsExistingNoop(t *testing.T) {
 	tDB := setupSettingTestDB(t)
 	ctx := context.NewContext(stdctx.Background())
@@ -241,21 +411,24 @@ func TestInitSystemRejectsInvalidRequestWithoutSyncingSharedSetting(t *testing.T
 	shared.BaseURL = "http://shared-before.example.test"
 
 	tests := []struct {
-		name string
-		req  *InitSystemRequest
+		name    string
+		req     *InitSystemRequest
+		wantErr error
 	}{
-		{name: "nil request", req: nil},
-		{name: "empty title", req: &InitSystemRequest{Title: "", BaseURL: "http://init.example.test"}},
-		{name: "blank title", req: &InitSystemRequest{Title: "   ", BaseURL: "http://init.example.test"}},
-		{name: "empty base url", req: &InitSystemRequest{Title: "initialized", BaseURL: ""}},
-		{name: "blank base url", req: &InitSystemRequest{Title: "initialized", BaseURL: "   "}},
+		{name: "nil request", req: nil, wantErr: errInvalidInitSystemRequest},
+		{name: "empty title", req: &InitSystemRequest{Title: "", BaseURL: "http://init.example.test"}, wantErr: errInvalidInitSystemRequest},
+		{name: "blank title", req: &InitSystemRequest{Title: "   ", BaseURL: "http://init.example.test"}, wantErr: errInvalidInitSystemRequest},
+		{name: "empty base url", req: &InitSystemRequest{Title: "initialized", BaseURL: ""}, wantErr: errInvalidSettingBaseURL},
+		{name: "blank base url", req: &InitSystemRequest{Title: "initialized", BaseURL: "   "}, wantErr: errInvalidSettingBaseURL},
+		{name: "relative base url", req: &InitSystemRequest{Title: "initialized", BaseURL: "/cloudpan"}, wantErr: errInvalidSettingBaseURL},
+		{name: "unsupported scheme", req: &InitSystemRequest{Title: "initialized", BaseURL: "ftp://init.example.test"}, wantErr: errInvalidSettingBaseURL},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := svc.InitSystem(ctx, tt.req)
-			if !errors.Is(err, errInvalidInitSystemRequest) {
-				t.Fatalf("expected invalid init system request, got %v", err)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected %v, got %v", tt.wantErr, err)
 			}
 		})
 	}
@@ -288,7 +461,7 @@ func TestInitSystemRefreshesSharedSetting(t *testing.T) {
 	err := svc.InitSystem(ctx, &InitSystemRequest{
 		Title:      "initialized",
 		EnableAuth: false,
-		BaseURL:    "http://init.example.test",
+		BaseURL:    " http://init.example.test ",
 	})
 	if err != nil {
 		t.Fatalf("init system: %v", err)

@@ -20,7 +20,7 @@
             size="small"
             :column="1"
             label-placement="left"
-            :label-style="{ width: '220px' }"
+            :label-style="{ width: 'min(220px, 40vw)' }"
           >
             <n-descriptions-item label="启用媒体服务">
               <n-switch
@@ -67,9 +67,14 @@
                 {{ config?.autoRebuildEnable ? '已启用' : '未启用' }}
               </n-tag>
               <div class="desc-sub" v-if="config?.autoRebuildEnable">
-                每天 {{ config?.autoRebuildCron || '0 2 * * *' }} 自动重建STRM文件
+                {{ formatAutoRebuildSchedule(config?.autoRebuildCron) }}
               </div>
               <div class="desc-sub" v-else>启用后将按设定时间自动重建STRM文件</div>
+            </n-descriptions-item>
+
+            <n-descriptions-item label="上次重建时间">
+              <n-text>{{ formatLastRebuildTime(config?.lastRebuildTime) }}</n-text>
+              <div class="desc-sub">记录定时重建任务成功派发的时间</div>
             </n-descriptions-item>
           </n-descriptions>
 
@@ -121,12 +126,12 @@
         v-model:show="showInitModal"
         preset="card"
         title="初始化媒体配置"
-        style="width: 640px"
+        style="width: min(640px, calc(100vw - 32px))"
         :closable="!initSubmitting"
         :mask-closable="!initSubmitting"
         :close-on-esc="!initSubmitting"
       >
-        <n-form :model="initForm" label-placement="left" label-width="130px">
+        <n-form :model="initForm" label-placement="left" label-width="130px" class="media-form">
           <n-form-item label="是否启用">
             <n-switch v-model:value="initForm.enable" />
           </n-form-item>
@@ -153,7 +158,7 @@
           </n-form-item>
 
           <n-form-item label="媒体基础 URL">
-            <n-space>
+            <n-space class="base-url-row">
               <n-input
                 v-model:value="initForm.baseURL"
                 placeholder="http://localhost:12395"
@@ -184,7 +189,7 @@
               <n-input
                 v-model:value="initForm.autoRebuildCron"
                 placeholder="0 2 * * *"
-                style="width: 200px"
+                class="cron-input"
               />
               <div class="desc-sub">cron表达式，默认每天凌晨2点 (0 2 * * *)</div>
             </n-space>
@@ -209,12 +214,12 @@
         v-model:show="showEditModal"
         preset="card"
         title="编辑媒体配置"
-        style="width: 680px"
+        style="width: min(680px, calc(100vw - 32px))"
         :closable="!editSubmitting"
         :mask-closable="!editSubmitting"
         :close-on-esc="!editSubmitting"
       >
-        <n-form :model="editForm" label-placement="left" label-width="130px">
+        <n-form :model="editForm" label-placement="left" label-width="130px" class="media-form">
           <n-form-item label="存储根路径">
             <n-input
               v-model:value="editForm.storagePath"
@@ -235,7 +240,7 @@
           </n-form-item>
 
           <n-form-item label="媒体基础 URL">
-            <n-space>
+            <n-space class="base-url-row">
               <n-input
                 v-model:value="editForm.baseURL"
                 placeholder="http://localhost:12395"
@@ -266,7 +271,7 @@
               <n-input
                 v-model:value="editForm.autoRebuildCron"
                 placeholder="0 2 * * *"
-                style="width: 200px"
+                class="cron-input"
               />
               <div class="desc-sub">cron表达式，默认每天凌晨2点 (0 2 * * *)</div>
             </n-space>
@@ -321,6 +326,8 @@ import {
 } from '@/api/media'
 import { normalizeMediaConfigInfoResponse } from '@/utils/responseGuards'
 import { getErrorMessage } from '@/utils/api'
+import { formatDateTime } from '@/utils/time'
+import { normalizeHttpBaseURL } from '@/utils/url'
 
 const message = useMessage()
 const dialog = useDialog()
@@ -432,6 +439,7 @@ const defaultIncludedSuffixes = [
 const isBusinessSuccess = (response: { code: number }) => response.code === 200
 const isNonNegativeSafeInteger = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+const defaultAutoRebuildCron = '0 2 * * *'
 
 const isRebuildStrmFilesResponse = (result: unknown): result is RebuildStrmFilesResponse => {
   if (!result || typeof result !== 'object') {
@@ -456,6 +464,35 @@ const buildEditPayload = (): ConfigUpdateRequest => ({
   ...editForm,
   includedSuffixes: normalizeSuffixes(editForm.includedSuffixes || []),
 })
+
+const formatAutoRebuildSchedule = (cron?: string) => {
+  const expr = (cron || defaultAutoRebuildCron).trim() || defaultAutoRebuildCron
+  const parts = expr.split(/\s+/)
+  if (parts.length === 5 && parts[2] === '*' && parts[3] === '*' && parts[4] === '*') {
+    const minute = Number(parts[0])
+    const hour = Number(parts[1])
+    if (
+      Number.isInteger(minute) &&
+      Number.isInteger(hour) &&
+      minute >= 0 &&
+      minute <= 59 &&
+      hour >= 0 &&
+      hour <= 23
+    ) {
+      return `每天 ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} 自动重建 STRM 文件`
+    }
+  }
+
+  return `按 cron 表达式 ${expr} 自动重建 STRM 文件`
+}
+
+const formatLastRebuildTime = (value?: string) => {
+  if (!value || value.startsWith('0001-01-01')) {
+    return '尚未重建'
+  }
+
+  return formatDateTime(value)
+}
 
 const isCurrentConfigRequest = (requestId: number) => {
   return isComponentMounted && configRequestId === requestId
@@ -523,10 +560,12 @@ const handleInit = () => {
     message.warning('请填写存储根路径')
     return
   }
-  if (!initForm.baseURL) {
-    message.warning('请填写媒体基础URL')
+  const normalizedBaseURL = normalizeHttpBaseURL(initForm.baseURL)
+  if (!normalizedBaseURL) {
+    message.warning('媒体基础 URL 必须是有效的 http/https 地址')
     return
   }
+  initForm.baseURL = normalizedBaseURL
 
   const payload = buildInitPayload()
   const requestId = ++initRequestId
@@ -633,15 +672,12 @@ const handleCloseEditModal = () => {
 const handleSaveEdit = () => {
   if (editSubmitting.value) return
 
-  const v = (editForm.baseURL || '').trim()
-  if (v.length === 0) {
-    message.warning('请输入基础 URL')
+  const normalizedBaseURL = normalizeHttpBaseURL(editForm.baseURL)
+  if (!normalizedBaseURL) {
+    message.warning('基础 URL 必须是有效的 http/https 地址')
     return
   }
-  if (!/^https?:\/\/.+/.test(v)) {
-    message.warning('基础 URL 必须以 http:// 或 https:// 开头')
-    return
-  }
+  editForm.baseURL = normalizedBaseURL
 
   const payload = buildEditPayload()
   const requestId = ++editRequestId
@@ -850,5 +886,41 @@ onUnmounted(() => {
   font-size: 12px;
   line-height: 1.6;
   color: var(--n-text-color-3);
+}
+
+.base-url-row {
+  width: 100%;
+}
+
+.base-url-row :deep(.n-input) {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.cron-input {
+  width: min(200px, 100%);
+}
+
+@media (width <= 640px) {
+  .media-form :deep(.n-form-item-label) {
+    width: auto !important;
+    max-width: 100%;
+    padding: 0 0 6px;
+    white-space: normal;
+  }
+
+  .media-form :deep(.n-form-item-blank) {
+    min-width: 0;
+  }
+
+  .base-url-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .base-url-row :deep(.n-button),
+  .cron-input {
+    width: 100%;
+  }
 }
 </style>

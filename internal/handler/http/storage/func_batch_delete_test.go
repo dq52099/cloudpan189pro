@@ -346,6 +346,59 @@ func TestBatchDeleteRejectsWhenAllDeduplicatedIDsMissingOrUnauthorized(t *testin
 	}
 }
 
+func TestBatchDeleteSkipsNilMountPointAndMissingTaskEngineWithoutPanic(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: nil,
+			22: {FileId: 2201, FullPath: "/series", CreatorUserID: 100},
+		},
+	}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/batch_delete", wrapper.Wrap(NewHandler(
+		nil,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	).BatchDelete()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/batch_delete", strings.NewReader(`{"ids":[11,22]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Data batchDeleteResponse `json:"data"`
+	}
+
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Data.Total != 2 || response.Data.Success != 0 || response.Data.Failed != 2 {
+		t.Fatalf("unexpected response data: %+v", response.Data)
+	}
+}
+
 func TestBatchDeleteTaskLogRecordsDispatchFailures(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

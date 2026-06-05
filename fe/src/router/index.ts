@@ -1,6 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore, useSystemStore } from '@/stores'
 import { useUserStore } from '@/stores'
+import { getErrorMessage } from '@/utils/api'
+import { buildLoginRedirectPath } from '@/utils/redirect'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -168,6 +170,11 @@ const router = createRouter({
               redirect: { name: 'LogsEngine' },
             },
             {
+              path: 'task',
+              name: 'LogsTaskLegacy',
+              redirect: { name: 'LogsFile' },
+            },
+            {
               path: 'engine',
               name: 'LogsEngine',
               component: () => import('@/views/dashboard/logs/engine/index.vue'),
@@ -231,13 +238,14 @@ router.beforeEach(async (to, _, next) => {
   try {
     await systemStore.ensureLoaded()
   } catch (error) {
-    console.error('加载系统信息失败:', error)
+    console.error('加载系统信息失败:', getErrorMessage(error, '加载系统信息失败'))
     next(false)
 
     return
   }
 
   const systemInfo = systemStore.get()
+  const authDisabled = !systemInfo.enableAuth
 
   // 检查系统是否已初始化
   if (!systemInfo.initialized && to.name !== 'Init') {
@@ -252,11 +260,11 @@ router.beforeEach(async (to, _, next) => {
   }
 
   // 检查是否需要认证
-  if (to.meta.requiresAuth) {
+  if (to.meta.requiresAuth && !authDisabled) {
     // 需要认证的路由
     if (!authStore.isLogin) {
       // 未登录，跳转到登录页
-      next('/@login')
+      next(buildLoginRedirectPath(to.fullPath))
       return
     }
 
@@ -264,12 +272,12 @@ router.beforeEach(async (to, _, next) => {
       try {
         const token = await authStore.doRefreshToken(true)
         if (!token) {
-          next('/@login')
+          next(buildLoginRedirectPath(to.fullPath))
           return
         }
       } catch (error) {
-        console.error('刷新登录状态失败:', error)
-        next('/@login')
+        console.error('刷新登录状态失败:', getErrorMessage(error, '刷新登录状态失败'))
+        next(buildLoginRedirectPath(to.fullPath))
         return
       }
     }
@@ -281,8 +289,8 @@ router.beforeEach(async (to, _, next) => {
       try {
         refreshedUser = await userStore.refresh()
       } catch (error) {
-        console.error('刷新用户权限失败:', error)
-        next(authStore.isLogin ? '/@dashboard' : '/@login')
+        console.error('刷新用户权限失败:', getErrorMessage(error, '刷新用户权限失败'))
+        next(authStore.isLogin ? '/@dashboard' : buildLoginRedirectPath(to.fullPath))
         return
       }
 
@@ -294,8 +302,8 @@ router.beforeEach(async (to, _, next) => {
     }
 
     next()
-  } else if (to.path === '/@login' && authStore.isLogin) {
-    // 已登录用户访问登录页，跳转到仪表板
+  } else if (to.path === '/@login' && (authStore.isLogin || authDisabled)) {
+    // 已登录或关闭认证时访问登录页，跳转到仪表板
     next('/@dashboard')
   } else {
     // 不需要认证的路由，直接通过

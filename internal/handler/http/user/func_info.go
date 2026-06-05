@@ -29,6 +29,10 @@ func (h *handler) Info() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureUserService(ctx, codeUserInfoFailed) {
+			return
+		}
+
 		user, err := h.userService.Query(ctx.GetContext(), uid)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -42,9 +46,19 @@ func (h *handler) Info() httpcontext.HandlerFunc {
 			return
 		}
 
+		if user == nil {
+			ctx.Fail(codeUserResourceMissing.WithError(gorm.ErrRecordNotFound))
+
+			return
+		}
+
 		groupName := "默认用户组"
 
 		if user.GroupID > 0 {
+			if !h.ensureUserGroupService(ctx, codeUserInfoFailed) {
+				return
+			}
+
 			group, err := h.userGroupService.Query(ctx.GetContext(), user.GroupID)
 			if err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -54,8 +68,10 @@ func (h *handler) Info() httpcontext.HandlerFunc {
 
 					return
 				}
-			} else {
+			} else if group != nil {
 				groupName = group.Name
+			} else {
+				groupName = "用户组不存在"
 			}
 		}
 

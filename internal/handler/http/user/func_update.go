@@ -49,6 +49,10 @@ func (h *handler) Update() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureUserService(ctx, codeUpdateUserFailed) {
+			return
+		}
+
 		err := h.userService.Update(ctx.GetContext(), req.ID, fields...)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {

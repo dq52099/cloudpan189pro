@@ -45,7 +45,7 @@ const downloadURLFormat = "/api/file/download/%d?%s"
 
 func (e *workEngine) Open() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
-		fullPath := ctx.Param("path")
+		fullPath := getRawDAVPath(ctx, ctx.Param("path"))
 
 		paths, err := utils.SplitPath(fullPath)
 		if err != nil {
@@ -53,6 +53,8 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 
 			return
 		}
+
+		displayFullPath := buildDisplayPath(paths)
 
 		var file *models.VirtualFile
 
@@ -119,7 +121,7 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 			return
 		}
 
-		if !isVirtualFileVisible(file, fullPath, accessibleIds, accessibleTopPaths) {
+		if !isVirtualFileVisible(file, displayFullPath, accessibleIds, accessibleTopPaths) {
 			ctx.Unauthorized("无权限访问")
 
 			return
@@ -148,7 +150,7 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 			}
 
 			downloadURL := fmt.Sprintf(downloadURLFormat, file.ID, values.Encode())
-			ctx.Redirect(http.StatusFound, fmt.Sprintf("%s%s", shared.BaseURL, downloadURL))
+			ctx.Redirect(http.StatusFound, fmt.Sprintf("%s%s", shared.GetBaseURL(), downloadURL))
 
 			return
 		}
@@ -159,7 +161,7 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 				continue
 			}
 
-			childPath := path.Join(fullPath, child.Name)
+			childPath := path.Join(displayFullPath, child.Name)
 			if !isVirtualFileVisible(child, childPath, allowTopIds, accessibleTopPaths) {
 				continue
 			}
@@ -196,6 +198,37 @@ func (e *workEngine) Open() httpcontext.HandlerFunc {
 	}
 }
 
+func getRawDAVPath(ctx *httpcontext.Context, fallback string) string {
+	const wildcardSuffix = "/*path"
+
+	routePath := ctx.FullPath()
+	if !strings.HasSuffix(routePath, wildcardSuffix) {
+		return fallback
+	}
+
+	prefix := strings.TrimSuffix(routePath, wildcardSuffix)
+
+	rawPath := ctx.Request.URL.EscapedPath()
+	if !strings.HasPrefix(rawPath, prefix) {
+		return fallback
+	}
+
+	rawFullPath := strings.TrimPrefix(rawPath, prefix)
+	if rawFullPath == "" {
+		return "/"
+	}
+
+	return rawFullPath
+}
+
+func buildDisplayPath(parts []string) string {
+	if len(parts) == 0 {
+		return "/"
+	}
+
+	return path.Join(append([]string{"/"}, parts...)...)
+}
+
 func (e *workEngine) resolveAccessibleTopPaths(ctx *httpcontext.Context, topIds []int64) ([]string, error) {
 	paths := make([]string, 0, len(topIds))
 
@@ -224,7 +257,7 @@ func isVirtualFileVisible(file *models.VirtualFile, filePath string, allowTopIds
 		return true
 	}
 
-	if file.IsDir && file.TopId == 0 {
+	if file.IsDir {
 		return isPathAncestorOfAny(filePath, accessibleTopPaths)
 	}
 
@@ -249,7 +282,8 @@ func isPathAncestorOfAny(candidate string, paths []string) bool {
 }
 
 func (e *workEngine) shouldLimitFileByStrm(file *models.VirtualFile, isAdmin bool) bool {
-	if isAdmin || file == nil || file.IsDir || !shared.SettingAddition.WebDAVUserStrmOnly {
+	settingAddition := shared.GetSettingAddition()
+	if isAdmin || file == nil || file.IsDir || !settingAddition.WebDAVUserStrmOnly {
 		return false
 	}
 
@@ -258,7 +292,7 @@ func (e *workEngine) shouldLimitFileByStrm(file *models.VirtualFile, isAdmin boo
 		return true
 	}
 
-	allowed := models.NormalizeSuffixes(shared.SettingAddition.WebDAVAllowedSuffixes)
+	allowed := models.NormalizeSuffixes(settingAddition.WebDAVAllowedSuffixes)
 	if len(allowed) == 0 {
 		allowed = append([]string(nil), models.DefaultWebDAVAllowedSuffixes...)
 	}

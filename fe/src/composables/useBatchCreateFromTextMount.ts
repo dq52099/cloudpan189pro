@@ -3,6 +3,7 @@ import { useModal } from 'naive-ui'
 import { BatchCreateFromTextModal, type MountItem } from '@/components/storage'
 import { useMountPointBind } from '@/composables/useMountPointBind'
 import type { BatchParseItem } from '@/api/storage'
+import { OS_TYPES } from '@/utils/osType'
 
 export function useBatchCreateFromTextMount() {
   const modal = useModal()
@@ -28,7 +29,7 @@ export function useBatchCreateFromTextMount() {
       modalInstance = modal.create({
         title: '批量文本导入',
         preset: 'dialog',
-        style: { width: '700px' },
+        style: { width: 'min(700px, calc(100vw - 32px))' },
         content: () =>
           h(BatchCreateFromTextModal, {
             onParsed: async (payload: { items: BatchParseItem[]; token: number }) => {
@@ -41,13 +42,11 @@ export function useBatchCreateFromTextMount() {
                 shareCode: item.shareCode,
                 shareAccessCode: item.shareAccessCode,
                 fileId: item.fileId,
-                cloudToken: payload.token,
+                cloudToken: item.osType === OS_TYPES.PERSON_FOLDER ? payload.token : 0,
                 disableSwitchCloudToken: false,
               }))
 
-              const result = await mountPointBind.show(mountItems, {
-                defaultCloudToken: payload.token,
-              })
+              const result = await mountPointBind.show(mountItems)
 
               if (result && result.length > 0) {
                 settle({ success: true })

@@ -1,6 +1,8 @@
 package advance
 
 import (
+	"errors"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	cloudbridgeSvi "github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
 )
@@ -47,9 +49,26 @@ func (h *handler) GetSubscribeUser() httpcontext.HandlerFunc {
 			return
 		}
 
+		req.SubscribeUser = normalizeSubscribeUserID(req.SubscribeUser)
+		if req.SubscribeUser == "" {
+			ctx.AbortWithInvalidParams(errors.New("subscribeUser 不能为空"))
+
+			return
+		}
+
+		if !h.ensureCloudBridgeService(ctx, codeStorageAdvanceQuerySubscribeUserError) {
+			return
+		}
+
 		userInfo, err := h.cloudBridgeService.GetSubscribeUserInfo(ctx.GetContext(), req.SubscribeUser)
 		if err != nil {
 			ctx.Fail(codeStorageAdvanceQuerySubscribeUserError.WithError(err))
+
+			return
+		}
+
+		if userInfo == nil {
+			ctx.Fail(codeStorageAdvanceQuerySubscribeUserError.WithError(errors.New("订阅用户信息返回为空")))
 
 			return
 		}

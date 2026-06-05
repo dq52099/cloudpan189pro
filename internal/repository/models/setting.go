@@ -49,7 +49,7 @@ type SettingAddition struct {
 }
 
 var DefaultWebDAVAllowedSuffixes = []string{
-	".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".mpg", ".mpeg",
+	".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m3u8", ".m4v", ".mpg", ".mpeg",
 	".m2v", ".m4p", ".m4b", ".ts", ".mts", ".m2ts", ".m2t", ".mxf", ".dv", ".dvr-ms",
 	".asf", ".3gp", ".3g2", ".f4v", ".f4p", ".f4a", ".f4b", ".vob", ".ogv", ".ogg",
 	".divx", ".xvid", ".rm", ".rmvb", ".dat", ".nsv", ".qt", ".amv", ".mpv", ".m1v",

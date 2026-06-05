@@ -36,6 +36,14 @@ func (h *handler) InitSystem() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureSettingService(ctx, codeInitSettingErr) {
+			return
+		}
+
+		if !h.ensureUserService(ctx, codeInitSuperUserErr) {
+			return
+		}
+
 		if err := h.settingService.RunInTransaction(ctx.GetContext(), func(txCtx appContext.Context) error {
 			if initErr := h.settingService.InitSystem(txCtx, &setting.InitSystemRequest{
 				Title:      req.Title,

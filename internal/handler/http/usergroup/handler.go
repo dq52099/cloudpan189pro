@@ -29,7 +29,7 @@ var (
 	codeGetBindFilesFailed    = bi.Next("获取绑定文件失败")
 	codeListUserGroupFailed   = bi.Next("用户组列表获取失败")
 	codeUserGroupNotFound     = bi.Next("用户组不存在").WithHTTPCode(http.StatusNotFound)
-	codeBindFileNotFound      = bi.Next("绑定文件不存在").WithHTTPCode(http.StatusNotFound)
+	codeBindFileNotFound      = bi.Next("绑定文件不存在或不是存储挂载点").WithHTTPCode(http.StatusNotFound)
 )
 
 type handler struct {

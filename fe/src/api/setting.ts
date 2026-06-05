@@ -61,6 +61,7 @@ export const getSettingAddition = (): Promise<ApiResponse<Models.SettingAddition
 // 可选修改系统附加设置（管理员权限）
 export interface ModifySettingAdditionRequest {
   localProxy?: boolean
+  localProxyURL?: string
   multipleStream?: boolean
   multipleStreamThreadCount?: number
   multipleStreamChunkSize?: number

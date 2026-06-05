@@ -239,5 +239,9 @@ func deleteOwnedMountPointVirtualFiles(tx *gorm.DB, fileIDs []int64) error {
 		return nil
 	}
 
+	if err := deleteMatchedRows(tx, new(models.Group2File), "delete mount point file group bindings", "file_id IN ?", virtualFileIDs); err != nil {
+		return err
+	}
+
 	return deleteExpectedIDs(tx, new(models.VirtualFile), virtualFileIDs, "delete mount point virtual files")
 }

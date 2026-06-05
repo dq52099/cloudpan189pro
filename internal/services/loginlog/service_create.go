@@ -13,6 +13,8 @@ func (s *service) Create(ctx context.Context, log *models.LoginLog) (int64, erro
 		return 0, errors.New("login log is nil")
 	}
 
+	normalizeLoginLogForCreate(log)
+
 	// 补充 TraceId
 	if log.TraceId == "" && ctx.Trace != nil {
 		log.TraceId = ctx.ID()

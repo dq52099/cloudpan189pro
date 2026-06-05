@@ -248,7 +248,8 @@ func (h *handler) batchUpdateFiles(ctx context.Context, filesToUpdate map[int64]
 // 该函数在 batchUpdateFiles 成功后调用，不会破坏事务一致性；
 // 任何单文件失败只打日志不阻塞整个扫描。
 func (h *handler) syncStrmAfterUpdate(ctx context.Context, updates []*updateStrmContext) {
-	if shared.MediaConfig == nil || !shared.MediaConfig.Enable {
+	mediaConfig := shared.GetMediaConfig()
+	if mediaConfig == nil || !mediaConfig.Enable {
 		return
 	}
 
@@ -275,19 +276,19 @@ func (h *handler) syncStrmAfterUpdate(ctx context.Context, updates []*updateStrm
 		extOld := path.Ext(u.oldFile.Name)
 		extNew := path.Ext(u.newFile.Name)
 
-		includedOld := len(shared.MediaConfig.IncludedSuffixes) == 0 || slices.Contains(shared.MediaConfig.IncludedSuffixes, extOld)
-		includedNew := len(shared.MediaConfig.IncludedSuffixes) == 0 || slices.Contains(shared.MediaConfig.IncludedSuffixes, extNew)
+		includedOld := len(mediaConfig.IncludedSuffixes) == 0 || slices.Contains(mediaConfig.IncludedSuffixes, extOld)
+		includedNew := len(mediaConfig.IncludedSuffixes) == 0 || slices.Contains(mediaConfig.IncludedSuffixes, extNew)
 
 		// 旧文件是媒体、新文件不是（极少见：后缀变化），先清理旧 STRM 即可
 		if includedOld && !includedNew {
 			oldStrm := strings.TrimSuffix(u.oldFile.Name, extOld) + ".strm"
 
-			oldFull := path.Join(shared.MediaConfig.StoragePath, dirPath, oldStrm)
+			oldFull := path.Join(mediaConfig.StoragePath, dirPath, oldStrm)
 			if err := h.mediaFileService.DeleteStrmByFullPath(ctx, oldFull); err != nil {
 				ctx.Warn("同步 STRM - 删除旧 STRM 失败", zap.String("path", oldFull), zap.Error(err))
 			}
 
-			_ = h.mediaFileService.DeleteStrm(ctx, u.oldFile.ID, shared.MediaConfig.StoragePath)
+			_ = h.mediaFileService.DeleteStrm(ctx, u.oldFile.ID, mediaConfig.StoragePath)
 
 			continue
 		}
@@ -301,12 +302,12 @@ func (h *handler) syncStrmAfterUpdate(ctx context.Context, updates []*updateStrm
 		if u.oldFile.Name != u.newFile.Name {
 			oldStrm := strings.TrimSuffix(u.oldFile.Name, extOld) + ".strm"
 
-			oldFull := path.Join(shared.MediaConfig.StoragePath, dirPath, oldStrm)
+			oldFull := path.Join(mediaConfig.StoragePath, dirPath, oldStrm)
 			if err := h.mediaFileService.DeleteStrmByFullPath(ctx, oldFull); err != nil {
 				ctx.Warn("同步 STRM - 重命名清理旧 STRM 失败", zap.String("path", oldFull), zap.Error(err))
 			}
 
-			if err := h.mediaFileService.DeleteStrm(ctx, u.oldFile.ID, shared.MediaConfig.StoragePath); err != nil {
+			if err := h.mediaFileService.DeleteStrm(ctx, u.oldFile.ID, mediaConfig.StoragePath); err != nil {
 				ctx.Warn("同步 STRM - 清理旧 STRM DB 记录失败", zap.Error(err))
 			}
 		}
@@ -323,13 +324,13 @@ func (h *handler) syncStrmAfterUpdate(ctx context.Context, updates []*updateStrm
 
 		// 如果 conflict policy 是 skip 且 DB 已有记录，WriteStrm 会直接返回 (0,nil) 不覆盖。
 		// 这里强制走 replace 语义：先清掉 DB 记录让 WriteStrm 重新创建。
-		_ = h.mediaFileService.DeleteStrm(ctx, u.oldFile.ID, shared.MediaConfig.StoragePath)
+		_ = h.mediaFileService.DeleteStrm(ctx, u.oldFile.ID, mediaConfig.StoragePath)
 
 		if _, err := h.mediaFileService.WriteStrm(
 			ctx,
-			shared.MediaConfig.GetCar(dirPath, filename),
+			mediaConfig.GetCar(dirPath, filename),
 			u.oldFile.ID,
-			shared.JoinDownloadURL(u.oldFile.ID, values),
+			shared.JoinDownloadURLWithBase(mediaConfig.BaseURL, u.oldFile.ID, values),
 		); err != nil {
 			ctx.Warn("同步 STRM - 重写 STRM 失败",
 				zap.Int64("file_id", u.oldFile.ID),
@@ -341,7 +342,8 @@ func (h *handler) syncStrmAfterUpdate(ctx context.Context, updates []*updateStrm
 }
 
 func (h *handler) createStrmIteratorfunc(ctx context.Context, result *gorm.DB, files []*models.VirtualFile) {
-	if result.Error == nil && shared.MediaConfig != nil && shared.MediaConfig.Enable {
+	mediaConfig := shared.GetMediaConfig()
+	if result.Error == nil && mediaConfig != nil && mediaConfig.Enable {
 		dirPath, ok := ctx.GetString(consts.CtxKeyFileFullPath)
 		if !ok {
 			ctx.Error("批量创建文件 - 获取文件路径失败")
@@ -358,7 +360,7 @@ func (h *handler) createStrmIteratorfunc(ctx context.Context, result *gorm.DB, f
 
 			// 获取文件后缀
 			extName := path.Ext(file.Name)
-			if len(shared.MediaConfig.IncludedSuffixes) > 0 && !slices.Contains(shared.MediaConfig.IncludedSuffixes, extName) {
+			if len(mediaConfig.IncludedSuffixes) > 0 && !slices.Contains(mediaConfig.IncludedSuffixes, extName) {
 				continue
 			}
 
@@ -373,7 +375,7 @@ func (h *handler) createStrmIteratorfunc(ctx context.Context, result *gorm.DB, f
 				continue
 			}
 
-			if id, err := h.mediaFileService.WriteStrm(ctx, shared.MediaConfig.GetCar(dirPath, filename), file.ID, shared.JoinDownloadURL(file.ID, values)); err != nil {
+			if id, err := h.mediaFileService.WriteStrm(ctx, mediaConfig.GetCar(dirPath, filename), file.ID, shared.JoinDownloadURLWithBase(mediaConfig.BaseURL, file.ID, values)); err != nil {
 				ctx.Error("批量创建文件 - 遍历 - 创建 strm 文件失败", zap.Int64("file_id", file.ID), zap.Error(err))
 
 				continue
@@ -385,7 +387,8 @@ func (h *handler) createStrmIteratorfunc(ctx context.Context, result *gorm.DB, f
 }
 
 func (h *handler) deleteStrmIterator(ctx context.Context, result *gorm.DB, files []*models.VirtualFile) {
-	if result.Error == nil && shared.MediaConfig != nil && shared.MediaConfig.Enable {
+	mediaConfig := shared.GetMediaConfig()
+	if result.Error == nil && mediaConfig != nil && mediaConfig.Enable {
 		ctx.Debug("批量删除文件 - 删除 strm 文件", zap.Int("file_count", len(files)))
 
 		dirPath, hasPath := ctx.GetString(consts.CtxKeyFileFullPath)
@@ -395,16 +398,16 @@ func (h *handler) deleteStrmIterator(ctx context.Context, result *gorm.DB, files
 				continue
 			}
 
-			_ = h.mediaFileService.DeleteStrm(ctx, file.ID, shared.MediaConfig.StoragePath)
+			_ = h.mediaFileService.DeleteStrm(ctx, file.ID, mediaConfig.StoragePath)
 
 			if hasPath {
 				extName := path.Ext(file.Name)
-				if len(shared.MediaConfig.IncludedSuffixes) > 0 && !slices.Contains(shared.MediaConfig.IncludedSuffixes, extName) {
+				if len(mediaConfig.IncludedSuffixes) > 0 && !slices.Contains(mediaConfig.IncludedSuffixes, extName) {
 					continue
 				}
 
 				strmName := strings.TrimSuffix(file.Name, extName) + ".strm"
-				fullPhysicalPath := path.Join(shared.MediaConfig.StoragePath, dirPath, strmName)
+				fullPhysicalPath := path.Join(mediaConfig.StoragePath, dirPath, strmName)
 
 				if err := h.mediaFileService.DeleteStrmByFullPath(ctx, fullPhysicalPath); err != nil {
 					ctx.Warn("删除 strm 物理文件失败", zap.String("path", fullPhysicalPath), zap.Error(err))

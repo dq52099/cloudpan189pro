@@ -2,6 +2,7 @@ package telegram
 
 import (
 	stdctx "context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +13,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
+	telegramSvi "github.com/xxcheng123/cloudpan189-share/internal/services/telegram"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -33,10 +36,15 @@ func setupTelegramHandlerTestDB(t *testing.T) *gorm.DB {
 }
 
 func newTelegramTestRouter(db *gorm.DB) *gin.Engine {
+	return newTelegramTestRouterWithService(db, nil)
+}
+
+func newTelegramTestRouterWithService(db *gorm.DB, tgService telegramSvi.Service) *gin.Engine {
 	router := gin.New()
 	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
-	handler := NewHandler(db, nil, zap.NewNop())
+	handler := NewHandler(db, tgService, zap.NewNop())
 
+	router.GET("/settings", wrapper.Wrap(handler.GetSetting()))
 	router.POST("/users/update", wrapper.Wrap(handler.UpdateUser()))
 	router.POST("/settings/update", wrapper.Wrap(handler.UpdateSetting()))
 	router.POST("/settings/test", wrapper.Wrap(handler.TestConnection()))
@@ -44,6 +52,79 @@ func newTelegramTestRouter(db *gorm.DB) *gin.Engine {
 	router.POST("/shares/process", wrapper.Wrap(handler.ProcessShareLink()))
 
 	return router
+}
+
+type mockTelegramRuntimeService struct {
+	enabled            bool
+	updateErr          error
+	parseResult        *telegramSvi.MountResult
+	parseErr           error
+	parseContextValues []string
+}
+
+func (m *mockTelegramRuntimeService) SendMessage(msg string) error {
+	return nil
+}
+
+func (m *mockTelegramRuntimeService) SendNotification(title, content string) error {
+	return nil
+}
+
+func (m *mockTelegramRuntimeService) IsEnabled() bool {
+	return m.enabled
+}
+
+func (m *mockTelegramRuntimeService) GetProxyURL() string {
+	return ""
+}
+
+func (m *mockTelegramRuntimeService) GetBotToken() string {
+	return ""
+}
+
+func (m *mockTelegramRuntimeService) StartBot() error {
+	return nil
+}
+
+func (m *mockTelegramRuntimeService) StopBot() {
+}
+
+func (m *mockTelegramRuntimeService) UpdateConfig(config telegramSvi.Config) error {
+	return m.updateErr
+}
+
+func (m *mockTelegramRuntimeService) TestConnection() error {
+	return nil
+}
+
+func (m *mockTelegramRuntimeService) ParseAndMountShareLink(shareURL, mountPath string, autoMount bool) (*telegramSvi.MountResult, error) {
+	return m.parseResult, m.parseErr
+}
+
+func (m *mockTelegramRuntimeService) ParseAndMountShareLinkWithContext(ctx stdctx.Context, shareURL, mountPath string, autoMount bool) (*telegramSvi.MountResult, error) {
+	value, _ := ctx.Value(telegramHandlerContextMarkerKey{}).(string)
+	m.parseContextValues = append(m.parseContextValues, value)
+
+	return m.parseResult, m.parseErr
+}
+
+func (m *mockTelegramRuntimeService) SetMountDependencies(fetcher telegramSvi.ShareInfoFetcher, mounter telegramSvi.StorageMounter) {
+}
+
+type telegramHandlerContextMarkerKey struct{}
+
+func TestInvalidParamsKeepsOriginalErrorForLogging(t *testing.T) {
+	err := errors.New("database accessToken=secret-access failed")
+
+	busErr := invalidParams(err)
+
+	if !errors.Is(busErr.GetError(), err) {
+		t.Fatalf("expected original error to be preserved, got %v", busErr.GetError())
+	}
+
+	if busErr.GetHTTPCode() != http.StatusBadRequest || busErr.GetCode() != 400 {
+		t.Fatalf("unexpected business error codes: http=%d business=%d", busErr.GetHTTPCode(), busErr.GetCode())
+	}
 }
 
 func TestTestConnectionReturnsNotFoundWhenSettingMissing(t *testing.T) {
@@ -102,6 +183,91 @@ func TestProcessShareLinkReturnsNotFoundWhenFallbackSettingMissing(t *testing.T)
 	assertTelegramSettingNotInitialized(t, recorder)
 }
 
+func TestProcessShareLinkRedactsRuntimeServiceErrorMessage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupTelegramHandlerTestDB(t)
+	router := newTelegramTestRouterWithService(db, &mockTelegramRuntimeService{
+		enabled: true,
+		parseErr: errors.New(
+			`telegram failed https://api-user:api-pass@api.telegram.org/bot123456:ABC-def/sendMessage?accessToken=secret-access#refreshToken=secret-fragment 提取码：wxyz Authorization: Bearer bearer-secret botToken=telegram-secret`,
+		),
+	})
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/shares/process",
+		strings.NewReader(`{"shareUrl":"https://cloud.189.cn/t/abcDEF","autoMount":true}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertTelegramBadRequestRedactsSensitiveMessage(t, recorder)
+}
+
+func TestProcessShareLinkRedactsRuntimeServiceFailureResultMessage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupTelegramHandlerTestDB(t)
+	router := newTelegramTestRouterWithService(db, &mockTelegramRuntimeService{
+		enabled: true,
+		parseResult: &telegramSvi.MountResult{
+			Success: false,
+			Message: `mount failed https://api-user:api-pass@proxy.example.test/api?accessCode=abcd#token=secret-fragment botToken=telegram-secret`,
+		},
+	})
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/shares/process",
+		strings.NewReader(`{"shareUrl":"https://cloud.189.cn/t/abcDEF","autoMount":true}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertTelegramBadRequestRedactsSensitiveMessage(t, recorder)
+}
+
+func TestProcessShareLinkUsesRequestContextForRuntimeService(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupTelegramHandlerTestDB(t)
+	runtimeSvc := &mockTelegramRuntimeService{
+		enabled: true,
+		parseResult: &telegramSvi.MountResult{
+			Success:   true,
+			Message:   "挂载成功",
+			MountPath: "/Telegram/Shared",
+			ShareID:   123,
+			FileID:    "file-id",
+		},
+	}
+	router := newTelegramTestRouterWithService(db, runtimeSvc)
+	ctx := stdctx.WithValue(stdctx.Background(), telegramHandlerContextMarkerKey{}, "handler-marker")
+	req := httptest.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		"/shares/process",
+		strings.NewReader(`{"shareUrl":"https://cloud.189.cn/t/abcDEF","autoMount":true}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if got := runtimeSvc.parseContextValues; len(got) != 1 || got[0] != "handler-marker" {
+		t.Fatalf("expected handler request context marker, got %#v", got)
+	}
+}
+
 func assertTelegramSettingNotInitialized(t *testing.T, recorder *httptest.ResponseRecorder) {
 	t.Helper()
 
@@ -111,6 +277,122 @@ func assertTelegramSettingNotInitialized(t *testing.T, recorder *httptest.Respon
 
 	if !strings.Contains(recorder.Body.String(), "Telegram 配置未初始化") {
 		t.Fatalf("expected telegram setting missing message, got body=%s", recorder.Body.String())
+	}
+}
+
+func assertTelegramBadRequestRedactsSensitiveMessage(t *testing.T, recorder *httptest.ResponseRecorder) {
+	t.Helper()
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	body := recorder.Body.String()
+	for _, leaked := range []string{
+		"api-user",
+		"api-pass",
+		"ABC-def",
+		"secret-access",
+		"secret-fragment",
+		"wxyz",
+		"bearer-secret",
+		"telegram-secret",
+		"abcd",
+	} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("expected %q to be redacted, got body=%s", leaked, body)
+		}
+	}
+
+	if !strings.Contains(body, utils.RedactedSecret) {
+		t.Fatalf("expected redacted marker in body=%s", body)
+	}
+}
+
+func TestGetSettingMasksBotToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupTelegramHandlerTestDB(t)
+
+	rawProxyURL := "http://proxy-user:proxy-pass@example.test:8080/proxy?token=secret-token#access_token=secret-fragment"
+	rawAPIURL := "https://api-user:api-pass@telegram.example.test/bot?client_secret=secret-client#token=secret-api-fragment"
+
+	setting := &models.TelegramSetting{
+		ID:                1,
+		BotTokenEncrypted: "stored-token",
+		ProxyURL:          rawProxyURL,
+		APIURL:            rawAPIURL,
+		DefaultMountPath:  "/转存",
+		EnableNotify:      true,
+		Enable:            true,
+	}
+	if err := db.Create(setting).Error; err != nil {
+		t.Fatalf("create telegram setting: %v", err)
+	}
+
+	router := newTelegramTestRouter(db)
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/settings", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if strings.Contains(recorder.Body.String(), "stored-token") {
+		t.Fatalf("expected bot token to be masked, got body=%s", recorder.Body.String())
+	}
+
+	for _, leaked := range []string{
+		"proxy-user",
+		"proxy-pass",
+		"secret-token",
+		"secret-fragment",
+		"api-user",
+		"api-pass",
+		"secret-client",
+		"secret-api-fragment",
+	} {
+		if strings.Contains(recorder.Body.String(), leaked) {
+			t.Fatalf("expected %q to be redacted, got body=%s", leaked, recorder.Body.String())
+		}
+	}
+
+	var response struct {
+		Code int                    `json:"code"`
+		Data models.TelegramSetting `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.Data.BotToken != utils.RedactedSecret {
+		t.Fatalf("expected masked bot token, got %q", response.Data.BotToken)
+	}
+
+	if response.Data.BotTokenEncrypted != "" {
+		t.Fatalf("expected encrypted token omitted, got %q", response.Data.BotTokenEncrypted)
+	}
+
+	if response.Data.ProxyURL != utils.RedactURLForLog(rawProxyURL) {
+		t.Fatalf("expected redacted proxy URL, got %q", response.Data.ProxyURL)
+	}
+
+	if response.Data.APIURL != utils.RedactURLForLog(rawAPIURL) {
+		t.Fatalf("expected redacted API URL, got %q", response.Data.APIURL)
+	}
+
+	var stored models.TelegramSetting
+	if err := db.First(&stored, setting.ID).Error; err != nil {
+		t.Fatalf("query telegram setting: %v", err)
+	}
+
+	if stored.BotTokenEncrypted != "stored-token" {
+		t.Fatalf("expected stored token unchanged, got %q", stored.BotTokenEncrypted)
+	}
+
+	if stored.ProxyURL != rawProxyURL || stored.APIURL != rawAPIURL {
+		t.Fatalf("expected stored URLs unchanged, got proxy=%q api=%q", stored.ProxyURL, stored.APIURL)
 	}
 }
 
@@ -169,6 +451,22 @@ func TestUpdateSettingPersistsFalseBooleans(t *testing.T) {
 
 	if updated.DefaultMountPath != "/new" {
 		t.Fatalf("expected default mount path /new, got %q", updated.DefaultMountPath)
+	}
+
+	if strings.Contains(recorder.Body.String(), "new-token") {
+		t.Fatalf("expected updated token to be masked in response, got body=%s", recorder.Body.String())
+	}
+
+	var response struct {
+		Code int                    `json:"code"`
+		Data models.TelegramSetting `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.Data.BotToken != utils.RedactedSecret {
+		t.Fatalf("expected masked bot token in update response, got %q", response.Data.BotToken)
 	}
 }
 
@@ -275,6 +573,262 @@ func TestUpdateSettingPartialUpdatePreservesExistingValues(t *testing.T) {
 	}
 }
 
+func TestUpdateSettingPreservesBotTokenWhenMaskedPlaceholderSubmitted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupTelegramHandlerTestDB(t)
+
+	setting := &models.TelegramSetting{
+		ID:                1,
+		BotTokenEncrypted: "old-token",
+		ProxyURL:          "http://old-proxy",
+		ProxyType:         "http",
+		APIURL:            "https://old.example.com",
+		ChatID:            "old-chat",
+		DefaultMountPath:  "/old",
+		EnableNotify:      true,
+		Enable:            true,
+	}
+	if err := db.Create(setting).Error; err != nil {
+		t.Fatalf("create telegram setting: %v", err)
+	}
+
+	router := newTelegramTestRouter(db)
+	body := `{"botToken":"` + utils.RedactedSecret + `","defaultMountPath":"/new"}`
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/settings/update", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if strings.Contains(recorder.Body.String(), "old-token") {
+		t.Fatalf("expected existing token to be masked in response, got body=%s", recorder.Body.String())
+	}
+
+	var response struct {
+		Code int                    `json:"code"`
+		Data models.TelegramSetting `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.Data.BotToken != utils.RedactedSecret {
+		t.Fatalf("expected masked bot token in update response, got %q", response.Data.BotToken)
+	}
+
+	var updated models.TelegramSetting
+	if err := db.First(&updated, setting.ID).Error; err != nil {
+		t.Fatalf("query telegram setting: %v", err)
+	}
+
+	if updated.BotTokenEncrypted != "old-token" {
+		t.Fatalf("expected masked placeholder to preserve token, got %q", updated.BotTokenEncrypted)
+	}
+
+	if updated.DefaultMountPath != "/new" {
+		t.Fatalf("expected default mount path updated, got %q", updated.DefaultMountPath)
+	}
+}
+
+func TestUpdateSettingPreservesURLWhenRedactedPlaceholderSubmitted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupTelegramHandlerTestDB(t)
+
+	rawProxyURL := "http://proxy-user:proxy-pass@example.test:8080/proxy?token=secret-token#access_token=secret-fragment"
+	rawAPIURL := "https://api-user:api-pass@telegram.example.test/bot?client_secret=secret-client#token=secret-api-fragment"
+
+	setting := &models.TelegramSetting{
+		ID:                1,
+		BotTokenEncrypted: "old-token",
+		ProxyURL:          rawProxyURL,
+		ProxyType:         "http",
+		APIURL:            rawAPIURL,
+		ChatID:            "old-chat",
+		DefaultMountPath:  "/old",
+		EnableNotify:      true,
+		Enable:            true,
+	}
+	if err := db.Create(setting).Error; err != nil {
+		t.Fatalf("create telegram setting: %v", err)
+	}
+
+	body, err := json.Marshal(map[string]interface{}{
+		"proxyURL":         utils.RedactURLForLog(rawProxyURL),
+		"apiURL":           utils.RedactURLForLog(rawAPIURL),
+		"defaultMountPath": "/new",
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	router := newTelegramTestRouter(db)
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/settings/update", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	for _, leaked := range []string{
+		"proxy-user",
+		"proxy-pass",
+		"secret-token",
+		"secret-fragment",
+		"api-user",
+		"api-pass",
+		"secret-client",
+		"secret-api-fragment",
+	} {
+		if strings.Contains(recorder.Body.String(), leaked) {
+			t.Fatalf("expected %q to be redacted, got body=%s", leaked, recorder.Body.String())
+		}
+	}
+
+	var updated models.TelegramSetting
+	if err := db.First(&updated, setting.ID).Error; err != nil {
+		t.Fatalf("query telegram setting: %v", err)
+	}
+
+	if updated.ProxyURL != rawProxyURL {
+		t.Fatalf("expected proxy URL preserved, got %q", updated.ProxyURL)
+	}
+
+	if updated.APIURL != rawAPIURL {
+		t.Fatalf("expected API URL preserved, got %q", updated.APIURL)
+	}
+
+	if updated.DefaultMountPath != "/new" {
+		t.Fatalf("expected default mount path updated, got %q", updated.DefaultMountPath)
+	}
+}
+
+func TestUpdateSettingMergesWhenSettingIsCreatedConcurrently(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupTelegramHandlerTestDB(t)
+
+	const callbackName = "telegram_test_create_setting_before_upsert"
+
+	seeded := false
+
+	if err := db.Callback().Create().Before("gorm:create").Register(callbackName, func(tx *gorm.DB) {
+		if seeded || tx.Statement.Table != "telegram_settings" {
+			return
+		}
+
+		seeded = true
+
+		competing := &models.TelegramSetting{
+			ID:                1,
+			BotTokenEncrypted: "raced-token",
+			ChatID:            "raced-chat",
+			DefaultMountPath:  "/raced",
+			APIURL:            "https://raced.example.com",
+			EnableNotify:      true,
+			Enable:            true,
+		}
+		if err := tx.Session(&gorm.Session{NewDB: true}).Create(competing).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+	}); err != nil {
+		t.Fatalf("register create callback: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = db.Callback().Create().Remove(callbackName)
+	})
+
+	router := newTelegramTestRouter(db)
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/settings/update",
+		strings.NewReader(`{"defaultMountPath":"/new","enable":false}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if !seeded {
+		t.Fatal("expected callback to simulate concurrent telegram setting creation")
+	}
+
+	var count int64
+	if err := db.Model(&models.TelegramSetting{}).Count(&count).Error; err != nil {
+		t.Fatalf("count telegram settings: %v", err)
+	}
+
+	if count != 1 {
+		t.Fatalf("expected one telegram setting, got %d", count)
+	}
+
+	var updated models.TelegramSetting
+	if err := db.First(&updated, int64(1)).Error; err != nil {
+		t.Fatalf("query telegram setting: %v", err)
+	}
+
+	if updated.DefaultMountPath != "/new" {
+		t.Fatalf("expected request default mount path to win, got %q", updated.DefaultMountPath)
+	}
+
+	if updated.Enable {
+		t.Fatal("expected request enable=false to win conflict")
+	}
+
+	if updated.BotTokenEncrypted != "raced-token" || updated.ChatID != "raced-chat" {
+		t.Fatalf("expected concurrent existing fields to be preserved, got %+v", updated)
+	}
+}
+
+func TestUpdateSettingSynchronizesRuntimeService(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupTelegramHandlerTestDB(t)
+
+	runtimeService := telegramSvi.NewService("old-token", "old-chat", "", "", "", zap.NewNop())
+	router := newTelegramTestRouterWithService(db, runtimeService)
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/settings/update",
+		strings.NewReader(`{"botToken":"new-token","proxyURL":"http://127.0.0.1:7890","proxyType":"http","apiURL":"https://api.telegram.org","chatID":"new-chat","defaultMountPath":"/new","enableNotify":true,"enable":false}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if runtimeService.GetBotToken() != "new-token" {
+		t.Fatalf("expected runtime token synchronized, got %q", runtimeService.GetBotToken())
+	}
+
+	if runtimeService.GetProxyURL() != "http://127.0.0.1:7890" {
+		t.Fatalf("expected runtime proxy synchronized, got %q", runtimeService.GetProxyURL())
+	}
+
+	if runtimeService.IsEnabled() {
+		t.Fatal("expected runtime service disabled after enable=false update")
+	}
+}
+
 func TestUpdateUserPersistsFalseAdminValue(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -318,6 +872,97 @@ func TestUpdateUserPersistsFalseAdminValue(t *testing.T) {
 
 	if updated.IsAdmin {
 		t.Fatal("expected is_admin to be false")
+	}
+}
+
+func TestUpdateUserTargetsCurrentRowByTelegramUserID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupTelegramHandlerTestDB(t)
+
+	user := &models.TelegramUser{
+		UserID:     100,
+		Username:   "stale",
+		MountPath:  "/old",
+		IsAdmin:    true,
+		LastSeenAt: time.Now(),
+	}
+	if err := db.Create(user).Error; err != nil {
+		t.Fatalf("create telegram user: %v", err)
+	}
+
+	const callbackName = "telegram_test_replace_user_before_update"
+
+	replaced := false
+
+	if err := db.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if replaced || tx.Statement.Table != "telegram_users" {
+			return
+		}
+
+		replaced = true
+
+		if err := tx.Session(&gorm.Session{NewDB: true}).
+			Exec("DELETE FROM telegram_users WHERE id = ?", user.ID).Error; err != nil {
+			_ = tx.AddError(err)
+
+			return
+		}
+
+		replacement := &models.TelegramUser{
+			UserID:     user.UserID,
+			Username:   "replacement",
+			MountPath:  "/replacement",
+			IsAdmin:    true,
+			LastSeenAt: time.Now(),
+		}
+		if err := tx.Session(&gorm.Session{NewDB: true}).Create(replacement).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+	}); err != nil {
+		t.Fatalf("register update callback: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = db.Callback().Update().Remove(callbackName)
+	})
+
+	router := newTelegramTestRouter(db)
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/users/update",
+		strings.NewReader(`{"userID":100,"mountPath":"/new","isAdmin":false}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if !replaced {
+		t.Fatal("expected callback to simulate telegram user replacement")
+	}
+
+	var users []models.TelegramUser
+	if err := db.Order("id").Find(&users).Error; err != nil {
+		t.Fatalf("query telegram users: %v", err)
+	}
+
+	if len(users) != 1 {
+		t.Fatalf("expected one telegram user, got %d: %#v", len(users), users)
+	}
+
+	updated := users[0]
+	if updated.ID == user.ID {
+		t.Fatalf("expected stale row to be replaced, got original id %d", updated.ID)
+	}
+
+	if updated.MountPath != "/new" || updated.IsAdmin {
+		t.Fatalf("expected replacement row to be updated by user_id, got %+v", updated)
 	}
 }
 

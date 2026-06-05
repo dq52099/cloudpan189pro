@@ -228,7 +228,7 @@ const handleConfirm = () => {
 
       if (response.code === 200) {
         message.success('密码重置成功')
-        visible.value = false
+        emit('update:show', false)
         emit('success')
       } else {
         message.error(response.msg || '密码重置失败')
@@ -239,8 +239,10 @@ const handleConfirm = () => {
         return
       }
 
-      console.error('重置密码失败:', error)
-      message.error(getErrorMessage(error, '重置密码失败，请稍后重试'))
+      const errorMessage = getErrorMessage(error, '重置密码失败，请稍后重试')
+
+      console.error('重置密码失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isCurrentOperation(currentOperation)) {

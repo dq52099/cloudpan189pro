@@ -289,6 +289,37 @@ func TestCreateTopSetsTopIdToCreatedID(t *testing.T) {
 	}
 }
 
+func TestCreateTopDoesNotRenameDuplicateName(t *testing.T) {
+	tDB := setupVirtualFileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	createVirtualFile(t, tDB.db, 0, "mount")
+
+	file := newVirtualFileForCreate("mount", "rev1")
+
+	id, err := svc.CreateTop(ctx, 0, file)
+	if err == nil {
+		t.Fatal("expected duplicate top virtual file to fail")
+	}
+
+	if id != 0 {
+		t.Fatalf("expected no id on duplicate create top, got %d", id)
+	}
+
+	if file.Name != "mount" {
+		t.Fatalf("expected duplicate top name not to be auto-renamed, got %q", file.Name)
+	}
+
+	if count := countVirtualFiles(t, tDB.db, "parent_id = ? AND name = ?", 0, "mount"); count != 1 {
+		t.Fatalf("expected only existing mount name to remain, got count %d", count)
+	}
+
+	if count := countVirtualFiles(t, tDB.db, "parent_id = ? AND name = ?", 0, "mount(rev1)"); count != 0 {
+		t.Fatalf("expected no renamed top file, got count %d", count)
+	}
+}
+
 func TestCreateTopRollsBackWhenTopIdUpdateFails(t *testing.T) {
 	tDB := setupVirtualFileTestDB(t)
 	svc := NewService(tDB)
@@ -368,6 +399,7 @@ func TestListVirtualFileRejectsInvalidSortFields(t *testing.T) {
 	}{
 		{name: "invalid asc", req: &ListRequest{AscList: []string{"name; DROP TABLE virtual_files"}}},
 		{name: "invalid desc", req: &ListRequest{DescList: []string{"password"}}},
+		{name: "unsupported link id sort", req: &ListRequest{DescList: []string{"link_id"}}},
 	}
 
 	for _, tt := range tests {
@@ -377,6 +409,22 @@ func TestListVirtualFileRejectsInvalidSortFields(t *testing.T) {
 				t.Fatalf("expected invalid virtual file sort field, got %v", err)
 			}
 		})
+	}
+}
+
+func TestListVirtualFileRejectsUnsupportedLinkIDFilter(t *testing.T) {
+	tDB := setupVirtualFileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	req := &ListRequest{LinkId: 1}
+
+	if _, err := svc.List(ctx, req); !errors.Is(err, errUnsupportedVirtualFileLinkID) {
+		t.Fatalf("expected unsupported virtual file link id, got %v", err)
+	}
+
+	if _, err := svc.Count(ctx, req); !errors.Is(err, errUnsupportedVirtualFileLinkID) {
+		t.Fatalf("expected unsupported virtual file link id on count, got %v", err)
 	}
 }
 
@@ -692,6 +740,54 @@ func TestListVirtualFileEmptyTopIdListReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestListVirtualFileAllowedSuffixesFiltersFilesAndKeepsDirs(t *testing.T) {
+	tDB := setupVirtualFileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	createVirtualFile(t, tDB.db, 1, "movie.MP4")
+	createVirtualFile(t, tDB.db, 1, "notes.nfo")
+	createVirtualDir(t, tDB.db, 1, "season")
+	createVirtualFile(t, tDB.db, 2, "other.mp4")
+
+	req := &ListRequest{
+		TopIdList:       []int64{1},
+		AllowedSuffixes: []string{"mp4"},
+		AscList:         []string{"name"},
+	}
+
+	list, err := svc.List(ctx, req)
+	if err != nil {
+		t.Fatalf("list virtual files: %v", err)
+	}
+
+	gotNames := make(map[string]struct{}, len(list))
+	for _, file := range list {
+		gotNames[file.Name] = struct{}{}
+	}
+
+	for _, name := range []string{"movie.MP4", "season"} {
+		if _, ok := gotNames[name]; !ok {
+			t.Fatalf("expected %q in filtered list, got %v", name, gotNames)
+		}
+	}
+
+	for _, name := range []string{"notes.nfo", "other.mp4"} {
+		if _, ok := gotNames[name]; ok {
+			t.Fatalf("expected %q to be filtered out, got %v", name, gotNames)
+		}
+	}
+
+	count, err := svc.Count(ctx, req)
+	if err != nil {
+		t.Fatalf("count virtual files: %v", err)
+	}
+
+	if count != 2 {
+		t.Fatalf("expected filtered count 2, got %d", count)
+	}
+}
+
 func TestDeleteVirtualFileDeletesOnlyRequestedID(t *testing.T) {
 	tDB := setupVirtualFileTestDB(t)
 	svc := NewService(tDB)
@@ -974,6 +1070,37 @@ func TestQueryByPathUsesParentAndNameSegments(t *testing.T) {
 	}
 }
 
+func TestQueryByPathNormalizesLookupPath(t *testing.T) {
+	tDB := setupVirtualFileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	mediaDir := createVirtualDir(t, tDB.db, 0, "media")
+	chineseDir := createVirtualDir(t, tDB.db, mediaDir.ID, "中文")
+	file := createVirtualFile(t, tDB.db, chineseDir.ID, "a_b")
+
+	got, err := svc.QueryByPath(ctx, "/media//%E4%B8%AD%E6%96%87%20/a%3ab/")
+	if err != nil {
+		t.Fatalf("query normalized path: %v", err)
+	}
+
+	if got.ID != file.ID {
+		t.Fatalf("expected normalized path id %d, got %d", file.ID, got.ID)
+	}
+
+	percentDir := createVirtualDir(t, tDB.db, 0, "percent")
+	percentFile := createVirtualFile(t, tDB.db, percentDir.ID, "a%b")
+
+	got, err = svc.QueryByPath(ctx, "/percent/a%25b")
+	if err != nil {
+		t.Fatalf("query percent path: %v", err)
+	}
+
+	if got.ID != percentFile.ID {
+		t.Fatalf("expected percent path id %d, got %d", percentFile.ID, got.ID)
+	}
+}
+
 func TestQueryByPathReturnsNotFoundForEmptyPath(t *testing.T) {
 	tDB := setupVirtualFileTestDB(t)
 	svc := NewService(tDB)
@@ -984,6 +1111,21 @@ func TestQueryByPathReturnsNotFoundForEmptyPath(t *testing.T) {
 			file, err := svc.QueryByPath(ctx, path)
 			if !errors.Is(err, gorm.ErrRecordNotFound) {
 				t.Fatalf("expected record not found, got file=%#v err=%v", file, err)
+			}
+		})
+	}
+}
+
+func TestQueryByPathRejectsInvalidPath(t *testing.T) {
+	tDB := setupVirtualFileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	for _, path := range []string{"relative/path", "/a/%2e%2e/b", "/a%2Fb/c", "/a/%20%20/b"} {
+		t.Run(path, func(t *testing.T) {
+			file, err := svc.QueryByPath(ctx, path)
+			if !errors.Is(err, errInvalidVirtualFilePath) {
+				t.Fatalf("expected invalid virtual file path, got file=%#v err=%v", file, err)
 			}
 		})
 	}
@@ -1017,12 +1159,99 @@ func TestFindOrCreateAncestorsReusesExistingPathSegments(t *testing.T) {
 		t.Fatalf("query movies dir: %v", err)
 	}
 
+	if movies.IsTop || movies.TopId != 0 {
+		t.Fatalf("expected movies ancestor to be a normal directory, got is_top=%v top_id=%d", movies.IsTop, movies.TopId)
+	}
+
 	if count := countVirtualFiles(t, tDB.db, "parent_id = ? AND name = ?", movies.ID, "2024"); count != 1 {
 		t.Fatalf("expected one 2024 dir under movies, got %d", count)
 	}
 
+	var year models.VirtualFile
+	if err = tDB.db.Where("id = ? AND parent_id = ? AND name = ?", firstParentID, movies.ID, "2024").First(&year).Error; err != nil {
+		t.Fatalf("expected final parent to be existing 2024 dir: %v", err)
+	}
+
+	if year.IsTop || year.TopId != 0 {
+		t.Fatalf("expected 2024 ancestor to be a normal directory, got is_top=%v top_id=%d", year.IsTop, year.TopId)
+	}
+
 	if count := countVirtualFiles(t, tDB.db, "id = ? AND parent_id = ? AND name = ?", firstParentID, movies.ID, "2024"); count != 1 {
 		t.Fatalf("expected final parent to be existing 2024 dir, got count %d", count)
+	}
+}
+
+func TestFindOrCreateAncestorsNormalizesPathSegments(t *testing.T) {
+	tDB := setupVirtualFileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	parentID, err := svc.FindOrCreateAncestors(ctx, "/media//%E4%B8%AD%E6%96%87%20/a%3ab/file.mkv")
+	if err != nil {
+		t.Fatalf("find or create normalized ancestors: %v", err)
+	}
+
+	var mediaDir models.VirtualFile
+	if err = tDB.db.Where("parent_id = ? AND name = ?", 0, "media").First(&mediaDir).Error; err != nil {
+		t.Fatalf("query media dir: %v", err)
+	}
+
+	var chineseDir models.VirtualFile
+	if err = tDB.db.Where("parent_id = ? AND name = ?", mediaDir.ID, "中文").First(&chineseDir).Error; err != nil {
+		t.Fatalf("query chinese dir: %v", err)
+	}
+
+	var sanitizedDir models.VirtualFile
+	if err = tDB.db.Where("parent_id = ? AND name = ?", chineseDir.ID, "a_b").First(&sanitizedDir).Error; err != nil {
+		t.Fatalf("query sanitized dir: %v", err)
+	}
+
+	if parentID != sanitizedDir.ID {
+		t.Fatalf("expected normalized final parent id %d, got %d", sanitizedDir.ID, parentID)
+	}
+
+	if count := countVirtualFiles(t, tDB.db, "name IN ?", []string{"中文 ", "a:b"}); count != 0 {
+		t.Fatalf("expected no raw unsanitized ancestor names, got count %d", count)
+	}
+
+	parentID, err = svc.FindOrCreateAncestors(ctx, "/percent/a%25b/file.mkv")
+	if err != nil {
+		t.Fatalf("find or create percent ancestors: %v", err)
+	}
+
+	var percentDir models.VirtualFile
+	if err = tDB.db.Where("parent_id = ? AND name = ?", 0, "percent").First(&percentDir).Error; err != nil {
+		t.Fatalf("query percent root dir: %v", err)
+	}
+
+	var literalPercentDir models.VirtualFile
+	if err = tDB.db.Where("parent_id = ? AND name = ?", percentDir.ID, "a%b").First(&literalPercentDir).Error; err != nil {
+		t.Fatalf("query literal percent dir: %v", err)
+	}
+
+	if parentID != literalPercentDir.ID {
+		t.Fatalf("expected percent final parent id %d, got %d", literalPercentDir.ID, parentID)
+	}
+}
+
+func TestFindOrCreateAncestorsRejectsInvalidPathWithoutCreatingFiles(t *testing.T) {
+	tDB := setupVirtualFileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	for _, path := range []string{"relative/path/file.mkv", "/movies/%2e%2e/file.mkv", "/movies%2F2024/file.mkv", "/movies/%20%20/file.mkv"} {
+		t.Run(path, func(t *testing.T) {
+			before := countVirtualFiles(t, tDB.db, "1 = 1")
+
+			parentID, err := svc.FindOrCreateAncestors(ctx, path)
+			if !errors.Is(err, errInvalidVirtualFilePath) {
+				t.Fatalf("expected invalid virtual file path, got parentID=%d err=%v", parentID, err)
+			}
+
+			if after := countVirtualFiles(t, tDB.db, "1 = 1"); after != before {
+				t.Fatalf("expected invalid path not to create files, before=%d after=%d", before, after)
+			}
+		})
 	}
 }
 
@@ -1218,6 +1447,49 @@ func TestModifyAdditionReturnsNotFoundWhenFileMissing(t *testing.T) {
 	err := svc.ModifyAddition(ctx, 99999, "key", "value")
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("expected record not found, got %v", err)
+	}
+}
+
+func TestModifyAdditionInitializesNullAddition(t *testing.T) {
+	tDB := setupVirtualFileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	file := createVirtualFile(t, tDB.db, 1, "null-addition.txt")
+	if err := tDB.db.Model(new(models.VirtualFile)).Where("id = ?", file.ID).Update("addition", nil).Error; err != nil {
+		t.Fatalf("seed null addition: %v", err)
+	}
+
+	if err := svc.ModifyAddition(ctx, file.ID, "share.id", int64(12345)); err != nil {
+		t.Fatalf("modify addition: %v", err)
+	}
+
+	var updated models.VirtualFile
+	if err := tDB.db.First(&updated, file.ID).Error; err != nil {
+		t.Fatalf("query updated file: %v", err)
+	}
+
+	got, ok := updated.Addition.Int64("share.id")
+	if !ok || got != int64(12345) {
+		t.Fatalf("expected share.id addition 12345, got value=%d ok=%v addition=%#v", got, ok, updated.Addition)
+	}
+}
+
+func TestJSONObjectPathEscapesKey(t *testing.T) {
+	got := jsonObjectPath(`folder.name"key\part`)
+	want := `$."folder.name\"key\\part"`
+
+	if got != want {
+		t.Fatalf("expected json path %q, got %q", want, got)
+	}
+}
+
+func TestPostgresJSONBPathEscapesKey(t *testing.T) {
+	got := postgresJSONBPath(`folder"name\key`)
+	want := `{"folder\"name\\key"}`
+
+	if got != want {
+		t.Fatalf("expected postgres jsonb path %q, got %q", want, got)
 	}
 }
 

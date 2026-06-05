@@ -3,7 +3,9 @@ package file
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/services/filetasklog"
 	"github.com/xxcheng123/cloudpan189-share/internal/shared"
@@ -25,12 +27,27 @@ import (
 )
 
 var errScanTaskOwnerChanged = pkgErrors.New("刷新任务归属已变化")
+var scanErrorURLPattern = regexp.MustCompile(`(?i)(?:[a-z][a-z0-9+.-]*://|/)[^\s"'<>]+`)
+
+func safeScanErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	message := scanErrorURLPattern.ReplaceAllStringFunc(err.Error(), utils.RedactURLForLog)
+
+	return utils.RedactSensitiveText(message)
+}
 
 func (h *handler) ScanFile() taskcontext.HandlerFunc {
 	return func(ctx *taskcontext.Context) (scanErr error) {
 		req := new(topic.FileScanFileRequest)
 
 		if err := ctx.Unmarshal(req); err != nil {
+			return err
+		}
+
+		if err := h.ensureScanFileBaseDependencies(); err != nil {
 			return err
 		}
 
@@ -45,6 +62,10 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 				logger.Error("查询文件失败", zap.Int64("file_id", req.FileId), zap.Error(err))
 
 				return err
+			} else if file == nil {
+				logger.Error("查询文件为空", zap.Int64("file_id", req.FileId), zap.Error(gorm.ErrRecordNotFound))
+
+				return gorm.ErrRecordNotFound
 			} else {
 				topFile = file
 			}
@@ -65,6 +86,10 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 
 			logger.Error("刷新任务归属校验失败", zap.Int64("file_id", req.FileId), zap.Error(err))
 
+			return err
+		}
+
+		if err := h.ensureFileTaskLogService(); err != nil {
 			return err
 		}
 
@@ -116,7 +141,9 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 				}
 				// 写入挂载点失败状态（顶层文件才写入）
 				if req.FileId != 0 && topFile.IsTop {
-					if err := h.mountPointService.UpdateLastState(ctx.GetContext(), topFile.ID, "失败: "+scanErr.Error()); err != nil {
+					if !h.hasMountPointService() {
+						logger.Warn("挂载点服务未初始化，跳过失败状态回写", zap.Int64("file_id", topFile.ID))
+					} else if err := h.mountPointService.UpdateLastState(ctx.GetContext(), topFile.ID, "失败: "+scanErr.Error()); err != nil {
 						logger.Warn("写入挂载点失败状态失败", zap.Error(err))
 					}
 				}
@@ -141,16 +168,19 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 				}
 				// 写入挂载点成功状态
 				if req.FileId != 0 && topFile.IsTop {
-					if err := h.mountPointService.UpdateLastState(ctx.GetContext(), topFile.ID, "成功"); err != nil {
+					if !h.hasMountPointService() {
+						logger.Warn("挂载点服务未初始化，跳过成功状态回写", zap.Int64("file_id", topFile.ID))
+					} else if err := h.mountPointService.UpdateLastState(ctx.GetContext(), topFile.ID, "成功"); err != nil {
 						logger.Warn("写入挂载点成功状态失败", zap.Error(err))
 					}
 				}
 			}
 		}()
 
-		if shared.MediaConfig != nil && shared.MediaConfig.Enable && shared.MediaConfig.AutoClean {
+		mediaConfig := shared.GetMediaConfig()
+		if mediaConfig != nil && mediaConfig.Enable && mediaConfig.AutoClean {
 			defer func() {
-				_ = h.mediaFileService.ClearEmptyDir(ctx.GetContext(), shared.MediaConfig.StoragePath)
+				h.clearMediaEmptyDir(ctx.GetContext(), mediaConfig.StoragePath)
 			}()
 		}
 
@@ -184,7 +214,9 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 			// 扫描完成后更新挂载点的更新时间
 			defer func() {
 				if inputFile.TopId > 0 {
-					if err := h.mountPointService.UpdateRefreshTime(ctx, inputFile.TopId); err != nil {
+					if !h.hasMountPointService() {
+						ctx.Warn("挂载点服务未初始化，跳过刷新时间更新", zap.Int64("mount_point_id", inputFile.TopId))
+					} else if err := h.mountPointService.UpdateRefreshTime(ctx, inputFile.TopId); err != nil {
 						ctx.Error("更新挂载点刷新时间失败", zap.Int64("mount_point_id", inputFile.TopId), zap.Error(err))
 					}
 				}
@@ -205,34 +237,13 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 					return nil, pkgErrors.New("获取订阅用户失败")
 				}
 
+				if err := h.ensureCloudBridgeService(); err != nil {
+					return nil, err
+				}
+
 				fileConverters, err = h.cloudBridgeService.GetSubscribeUserFiles(ctx, upUserId)
 			case models.OsTypeSubscribeShareFolder:
-				var (
-					upUserId string
-					shareId  int64
-					isFolder bool
-					ok       bool
-				)
-
-				if upUserId, ok = inputFile.Addition.String(consts.FileAdditionKeyUpUserId); !ok {
-					ctx.Error("获取订阅用户失败", zap.Int64("file_id", inputFile.ID))
-
-					return nil, pkgErrors.New("获取订阅用户失败")
-				}
-
-				if shareId, ok = inputFile.Addition.Int64(consts.FileAdditionKeyShareId); !ok {
-					ctx.Error("获取分享ID失败", zap.Int64("file_id", inputFile.ID))
-
-					return nil, pkgErrors.New("获取分享ID失败")
-				}
-
-				if isFolder, ok = inputFile.Addition.Bool(consts.FileAdditionKeyIsFolder); !ok {
-					ctx.Error("获取分享类型失败", zap.Int64("file_id", inputFile.ID))
-
-					return nil, pkgErrors.New("获取分享类型失败")
-				}
-
-				fileConverters, err = h.cloudBridgeService.GetSubscribeShareFiles(ctx, upUserId, shareId, inputFile.CloudId, isFolder)
+				fileConverters, err = h.fetchSubscribeShareFileConverters(ctx, inputFile)
 			case models.OsTypeShareFolder:
 				var (
 					shareId    int64
@@ -264,7 +275,7 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 				// 调试
 				logger.Info("准备扫描分享文件",
 					zap.Int64("shareId", shareId),
-					zap.String("accessCode", accessCode),
+					zap.Bool("hasAccessCode", accessCode != ""),
 					zap.Int("shareMode", shareMode))
 
 				if isFolder, ok = inputFile.Addition.Bool(consts.FileAdditionKeyIsFolder); !ok {
@@ -273,36 +284,26 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 					return nil, pkgErrors.New("获取分享类型失败")
 				}
 
+				if err := h.ensureCloudBridgeService(); err != nil {
+					return nil, err
+				}
+
 				fileConverters, err = h.cloudBridgeService.GetShareFiles(ctx, shareId, inputFile.CloudId, shareMode, accessCode, isFolder)
 			case models.OsTypePersonFolder:
-				mountInfo, mountErr := h.mountPointService.Query(ctx, inputFile.TopId)
-				if mountErr != nil {
-					ctx.Error("查询挂载点失败", zap.Int64("file_id", inputFile.ID), zap.Error(mountErr))
-
-					return nil, mountErr
-				}
-
-				token, queryErr := h.cloudTokenService.Query(ctx, mountInfo.TokenId)
+				token, queryErr := h.queryScanCloudToken(ctx, inputFile)
 				if queryErr != nil {
-					ctx.Error("获取云盘令牌失败", zap.Int64("file_id", inputFile.ID), zap.Error(err))
-
-					return nil, pkgErrors.New("获取云盘令牌失败")
+					return nil, queryErr
 				}
 
-				fileConverters, err = h.cloudBridgeService.GetCloudFiles(ctx, cloudbridgeSvi.NewAuthToken(token.AccessToken, token.ExpiresIn), inputFile.CloudId)
+				if err := h.ensureCloudBridgeService(); err != nil {
+					return nil, err
+				}
+
+				fileConverters, err = h.cloudBridgeService.GetCloudFiles(ctx, cloudbridgeSvi.NewAuthToken(token.AccessToken, token.AuthExpiresAtMillis(time.Now())), inputFile.CloudId)
 			case models.OsTypeFamilyFolder:
-				mountInfo, mountErr := h.mountPointService.Query(ctx, inputFile.TopId)
-				if mountErr != nil {
-					ctx.Error("查询挂载点失败", zap.Int64("file_id", inputFile.ID), zap.Error(mountErr))
-
-					return nil, mountErr
-				}
-
-				token, queryErr := h.cloudTokenService.Query(ctx, mountInfo.TokenId)
+				token, queryErr := h.queryScanCloudToken(ctx, inputFile)
 				if queryErr != nil {
-					ctx.Error("获取云盘令牌失败", zap.Int64("file_id", inputFile.ID), zap.Error(queryErr))
-
-					return nil, pkgErrors.New("获取云盘令牌失败")
+					return nil, queryErr
 				}
 
 				var (
@@ -316,7 +317,11 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 					return nil, pkgErrors.New("获取家庭文件夹ID失败")
 				}
 
-				fileConverters, err = h.cloudBridgeService.GetCloudFamilyFiles(ctx, cloudbridgeSvi.NewAuthToken(token.AccessToken, token.ExpiresIn), familyId, inputFile.CloudId)
+				if err := h.ensureCloudBridgeService(); err != nil {
+					return nil, err
+				}
+
+				fileConverters, err = h.cloudBridgeService.GetCloudFamilyFiles(ctx, cloudbridgeSvi.NewAuthToken(token.AccessToken, token.AuthExpiresAtMillis(time.Now())), familyId, inputFile.CloudId)
 			default:
 				return nil, pkgErrors.Errorf("不支持的文件类型 %s", inputFile.OsType)
 			}
@@ -541,9 +546,110 @@ func (h *handler) ScanFile() taskcontext.HandlerFunc {
 	}
 }
 
+func (h *handler) queryScanCloudToken(ctx context.Context, inputFile *models.VirtualFile) (*models.CloudToken, error) {
+	if err := h.ensureMountPointService(); err != nil {
+		return nil, err
+	}
+
+	if err := h.ensureCloudTokenService(); err != nil {
+		return nil, err
+	}
+
+	mountInfo, mountErr := h.mountPointService.Query(ctx, inputFile.TopId)
+	if mountErr != nil {
+		ctx.Error("查询挂载点失败", zap.Int64("file_id", inputFile.ID), zap.Error(mountErr))
+
+		return nil, mountErr
+	}
+
+	if mountInfo == nil {
+		ctx.Error(
+			"查询挂载点失败",
+			zap.Int64("file_id", inputFile.ID),
+			zap.Int64("mount_point_file_id", inputFile.TopId),
+			zap.Error(gorm.ErrRecordNotFound),
+		)
+
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	token, queryErr := h.cloudTokenService.Query(ctx, mountInfo.TokenId)
+	if queryErr != nil {
+		safeErr := safeScanErrorMessage(queryErr)
+		ctx.Error("获取云盘令牌失败", zap.Int64("file_id", inputFile.ID), zap.String("error", safeErr))
+
+		return nil, pkgErrors.Errorf("获取云盘令牌失败: %s", safeErr)
+	}
+
+	if token == nil {
+		ctx.Error(
+			"获取云盘令牌失败",
+			zap.Int64("file_id", inputFile.ID),
+			zap.Int64("token_id", mountInfo.TokenId),
+			zap.Error(gorm.ErrRecordNotFound),
+		)
+
+		return nil, pkgErrors.Wrap(gorm.ErrRecordNotFound, "获取云盘令牌失败")
+	}
+
+	return token, nil
+}
+
+func (h *handler) fetchSubscribeShareFileConverters(ctx context.Context, inputFile *models.VirtualFile) ([]converter.VirtualFileConverter, error) {
+	if err := h.ensureCloudBridgeService(); err != nil {
+		return nil, err
+	}
+
+	var (
+		shareId  int64
+		isFolder bool
+		ok       bool
+	)
+
+	if shareId, ok = inputFile.Addition.Int64(consts.FileAdditionKeyShareId); !ok {
+		ctx.Error("获取分享ID失败", zap.Int64("file_id", inputFile.ID))
+
+		return nil, pkgErrors.New("获取分享ID失败")
+	}
+
+	if isFolder, ok = inputFile.Addition.Bool(consts.FileAdditionKeyIsFolder); !ok {
+		ctx.Error("获取分享类型失败", zap.Int64("file_id", inputFile.ID))
+
+		return nil, pkgErrors.New("获取分享类型失败")
+	}
+
+	shareMode, ok := inputFile.Addition.Int(consts.FileAdditionKeyShareMode)
+	accessCode, _ := inputFile.Addition.String(consts.FileAdditionKeyAccessCode)
+
+	if upUserId, hasUpUserID := inputFile.Addition.String(consts.FileAdditionKeyUpUserId); hasUpUserID && strings.TrimSpace(upUserId) != "" {
+		if !ok || shareMode <= 0 {
+			shareMode = 5
+		}
+
+		return h.cloudBridgeService.GetSubscribeShareFiles(ctx, upUserId, shareId, inputFile.CloudId, isFolder, shareMode, accessCode)
+	}
+
+	if !ok || shareMode <= 0 {
+		shareMode = 1
+	}
+
+	ctx.Info(
+		"订阅挂载缺少订阅用户，按普通分享扫描",
+		zap.Int64("file_id", inputFile.ID),
+		zap.Int64("share_id", shareId),
+		zap.Int("share_mode", shareMode),
+	)
+
+	return h.cloudBridgeService.GetShareFiles(ctx, shareId, inputFile.CloudId, shareMode, accessCode, isFolder)
+}
+
 func (h *handler) ensureScanTaskMountPointOwner(ctx context.Context, req *topic.FileScanFileRequest, topFile *models.VirtualFile) error {
 	if req == nil || topFile == nil || req.TriggeredByAdmin || req.ExpectedUserID <= 0 || req.FileId == 0 {
 		return nil
+	}
+
+	if err := h.ensureMountPointService(); err != nil {
+		return err
 	}
 
 	topID := topFile.TopId
@@ -554,6 +660,10 @@ func (h *handler) ensureScanTaskMountPointOwner(ctx context.Context, req *topic.
 	mountPoint, err := h.mountPointService.Query(ctx, topID)
 	if err != nil {
 		return err
+	}
+
+	if mountPoint == nil {
+		return gorm.ErrRecordNotFound
 	}
 
 	if mountPoint.CreatorUserID != req.ExpectedUserID {

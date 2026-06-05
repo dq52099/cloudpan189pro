@@ -79,6 +79,11 @@
                 <n-text depth="3" class="share-time">
                   分享时间：{{ formatDateTime(shareState.shareInfo.shareTime) }}
                 </n-text>
+                <n-text depth="3" class="share-mode">
+                  分享类型：{{
+                    formatShareMode(shareState.shareInfo.shareMode, shareState.shareInfo.accessCode)
+                  }}
+                </n-text>
               </div>
             </div>
           </div>
@@ -136,6 +141,12 @@ import { formatDateTime } from '@/utils/time'
 import { OS_TYPES } from '@/utils/osType'
 import { useMountPointBind } from '@/composables/useMountPointBind'
 import { normalizeShareInfo } from '@/utils/responseGuards'
+import {
+  isCloud189AccessCode,
+  isCloud189ShareCode,
+  parseCloud189ShareCode,
+  type Cloud189ShareParams,
+} from '@/utils/shareCode'
 
 // Emits
 interface Emits {
@@ -170,10 +181,39 @@ const isCurrentOperation = (version: number) => {
   return isComponentMounted && operationVersion === version
 }
 
+const formatShareMode = (shareMode: number, accessCode: string) => {
+  if (accessCode.trim() || shareMode === 1) {
+    return '访问码分享'
+  }
+
+  if (shareMode === 2) {
+    return '公开分享'
+  }
+
+  return '未知分享'
+}
+
 const invalidatePendingWork = () => {
   operationVersion++
   shareState.loading = false
   bindLoading.value = false
+}
+
+const normalizeShareInput = (): Cloud189ShareParams | null => {
+  const normalized = parseCloud189ShareCode(shareState.shareCode, shareState.shareAccessCode)
+  if (!isCloud189ShareCode(normalized.shareCode)) {
+    message.warning('请输入有效的分享码或分享链接')
+
+    return null
+  }
+
+  if (normalized.accessCode && !isCloud189AccessCode(normalized.accessCode)) {
+    message.warning('访问码只能包含字母和数字')
+
+    return null
+  }
+
+  return normalized
 }
 
 // 获取分享信息
@@ -191,6 +231,14 @@ const handleGetShareInfo = () => {
     return
   }
 
+  const normalized = normalizeShareInput()
+  if (!normalized) {
+    return
+  }
+
+  shareState.shareCode = normalized.shareCode
+  shareState.shareAccessCode = normalized.accessCode
+
   operationVersion++
   const currentOperation = operationVersion
 
@@ -198,11 +246,11 @@ const handleGetShareInfo = () => {
   shareState.shareInfo = null
 
   const params: GetShareInfoQuery = {
-    shareCode: shareState.shareCode.trim(),
+    shareCode: normalized.shareCode,
   }
 
-  if (shareState.shareAccessCode.trim()) {
-    params.shareAccessCode = shareState.shareAccessCode.trim()
+  if (normalized.accessCode) {
+    params.shareAccessCode = normalized.accessCode
   }
 
   getShareInfo(params)
@@ -231,8 +279,10 @@ const handleGetShareInfo = () => {
         return
       }
 
-      console.error('获取分享信息失败:', error)
-      message.error(getErrorMessage(error, '获取分享信息失败'))
+      const errorMessage = getErrorMessage(error, '获取分享信息失败')
+
+      console.error('获取分享信息失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isCurrentOperation(currentOperation)) {
@@ -263,12 +313,18 @@ const handleConfirm = () => {
     return
   }
 
+  const normalized = normalizeShareInput()
+  if (!normalized) {
+    return
+  }
+
   const itemsToMount = [
     {
       name: shareState.shareInfo.name,
       osType: OS_TYPES.SHARE_FOLDER,
-      shareCode: shareState.shareCode.trim(),
-      shareAccessCode: shareState.shareAccessCode.trim() || undefined,
+      cloudToken: 0,
+      shareCode: normalized.shareCode,
+      shareAccessCode: normalized.accessCode || undefined,
     },
   ]
 
@@ -318,8 +374,10 @@ onUnmounted(() => {
 
 <style scoped>
 .share-mount-container {
-  min-width: 800px;
-  width: 100%;
+  box-sizing: border-box;
+  width: min(800px, 100%);
+  max-width: 100%;
+  min-width: 0;
 }
 
 .share-mount-content {
@@ -342,6 +400,7 @@ onUnmounted(() => {
 }
 
 .input-section {
+  width: min(500px, 100%);
   max-width: 500px;
   margin: 0 auto;
 }
@@ -357,6 +416,8 @@ onUnmounted(() => {
 }
 
 .share-info-card {
+  box-sizing: border-box;
+  width: min(600px, 100%);
   max-width: 600px;
   margin: 0 auto;
   padding: 20px;
@@ -374,6 +435,7 @@ onUnmounted(() => {
 
 .share-info-details {
   flex: 1;
+  min-width: 0;
 }
 
 .share-name {
@@ -390,7 +452,8 @@ onUnmounted(() => {
 }
 
 .share-type,
-.share-time {
+.share-time,
+.share-mode {
   font-size: 13px;
 }
 
@@ -404,6 +467,8 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
+  min-width: 0;
+  word-break: break-all;
 }
 
 .code-item:last-child {
@@ -433,6 +498,11 @@ onUnmounted(() => {
 
   .modal-actions {
     flex-direction: column;
+    width: 100%;
+  }
+
+  .modal-actions :deep(.n-button) {
+    width: 100%;
   }
 }
 </style>

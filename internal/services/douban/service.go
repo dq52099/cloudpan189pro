@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"go.uber.org/zap"
 )
 
@@ -19,6 +20,8 @@ const (
 	defaultDoubanBaseURL  = "https://movie.douban.com"
 	maxDoubanResponseSize = 5 << 20
 )
+
+var doubanLogURLPattern = regexp.MustCompile(`(?i)(?:[a-z][a-z0-9+.-]*://|/)[^\s"'<>]+`)
 
 type Service interface {
 	GetPopularMovies() ([]Subject, error)
@@ -51,7 +54,22 @@ type service struct {
 	baseURL string
 }
 
+func sanitizeDoubanError(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	message := err.Error()
+	message = doubanLogURLPattern.ReplaceAllStringFunc(message, utils.RedactURLForLog)
+
+	return utils.RedactSensitiveText(message)
+}
+
 func NewService(logger *zap.Logger) Service {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
 	return &service{
 		logger: logger,
 		client: &http.Client{
@@ -62,44 +80,54 @@ func NewService(logger *zap.Logger) Service {
 }
 
 func (s *service) GetPopularMovies() ([]Subject, error) {
-	return s.GetMoviesByTag("热门")
+	return s.GetPopularMoviesWithContext(context.Background())
+}
+
+func (s *service) GetPopularMoviesWithContext(ctx context.Context) ([]Subject, error) {
+	return s.GetMoviesByTagWithContext(ctx, "热门")
 }
 
 func (s *service) GetMoviesByTag(tag string) ([]Subject, error) {
+	return s.GetMoviesByTagWithContext(context.Background(), tag)
+}
+
+func (s *service) GetMoviesByTagWithContext(ctx context.Context, tag string) ([]Subject, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	if tag == "" {
 		tag = "热门"
 	}
 
 	apiURL := fmt.Sprintf("%s/j/search_subjects?type=movie&tag=%s&page_limit=50&page_start=0", s.baseURL, url.QueryEscape(tag))
 
-	cookieClient := &http.Client{
-		Timeout: 30 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return nil
-		},
+	client := s.client
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
 	}
 
-	firstReq, err := http.NewRequestWithContext(context.Background(), "GET", s.baseURL+"/", nil)
+	firstReq, err := http.NewRequestWithContext(ctx, "GET", s.baseURL+"/", nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("创建豆瓣 Cookie 请求失败: %s", sanitizeDoubanError(err))
 	}
 
 	firstReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 	firstReq.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	firstReq.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
-	resp0, err := cookieClient.Do(firstReq)
+	resp0, err := client.Do(firstReq)
 
 	var cookies []*http.Cookie
 	if err == nil {
 		cookies = resp0.Cookies()
 		_ = resp0.Body.Close()
 	} else {
-		s.logger.Warn("failed to fetch douban cookies", zap.Error(err))
+		s.logger.Warn("failed to fetch douban cookies", zap.String("error", sanitizeDoubanError(err)))
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), "GET", apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("创建豆瓣请求失败: %s", sanitizeDoubanError(err))
 	}
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -113,9 +141,9 @@ func (s *service) GetMoviesByTag(tag string) ([]Subject, error) {
 		req.AddCookie(cookie)
 	}
 
-	resp, err := cookieClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("豆瓣请求失败: %s", sanitizeDoubanError(err))
 	}
 	defer func() {
 		_ = resp.Body.Close()
@@ -156,19 +184,32 @@ var (
 )
 
 func (s *service) GetTop250(start, count int) ([]Subject, error) {
+	return s.GetTop250WithContext(context.Background(), start, count)
+}
+
+func (s *service) GetTop250WithContext(ctx context.Context, start, count int) ([]Subject, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	apiURL := fmt.Sprintf("%s/top250?start=%d&filter=", s.baseURL, start)
 
-	req, err := http.NewRequestWithContext(context.Background(), "GET", apiURL, nil)
+	client := s.client
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("创建豆瓣 Top250 请求失败: %s", sanitizeDoubanError(err))
 	}
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 	req.Header.Set("Referer", s.baseURL)
 
-	resp, err := s.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("豆瓣 Top250 请求失败: %s", sanitizeDoubanError(err))
 	}
 	defer func() {
 		_ = resp.Body.Close()
@@ -266,19 +307,32 @@ func decodeLimitedDoubanJSON(body io.Reader, target interface{}) error {
 }
 
 func (s *service) GetPlaying() ([]Subject, error) {
+	return s.GetPlayingWithContext(context.Background())
+}
+
+func (s *service) GetPlayingWithContext(ctx context.Context) ([]Subject, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	apiURL := fmt.Sprintf("%s/j/search_subjects?type=movie&tag=%s&page_limit=50", s.baseURL, url.QueryEscape("正在热映"))
 
-	req, err := http.NewRequestWithContext(context.Background(), "GET", apiURL, nil)
+	client := s.client
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("创建豆瓣正在热映请求失败: %s", sanitizeDoubanError(err))
 	}
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 	req.Header.Set("Referer", s.baseURL)
 
-	resp, err := s.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("豆瓣正在热映请求失败: %s", sanitizeDoubanError(err))
 	}
 	defer func() {
 		_ = resp.Body.Close()
@@ -303,19 +357,32 @@ func (s *service) GetPlaying() ([]Subject, error) {
 }
 
 func (s *service) GetComing() ([]Subject, error) {
+	return s.GetComingWithContext(context.Background())
+}
+
+func (s *service) GetComingWithContext(ctx context.Context) ([]Subject, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	apiURL := fmt.Sprintf("%s/j/search_subjects?type=movie&tag=%s&page_limit=50", s.baseURL, url.QueryEscape("即将上映"))
 
-	req, err := http.NewRequestWithContext(context.Background(), "GET", apiURL, nil)
+	client := s.client
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("创建豆瓣即将上映请求失败: %s", sanitizeDoubanError(err))
 	}
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 	req.Header.Set("Referer", s.baseURL)
 
-	resp, err := s.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("豆瓣即将上映请求失败: %s", sanitizeDoubanError(err))
 	}
 	defer func() {
 		_ = resp.Body.Close()

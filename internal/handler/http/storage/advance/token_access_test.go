@@ -97,6 +97,20 @@ func TestFamilyListReturnsQueryErrorWhenCloudTokenLookupFails(t *testing.T) {
 	assertAdvanceHTTPError(t, recorder, http.StatusBadRequest, codeStorageAdvanceQueryCloudTokenError)
 }
 
+func TestFamilyListReturnsQueryErrorWhenCloudTokenServiceMissing(t *testing.T) {
+	recorder := performAdvanceFamilyListRequest(t, nil)
+
+	assertAdvanceHTTPError(t, recorder, http.StatusBadRequest, codeStorageAdvanceQueryCloudTokenError)
+}
+
+func TestFamilyListReturnsQueryErrorWhenCloudTokenServiceTypedNil(t *testing.T) {
+	var cloudTokenService *mockAdvanceCloudTokenService
+
+	recorder := performAdvanceFamilyListRequest(t, cloudTokenService)
+
+	assertAdvanceHTTPError(t, recorder, http.StatusBadRequest, codeStorageAdvanceQueryCloudTokenError)
+}
+
 func TestFamilyListRejectsInvalidCloudTokenBeforeLookup(t *testing.T) {
 	cloudTokenService := &mockAdvanceCloudTokenService{}
 

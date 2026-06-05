@@ -39,7 +39,12 @@ func (h *handler) GetBindFiles() httpcontext.HandlerFunc {
 			return
 		}
 
-		if _, err := h.userGroupService.Query(ctx.GetContext(), req.GroupId); err != nil {
+		if !h.ensureUserGroupService(ctx, codeGetBindFilesFailed) {
+			return
+		}
+
+		group, err := h.userGroupService.Query(ctx.GetContext(), req.GroupId)
+		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				ctx.Fail(codeUserGroupNotFound.WithError(err))
 
@@ -48,6 +53,16 @@ func (h *handler) GetBindFiles() httpcontext.HandlerFunc {
 
 			ctx.Fail(codeGetBindFilesFailed.WithError(err))
 
+			return
+		}
+
+		if group == nil {
+			ctx.Fail(codeUserGroupNotFound.WithError(gorm.ErrRecordNotFound))
+
+			return
+		}
+
+		if !h.ensureGroup2FileService(ctx, codeGetBindFilesFailed) {
 			return
 		}
 

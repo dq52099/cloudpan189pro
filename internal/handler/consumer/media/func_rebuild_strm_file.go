@@ -103,13 +103,18 @@ func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
 	return func(ctx *taskcontext.Context) error {
 		logger := ctx.GetContext().Logger
 
-		if shared.MediaConfig == nil || !shared.MediaConfig.Enable {
+		mediaConfig := shared.GetMediaConfig()
+		if mediaConfig == nil || !mediaConfig.Enable {
 			logger.Warn("媒体功能未启用，跳过strm重建")
 
 			return nil
 		}
 
-		logger.Info("开始重建strm文件", zap.String("storage_path", shared.MediaConfig.StoragePath))
+		if err := h.ensureRebuildStrmDependencies(true); err != nil {
+			return err
+		}
+
+		logger.Info("开始重建strm文件", zap.String("storage_path", mediaConfig.StoragePath))
 
 		mountpoints, err := h.mountpointService.List(ctx.GetContext(), &mountpoint.ListRequest{
 			NoPaginate: true,
@@ -131,7 +136,7 @@ func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
 			ctx.GetContext(),
 			topic.KeyMediaRebuildStrmFile,
 			fmt.Sprintf("重建STRM文件，共 %d 个挂载点", len(mountpoints)),
-			filetasklogSvi.WithDesc(fmt.Sprintf("存储路径: %s", shared.MediaConfig.StoragePath)),
+			filetasklogSvi.WithDesc(fmt.Sprintf("存储路径: %s", mediaConfig.StoragePath)),
 		)
 		if logErr != nil {
 			logger.Error("创建任务日志失败", zap.Error(logErr))
@@ -144,7 +149,7 @@ func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
 			totalFolders: int32(len(mountpoints)),
 		}
 
-		car := media.NewWriterCar(shared.MediaConfig.StoragePath, shared.MediaConfig.ConflictPolicy, shared.BaseURL)
+		car := media.NewWriterCar(mediaConfig.StoragePath, mediaConfig.ConflictPolicy, mediaConfig.BaseURL)
 
 		// 按挂载点并发执行
 		var (
@@ -162,6 +167,18 @@ func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
 				defer func() { <-sem }()
 
 				atomic.AddInt32(&progress.processedFolders, 1)
+
+				if mp == nil {
+					logger.Warn("挂载点列表包含空记录，跳过")
+					atomic.AddInt32(&progress.failedFolders, 1)
+
+					if tracker != nil {
+						_ = h.fileTaskLogService.FlushCount(ctx.GetContext(), tracker, filetasklogSvi.WithFailedCounter(1))
+					}
+
+					return
+				}
+
 				logger.Info(fmt.Sprintf(
 					"[strm生成] 开始处理挂载点: %s (%d/%d)",
 					mp.FullPath,
@@ -170,7 +187,7 @@ func (h *handler) RebuildStrmFile() taskcontext.HandlerFunc {
 				))
 
 				mountProgress := new(rebuildProgress)
-				h.walkBuildStrm(ctx.GetContext(), mp.FileId, car.NewSubCar(mp.FullPath), 0, mountProgress)
+				h.walkBuildStrm(ctx.GetContext(), mp.FileId, car.NewSubCar(mp.FullPath), mediaConfig, 0, mountProgress)
 				mergeRebuildProgress(progress, mountProgress)
 
 				if tracker != nil {
@@ -197,7 +214,8 @@ func (h *handler) RebuildStrmFileByMountPoint() taskcontext.HandlerFunc {
 	return func(ctx *taskcontext.Context) error {
 		logger := ctx.GetContext().Logger
 
-		if shared.MediaConfig == nil || !shared.MediaConfig.Enable {
+		mediaConfig := shared.GetMediaConfig()
+		if mediaConfig == nil || !mediaConfig.Enable {
 			logger.Warn("媒体功能未启用，跳过strm重建")
 
 			return nil
@@ -214,6 +232,10 @@ func (h *handler) RebuildStrmFileByMountPoint() taskcontext.HandlerFunc {
 			logger.Error("STRM单挂载点重建任务参数无效", zap.Int64("mount_point_file_id", req.MountPointFileId))
 
 			return errInvalidRebuildMountPointFileID
+		}
+
+		if err := h.ensureRebuildStrmDependencies(false); err != nil {
+			return err
 		}
 
 		logger.Info("开始重建strm文件",
@@ -237,8 +259,8 @@ func (h *handler) RebuildStrmFileByMountPoint() taskcontext.HandlerFunc {
 
 		progress := &rebuildProgress{totalFolders: 1}
 
-		car := media.NewWriterCar(shared.MediaConfig.StoragePath, shared.MediaConfig.ConflictPolicy, shared.BaseURL)
-		h.walkBuildStrm(ctx.GetContext(), req.MountPointFileId, car.NewSubCar(req.MountPointPath), 0, progress)
+		car := media.NewWriterCar(mediaConfig.StoragePath, mediaConfig.ConflictPolicy, mediaConfig.BaseURL)
+		h.walkBuildStrm(ctx.GetContext(), req.MountPointFileId, car.NewSubCar(req.MountPointPath), mediaConfig, 0, progress)
 
 		summary := summariseProgress(progress)
 		logger.Info("[strm生成] strm重建完成: " + summary)
@@ -262,9 +284,16 @@ func (h *handler) RebuildStrmFileByMountPoint() taskcontext.HandlerFunc {
 // walkBuildStrm 深度优先遍历目录，为每个命中 includedSuffixes 的文件生成 STRM。
 //
 // 返回值设计：失败不中断整个遍历（只记日志和 progress 计数），配合进度显示。
-func (h *handler) walkBuildStrm(ctx context.Context, fid int64, car media.WriterCar, depth int, progress *rebuildProgress) {
+func (h *handler) walkBuildStrm(ctx context.Context, fid int64, car media.WriterCar, mediaConfig *models.MediaConfig, depth int, progress *rebuildProgress) {
 	if depth >= maxRecursionDepth {
 		ctx.Warn("达到最大递归深度，停止处理", zap.Int("depth", depth), zap.Int64("parent_id", fid))
+		atomic.AddInt32(&progress.failedFolders, 1)
+
+		return
+	}
+
+	if mediaConfig == nil {
+		ctx.Warn("媒体功能未配置，停止重建 STRM", zap.Int64("parent_id", fid))
 		atomic.AddInt32(&progress.failedFolders, 1)
 
 		return
@@ -281,8 +310,16 @@ func (h *handler) walkBuildStrm(ctx context.Context, fid int64, car media.Writer
 	}
 
 	for _, file := range files {
+		if file == nil {
+			ctx.Warn("查询子文件返回空记录，跳过", zap.Int64("parent_id", fid))
+			atomic.AddInt32(&progress.totalFiles, 1)
+			atomic.AddInt32(&progress.failedFiles, 1)
+
+			continue
+		}
+
 		if file.IsDir {
-			h.walkBuildStrm(ctx, file.ID, car.NewSubCar(file.Name), depth+1, progress)
+			h.walkBuildStrm(ctx, file.ID, car.NewSubCar(file.Name), mediaConfig, depth+1, progress)
 
 			continue
 		}
@@ -291,7 +328,7 @@ func (h *handler) walkBuildStrm(ctx context.Context, fid int64, car media.Writer
 
 		// 后缀过滤
 		extName := path.Ext(file.Name)
-		if len(shared.MediaConfig.IncludedSuffixes) > 0 && !slices.Contains(shared.MediaConfig.IncludedSuffixes, extName) {
+		if len(mediaConfig.IncludedSuffixes) > 0 && !slices.Contains(mediaConfig.IncludedSuffixes, extName) {
 			atomic.AddInt32(&progress.skippedFiles, 1)
 
 			continue
@@ -308,15 +345,15 @@ func (h *handler) walkBuildStrm(ctx context.Context, fid int64, car media.Writer
 		}
 
 		// Replace 策略：在外层统一删除旧记录，避免和 WriteStrm 内部重复删除
-		if shared.MediaConfig.ConflictPolicy == media.FileConflictPolicyReplace {
-			if err := h.mediaFileService.DeleteStrm(ctx, file.ID, shared.MediaConfig.StoragePath); err != nil {
+		if mediaConfig.ConflictPolicy == media.FileConflictPolicyReplace {
+			if err := h.mediaFileService.DeleteStrm(ctx, file.ID, mediaConfig.StoragePath); err != nil {
 				ctx.Warn("重建strm - 删除旧 strm 文件失败", zap.Int64("file_id", file.ID), zap.Error(err))
 			}
 		}
 
 		carWithFilename := car.NewSubCar(filename)
 
-		id, err := h.mediaFileService.WriteStrm(ctx, carWithFilename, file.ID, shared.JoinDownloadURL(file.ID, values))
+		id, err := h.mediaFileService.WriteStrm(ctx, carWithFilename, file.ID, shared.JoinDownloadURLWithBase(carWithFilename.GetBaseURL(), file.ID, values))
 		if err != nil {
 			ctx.Error("重建strm - 创建 strm 文件失败", zap.String("file", file.Name), zap.Int64("file_id", file.ID), zap.Error(err))
 			atomic.AddInt32(&progress.failedFiles, 1)

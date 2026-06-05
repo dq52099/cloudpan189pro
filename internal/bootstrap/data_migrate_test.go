@@ -416,6 +416,54 @@ func TestMigrateSettingsMarksInitializedWhenUsersExist(t *testing.T) {
 	}
 }
 
+func TestMigrateSettingsCreatesInitializedSettingWhenSourceTableMissingAndUsersExist(t *testing.T) {
+	src := openMigrationTestDB(t)
+	dst := openMigrationTestDB(t)
+
+	if err := src.AutoMigrate(&models.User{}); err != nil {
+		t.Fatalf("migrate source user schema: %v", err)
+	}
+
+	if err := dst.AutoMigrate(&models.Setting{}); err != nil {
+		t.Fatalf("migrate destination setting schema: %v", err)
+	}
+
+	if err := src.Create(&models.User{Username: "alice", Password: "secret"}).Error; err != nil {
+		t.Fatalf("seed source user: %v", err)
+	}
+
+	userCount := countUsers(t, src)
+	if err := migrateSettings(src, dst, userCount); err != nil {
+		t.Fatalf("migrate settings: %v", err)
+	}
+
+	assertInitializedDefaultSetting(t, dst)
+}
+
+func TestMigrateSettingsCreatesInitializedSettingWhenSourceTableEmptyAndUsersExist(t *testing.T) {
+	src := openMigrationTestDB(t)
+	dst := openMigrationTestDB(t)
+
+	if err := src.AutoMigrate(&models.User{}, &models.Setting{}); err != nil {
+		t.Fatalf("migrate source schemas: %v", err)
+	}
+
+	if err := dst.AutoMigrate(&models.Setting{}); err != nil {
+		t.Fatalf("migrate destination setting schema: %v", err)
+	}
+
+	if err := src.Create(&models.User{Username: "alice", Password: "secret"}).Error; err != nil {
+		t.Fatalf("seed source user: %v", err)
+	}
+
+	userCount := countUsers(t, src)
+	if err := migrateSettings(src, dst, userCount); err != nil {
+		t.Fatalf("migrate settings: %v", err)
+	}
+
+	assertInitializedDefaultSetting(t, dst)
+}
+
 func TestMigrateSingletonTablesKeepsFirstSourceRowAsIDOne(t *testing.T) {
 	src := openMigrationTestDB(t)
 	dst := openMigrationTestDB(t)
@@ -678,6 +726,86 @@ func TestMigrateUserMountPointTokensDedupesLegacyRows(t *testing.T) {
 	}
 }
 
+func TestUpsertGroup2FileRowsReturnsErrorWhenMatchedRowDisappears(t *testing.T) {
+	dst := openMigrationTestDB(t)
+
+	if err := dst.AutoMigrate(&models.Group2File{}); err != nil {
+		t.Fatalf("migrate destination schema: %v", err)
+	}
+
+	if err := dst.Create(&models.Group2File{GroupId: 10, FileId: 1001}).Error; err != nil {
+		t.Fatalf("seed existing group file binding: %v", err)
+	}
+
+	const callbackName = "data_migrate_test_delete_group2file_before_update"
+
+	deleted := false
+
+	if err := dst.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if deleted || tx.Statement.Table != new(models.Group2File).TableName() {
+			return
+		}
+
+		deleted = true
+
+		if err := tx.Session(&gorm.Session{NewDB: true}).
+			Exec("DELETE FROM group2files WHERE group_id = ? AND file_id = ?", 10, 1001).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+	}); err != nil {
+		t.Fatalf("register update callback: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = dst.Callback().Update().Remove(callbackName)
+	})
+
+	err := upsertGroup2FileRows(dst, []models.Group2File{{GroupId: 10, FileId: 1001, UpdatedAt: time.Now()}})
+	if err == nil {
+		t.Fatal("expected disappearing matched row to fail")
+	}
+}
+
+func TestUpsertUserMountPointTokenRowsReturnsErrorWhenMatchedRowDisappears(t *testing.T) {
+	dst := openMigrationTestDB(t)
+
+	if err := dst.AutoMigrate(&models.UserMountPointToken{}); err != nil {
+		t.Fatalf("migrate destination schema: %v", err)
+	}
+
+	if err := dst.Create(&models.UserMountPointToken{UserID: 1, MountPointID: 10, TokenID: 100}).Error; err != nil {
+		t.Fatalf("seed existing user mount point token: %v", err)
+	}
+
+	const callbackName = "data_migrate_test_delete_user_mount_point_token_before_update"
+
+	deleted := false
+
+	if err := dst.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if deleted || tx.Statement.Table != new(models.UserMountPointToken).TableName() {
+			return
+		}
+
+		deleted = true
+
+		if err := tx.Session(&gorm.Session{NewDB: true}).
+			Exec("DELETE FROM user_mount_point_tokens WHERE user_id = ? AND mount_point_id = ?", 1, 10).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+	}); err != nil {
+		t.Fatalf("register update callback: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = dst.Callback().Update().Remove(callbackName)
+	})
+
+	err := upsertUserMountPointTokenRows(dst, []models.UserMountPointToken{{UserID: 1, MountPointID: 10, TokenID: 200, UpdatedAt: time.Now()}})
+	if err == nil {
+		t.Fatal("expected disappearing matched row to fail")
+	}
+}
+
 func TestMigrateDBDedupesUserMountPointTokensBeforeUniqueIndex(t *testing.T) {
 	db := openMigrationTestDB(t)
 
@@ -825,6 +953,46 @@ func TestMigrateDBNormalizesSingletonTablesBeforeAutoMigrate(t *testing.T) {
 	}
 }
 
+func TestNormalizeSingletonTableReturnsErrorWhenKeptRowDisappears(t *testing.T) {
+	db := openMigrationTestDB(t)
+
+	if err := db.AutoMigrate(&models.Setting{}); err != nil {
+		t.Fatalf("migrate setting schema: %v", err)
+	}
+
+	if err := db.Create(&models.Setting{ID: 2, Title: "first", SaltKey: "salt-first"}).Error; err != nil {
+		t.Fatalf("seed setting: %v", err)
+	}
+
+	const callbackName = "data_migrate_test_delete_singleton_before_update"
+
+	deleted := false
+	tableName := new(models.Setting).TableName()
+
+	if err := db.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if deleted || tx.Statement.Table != tableName {
+			return
+		}
+
+		deleted = true
+
+		if err := tx.Session(&gorm.Session{NewDB: true}).
+			Exec("DELETE FROM setting WHERE id = ?", 2).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+	}); err != nil {
+		t.Fatalf("register update callback: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = db.Callback().Update().Remove(callbackName)
+	})
+
+	if err := normalizeSingletonTable(db, tableName); err == nil {
+		t.Fatal("expected disappearing singleton row to fail")
+	}
+}
+
 func TestFindSourceRowsReturnsMissingSourceTableSentinel(t *testing.T) {
 	src := openMigrationTestDB(t)
 
@@ -902,6 +1070,30 @@ func TestRunDataMigrationStepsRollsBackDestinationWritesOnError(t *testing.T) {
 
 	if count != 0 {
 		t.Fatalf("expected destination writes to be rolled back, got %d rows", count)
+	}
+}
+
+func countUsers(t *testing.T, db *gorm.DB) int64 {
+	t.Helper()
+
+	var count int64
+	if err := db.Model(&models.User{}).Count(&count).Error; err != nil {
+		t.Fatalf("count users: %v", err)
+	}
+
+	return count
+}
+
+func assertInitializedDefaultSetting(t *testing.T, db *gorm.DB) {
+	t.Helper()
+
+	var got models.Setting
+	if err := db.First(&got, 1).Error; err != nil {
+		t.Fatalf("query migrated setting: %v", err)
+	}
+
+	if got.ID != 1 || !got.Initialized || !got.EnableAuth || got.Title == "" || got.SaltKey == "" {
+		t.Fatalf("expected initialized default setting, got %+v", got)
 	}
 }
 

@@ -15,14 +15,11 @@ func (s *service) FamilyFileList(ctx context.Context, token client.AuthToken, fa
 			req.PageNum = pageNum
 		})
 	if err != nil {
-		ctx.Error("获取家庭云文件列表失败",
-			zap.Error(err),
+		return nil, logCloudbridgeError(ctx, "获取家庭云文件列表失败", err,
 			zap.String("family_id", familyId),
 			zap.String("parent_id", parentId),
 			zap.Int("page_num", pageNum),
 			zap.Int("page_size", pageSize))
-
-		return nil, err
 	}
 
 	list := make([]*FileNode, 0)
@@ -64,12 +61,9 @@ func (s *service) FamilyFileCount(ctx context.Context, token client.AuthToken, f
 			req.PageNum = 1
 		})
 	if err != nil {
-		ctx.Error("获取家庭云文件总数失败",
-			zap.Error(err),
+		return 0, logCloudbridgeError(ctx, "获取家庭云文件总数失败", err,
 			zap.String("family_id", familyId),
 			zap.String("parent_id", parentId))
-
-		return 0, err
 	}
 
 	return resp.FileListAO.Count, nil

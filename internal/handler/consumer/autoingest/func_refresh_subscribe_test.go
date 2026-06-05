@@ -306,6 +306,7 @@ type mockRefreshSubscribeVirtualFileService struct {
 	virtualfile.Service
 
 	queryCalls  int
+	queryPaths  []string
 	existing    *models.VirtualFile
 	err         error
 	queryFiles  []*models.VirtualFile
@@ -315,6 +316,7 @@ type mockRefreshSubscribeVirtualFileService struct {
 func (m *mockRefreshSubscribeVirtualFileService) QueryByPath(ctx context.Context, filePath string) (*models.VirtualFile, error) {
 	callIndex := m.queryCalls
 	m.queryCalls++
+	m.queryPaths = append(m.queryPaths, filePath)
 
 	if callIndex < len(m.queryErrors) && m.queryErrors[callIndex] != nil {
 		return nil, m.queryErrors[callIndex]
@@ -531,6 +533,45 @@ func requireUpdatedSubscribeAddition(t *testing.T, planService *mockRefreshSubsc
 	return addition
 }
 
+func TestRefreshSubscribeReturnsNotFoundWhenPlanQueryReturnsNil(t *testing.T) {
+	planService := &mockRefreshSubscribePlanService{
+		updatedOffset: -1,
+	}
+	cloudService := &mockRefreshSubscribeCloudBridgeService{}
+	logService := &mockRefreshSubscribeLogService{}
+	storageService := &mockRefreshSubscribeStorageFacadeService{}
+	virtualService := &mockRefreshSubscribeVirtualFileService{}
+	taskEngine := &mockRefreshSubscribeTaskEngine{}
+	handler := NewHandler(
+		taskEngine,
+		cloudService,
+		planService,
+		logService,
+		storageService,
+		virtualService,
+	)
+
+	err := runRefreshSubscribeHandlerWithRequest(t, handler, topic.AutoIngestRefreshSubscribeRequest{
+		PlanId: 100,
+	})
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected record not found, got %v", err)
+	}
+
+	if planService.updatedOffset != -1 || planService.addDelta != 0 || planService.failedDelta != 0 {
+		t.Fatalf("expected nil plan not to update runtime state, offset=%d add=%d failed=%d",
+			planService.updatedOffset, planService.addDelta, planService.failedDelta)
+	}
+
+	if len(cloudService.pageCalls) != 0 {
+		t.Fatalf("expected nil plan not to call cloud bridge, got %v", cloudService.pageCalls)
+	}
+
+	if storageService.Count() != 0 {
+		t.Fatalf("expected nil plan not to create storage, got %d", storageService.Count())
+	}
+}
+
 func TestRefreshSubscribeSkipsManualTaskWhenOwnerChanged(t *testing.T) {
 	planService := &mockRefreshSubscribePlanService{
 		plan:          newRefreshSubscribePlan(100, autoingest.OnConflictRename),
@@ -745,6 +786,79 @@ func TestRefreshSubscribeDoesNotAdvanceOffsetWhenScanEnqueueFails(t *testing.T) 
 	}
 }
 
+func TestRefreshSubscribeSkipsTypedNilLogServiceOnSuccess(t *testing.T) {
+	shareTime := time.Unix(200, 0)
+	planService := &mockRefreshSubscribePlanService{
+		plan:          newRefreshSubscribePlan(100, autoingest.OnConflictRename),
+		updatedOffset: -1,
+	}
+	cloudService := &mockRefreshSubscribeCloudBridgeService{
+		items: []*cloudbridge.ShareResourceInfo{{
+			Name:      "movie",
+			ID:        "cloud-1",
+			ShareId:   88,
+			ShareTime: shareTime,
+			IsTop:     1,
+		}},
+	}
+
+	var logService *mockRefreshSubscribeLogService
+
+	storageService := &mockRefreshSubscribeStorageFacadeService{}
+	virtualService := &mockRefreshSubscribeVirtualFileService{}
+	taskEngine := &mockRefreshSubscribeTaskEngine{}
+
+	if err := runRefreshSubscribeHandlerWithTaskEngine(t, taskEngine, planService, cloudService, logService, storageService, virtualService); err != nil {
+		t.Fatalf("refresh subscribe: %v", err)
+	}
+
+	if planService.updatedOffset != shareTime.Unix() {
+		t.Fatalf("expected offset to advance to %d, got %d", shareTime.Unix(), planService.updatedOffset)
+	}
+
+	if planService.addDelta != 1 || planService.failedDelta != 0 {
+		t.Fatalf("expected one added item, add=%d failed=%d", planService.addDelta, planService.failedDelta)
+	}
+
+	if storageService.Count() != 1 || taskEngine.Count() != 1 {
+		t.Fatalf("expected storage create and scan enqueue once, create=%d scan=%d", storageService.Count(), taskEngine.Count())
+	}
+}
+
+func TestRefreshSubscribeSkipsTypedNilLogServiceOnFailure(t *testing.T) {
+	shareTime := time.Unix(200, 0)
+	planService := &mockRefreshSubscribePlanService{
+		plan:          newRefreshSubscribePlan(100, autoingest.OnConflictRename),
+		updatedOffset: -1,
+	}
+	cloudService := &mockRefreshSubscribeCloudBridgeService{
+		items: []*cloudbridge.ShareResourceInfo{{
+			Name:      "movie",
+			ID:        "cloud-1",
+			ShareId:   88,
+			ShareTime: shareTime,
+			IsTop:     1,
+		}},
+	}
+
+	var logService *mockRefreshSubscribeLogService
+
+	storageService := &mockRefreshSubscribeStorageFacadeService{err: errors.New("create failed")}
+	virtualService := &mockRefreshSubscribeVirtualFileService{}
+
+	if err := runRefreshSubscribeHandler(t, planService, cloudService, logService, storageService, virtualService); err != nil {
+		t.Fatalf("refresh subscribe: %v", err)
+	}
+
+	if planService.updatedOffset != 100 {
+		t.Fatalf("expected offset kept at 100 after create failure, got %d", planService.updatedOffset)
+	}
+
+	if planService.failedDelta != 1 || planService.addDelta != 0 {
+		t.Fatalf("expected one failed item, add=%d failed=%d", planService.addDelta, planService.failedDelta)
+	}
+}
+
 func TestRefreshSubscribeDoesNotAdvanceOffsetWhenCreateFails(t *testing.T) {
 	shareTime := time.Unix(200, 0)
 	planService := &mockRefreshSubscribePlanService{
@@ -782,6 +896,48 @@ func TestRefreshSubscribeDoesNotAdvanceOffsetWhenCreateFails(t *testing.T) {
 
 	if storageService.Count() != 2 {
 		t.Fatalf("expected initial create and one retry, got %d", storageService.Count())
+	}
+}
+
+func TestRefreshSubscribeEscapesLiteralPercentInItemName(t *testing.T) {
+	shareTime := time.Unix(200, 0)
+	planService := &mockRefreshSubscribePlanService{
+		plan:          newRefreshSubscribePlan(100, autoingest.OnConflictRename),
+		updatedOffset: -1,
+	}
+	cloudService := &mockRefreshSubscribeCloudBridgeService{
+		items: []*cloudbridge.ShareResourceInfo{{
+			Name:      "a%2Fb",
+			ID:        "cloud-1",
+			ShareId:   88,
+			ShareTime: shareTime,
+			IsTop:     1,
+		}},
+	}
+	logService := &mockRefreshSubscribeLogService{}
+	storageService := &mockRefreshSubscribeStorageFacadeService{}
+	virtualService := &mockRefreshSubscribeVirtualFileService{}
+
+	if err := runRefreshSubscribeHandler(t, planService, cloudService, logService, storageService, virtualService); err != nil {
+		t.Fatalf("refresh subscribe: %v", err)
+	}
+
+	wantPath := "/subscriptions/a%252Fb"
+	if len(virtualService.queryPaths) != 1 || virtualService.queryPaths[0] != wantPath {
+		t.Fatalf("expected lookup path %q, got %v", wantPath, virtualService.queryPaths)
+	}
+
+	createReqs := storageService.Requests()
+	if len(createReqs) != 1 || createReqs[0].LocalPath != wantPath {
+		t.Fatalf("expected create path %q, got %+v", wantPath, createReqs)
+	}
+
+	if planService.updatedOffset != shareTime.Unix() {
+		t.Fatalf("expected offset advanced to %d, got %d", shareTime.Unix(), planService.updatedOffset)
+	}
+
+	if planService.addDelta != 1 || planService.failedDelta != 0 {
+		t.Fatalf("expected one added item and no failures, add=%d failed=%d", planService.addDelta, planService.failedDelta)
 	}
 }
 
@@ -1137,7 +1293,8 @@ func TestRefreshSubscribeRetryLogsExistingScanEnqueueFailure(t *testing.T) {
 	virtualService := &mockRefreshSubscribeVirtualFileService{
 		existing: &models.VirtualFile{ID: 55, Name: "created-before", CloudId: "cloud-created"},
 	}
-	taskEngine := &mockRefreshSubscribeTaskEngine{err: errors.New("queue failed")}
+	rawErr := `queue failed: https://proxy-user:proxy-pass@example.test/scan?access_token=query-secret&filename=private-name.mkv#token=fragment-secret accessCode=abcd Authorization: Bearer secret-token`
+	taskEngine := &mockRefreshSubscribeTaskEngine{err: errors.New(rawErr)}
 	handler := NewHandler(
 		taskEngine,
 		cloudService,
@@ -1165,6 +1322,22 @@ func TestRefreshSubscribeRetryLogsExistingScanEnqueueFailure(t *testing.T) {
 
 	if len(logService.contents) != 1 || !strings.Contains(logService.contents[0], "下发已存在文件扫描任务失败") {
 		t.Fatalf("expected existing scan enqueue failure log, got %#v", logService.contents)
+	}
+
+	assertRefreshSubscribeLogRedacted(t, logService.contents[0], "proxy-user", "proxy-pass", "query-secret", "private-name.mkv", "fragment-secret", "abcd", "secret-token")
+}
+
+func assertRefreshSubscribeLogRedacted(t *testing.T, text string, leakedValues ...string) {
+	t.Helper()
+
+	for _, leaked := range leakedValues {
+		if strings.Contains(text, leaked) {
+			t.Fatalf("expected %q to be redacted from %q", leaked, text)
+		}
+	}
+
+	if !strings.Contains(text, utils.RedactedSecret) {
+		t.Fatalf("expected redacted marker in %q", text)
 	}
 }
 

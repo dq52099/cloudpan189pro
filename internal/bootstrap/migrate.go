@@ -101,7 +101,8 @@ func normalizeSingletonTable(db *gorm.DB, tableName string) error {
 
 	keepID := ids[0]
 	if keepID != 1 {
-		if err := db.Table(tableName).Where("id = ?", keepID).Update("id", int64(1)).Error; err != nil {
+		result := db.Table(tableName).Where("id = ?", keepID).Update("id", int64(1))
+		if err := ensureSingleRowAffected(result, "normalize "+tableName+" singleton id"); err != nil {
 			return err
 		}
 	}

@@ -19,6 +19,25 @@ type (
 	}
 )
 
+func compactFileTaskLogs(list []*models.FileTaskLog) []*models.FileTaskLog {
+	if len(list) == 0 {
+		return list
+	}
+
+	writeIndex := 0
+
+	for _, item := range list {
+		if item == nil {
+			continue
+		}
+
+		list[writeIndex] = item
+		writeIndex++
+	}
+
+	return list[:writeIndex]
+}
+
 // FileLogList 获取文件任务日志列表
 // @Summary 获取文件任务日志列表
 // @Description 分页获取文件任务日志列表，支持多种筛选条件
@@ -52,6 +71,10 @@ func (h *handler) FileLogList() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureFileTaskLogService(ctx, codeListTasksFailed) {
+			return
+		}
+
 		// 获取任务日志列表
 		taskLogList, err := h.fileTaskLogService.List(ctx.GetContext(), req)
 		if err != nil {
@@ -59,6 +82,8 @@ func (h *handler) FileLogList() httpcontext.HandlerFunc {
 
 			return
 		}
+
+		taskLogList = compactFileTaskLogs(taskLogList)
 
 		var total int64
 		if !req.NoPaginate {

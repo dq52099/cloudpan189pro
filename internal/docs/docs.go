@@ -1508,7 +1508,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/models.CloudToken"
+                                            "$ref": "#/definitions/cloudtoken.cloudTokenResponse"
                                         }
                                     }
                                 }
@@ -3656,7 +3656,7 @@ const docTemplate = `{
         },
         "/api/storage/batch_parse_text": {
             "post": {
-                "description": "解析文本内容（如分享链接），验证CloudToken，返回资源的真实名称和ID，但不创建挂载",
+                "description": "解析文本内容（如分享链接、订阅号、文件夹ID），仅在解析个人文件夹ID时验证CloudToken，返回资源的真实名称和ID，但不创建挂载",
                 "consumes": [
                     "application/json"
                 ],
@@ -3838,7 +3838,7 @@ const docTemplate = `{
         },
         "/api/storage/delete": {
             "post": {
-                "description": "通过请求体 id 指定挂载点文件ID，删除对应的存储挂载点，同时清理相关文件",
+                "description": "通过请求体 id 指定挂载点表主键，删除对应的存储挂载点，同时清理相关文件",
                 "consumes": [
                     "application/json"
                 ],
@@ -3986,7 +3986,7 @@ const docTemplate = `{
         },
         "/api/storage/modify_token": {
             "post": {
-                "description": "通过请求体 id 指定挂载点文件ID，用户绑定自己的令牌到挂载点（不影响其他用户）",
+                "description": "通过请求体 id 指定挂载点表主键，用户绑定自己的令牌到挂载点（不影响其他用户）",
                 "consumes": [
                     "application/json"
                 ],
@@ -4051,7 +4051,7 @@ const docTemplate = `{
         },
         "/api/storage/refresh": {
             "post": {
-                "description": "通过请求体 id 指定挂载点文件ID，触发文件扫描任务重新同步文件信息",
+                "description": "通过请求体 id 指定挂载点表主键，触发文件扫描任务重新同步文件信息",
                 "consumes": [
                     "application/json"
                 ],
@@ -4154,6 +4154,13 @@ const docTemplate = `{
                         "default": false,
                         "description": "是否不分页",
                         "name": "noPaginate",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "example": "\"电影\"",
+                        "description": "名称或路径关键词（OR 模糊匹配）",
+                        "name": "keyword",
                         "in": "query"
                     },
                     {
@@ -7315,6 +7322,9 @@ const docTemplate = `{
                 "shareId": {
                     "type": "integer"
                 },
+                "shareMode": {
+                    "type": "integer"
+                },
                 "shareTime": {
                     "type": "string"
                 }
@@ -7342,6 +7352,9 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "shareTime": {
+                    "type": "string"
+                },
+                "shareUrl": {
                     "type": "string"
                 },
                 "userId": {
@@ -7376,6 +7389,42 @@ const docTemplate = `{
                 }
             }
         },
+        "cloudtoken.cloudTokenResponse": {
+            "type": "object",
+            "properties": {
+                "addition": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "expiresIn": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "loginType": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "integer"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "userId": {
+                    "type": "integer"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
         "cloudtoken.deleteRequest": {
             "type": "object",
             "required": [
@@ -7401,7 +7450,7 @@ const docTemplate = `{
                     "description": "云盘令牌列表数据",
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/models.CloudToken"
+                        "$ref": "#/definitions/cloudtoken.cloudTokenResponse"
                     }
                 },
                 "pageSize": {
@@ -7441,6 +7490,7 @@ const docTemplate = `{
                 "id": {
                     "description": "云盘令牌ID，可选",
                     "type": "integer",
+                    "minimum": 1,
                     "example": 1
                 },
                 "name": {
@@ -8070,6 +8120,7 @@ const docTemplate = `{
                 },
                 "autoRebuildInterval": {
                     "type": "integer",
+                    "minimum": 1,
                     "example": 24
                 },
                 "baseURL": {
@@ -8208,48 +8259,6 @@ const docTemplate = `{
                 "userId": {
                     "description": "所属用户ID",
                     "type": "integer"
-                }
-            }
-        },
-        "models.CloudToken": {
-            "type": "object",
-            "properties": {
-                "accessToken": {
-                    "type": "string"
-                },
-                "addition": {
-                    "description": "附属参数",
-                    "type": "object"
-                },
-                "createdAt": {
-                    "type": "string"
-                },
-                "expiresIn": {
-                    "type": "integer"
-                },
-                "id": {
-                    "type": "integer"
-                },
-                "loginType": {
-                    "description": "1: 扫码登录 2: 密码登录",
-                    "type": "integer"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "status": {
-                    "description": "状态 1:正常 2: 登录失败",
-                    "type": "integer"
-                },
-                "updatedAt": {
-                    "type": "string"
-                },
-                "userId": {
-                    "description": "所属用户ID",
-                    "type": "integer"
-                },
-                "username": {
-                    "type": "string"
                 }
             }
         },
@@ -9157,8 +9166,9 @@ const docTemplate = `{
             ],
             "properties": {
                 "id": {
-                    "description": "挂载点文件ID",
+                    "description": "挂载点表主键",
                     "type": "integer",
+                    "minimum": 1,
                     "example": 1
                 }
             }
@@ -9197,7 +9207,7 @@ const docTemplate = `{
             ],
             "properties": {
                 "id": {
-                    "description": "挂载点文件ID",
+                    "description": "挂载点表主键",
                     "type": "integer",
                     "minimum": 1,
                     "example": 1001
@@ -9222,8 +9232,9 @@ const docTemplate = `{
                     "example": true
                 },
                 "id": {
-                    "description": "挂载点文件ID",
+                    "description": "挂载点表主键",
                     "type": "integer",
+                    "minimum": 1,
                     "example": 1001
                 }
             }
@@ -9569,10 +9580,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "payload": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "description": "载荷数据，JSON 中为 base64 字符串",
+                    "type": "string",
+                    "format": "base64"
                 },
                 "receiveAt": {
                     "description": "接收时间",
@@ -9607,6 +9617,9 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "completedTasks": {
+                    "type": "integer"
+                },
+                "cancelledTasks": {
                     "type": "integer"
                 },
                 "failedTasks": {
@@ -9740,6 +9753,9 @@ const docTemplate = `{
         },
         "telegram.UpdateUserReq": {
             "type": "object",
+            "required": [
+                "userID"
+            ],
             "properties": {
                 "isAdmin": {
                     "type": "boolean"
@@ -9748,7 +9764,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "userID": {
-                    "type": "integer"
+                    "type": "integer",
+                    "minimum": 1
                 }
             }
         },
@@ -9790,12 +9807,11 @@ const docTemplate = `{
         "topic.BatchParseTextRequest": {
             "type": "object",
             "required": [
-                "cloudToken",
                 "content"
             ],
             "properties": {
                 "cloudToken": {
-                    "description": "需要用到token去查询信息",
+                    "description": "解析个人文件夹ID时使用的令牌",
                     "type": "integer"
                 },
                 "content": {

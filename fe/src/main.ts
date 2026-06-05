@@ -1,14 +1,24 @@
 import { createApp, watchEffect } from 'vue'
 import App from './App.vue'
 import router from './router/index'
-import { pinia, useSystemStore, useUserStore } from './stores'
+import { pinia, useAuthStore, useSystemStore, useUserStore } from './stores'
 import { registerNaiveComponents } from './plugins/naive'
+import {
+  setAuthStoreGetter,
+  setSystemAuthEnabledGetter,
+  setSystemAuthRequiredHandler,
+} from './utils/api'
 
 import './style.css'
 
 const app = createApp(App)
 
 app.use(pinia)
+setAuthStoreGetter(() => useAuthStore())
+setSystemAuthEnabledGetter(() => useSystemStore().get().enableAuth)
+setSystemAuthRequiredHandler(() => {
+  useSystemStore().markAuthRequired()
+})
 
 // 动态设置页面标题：基于系统设置的 title
 const systemStore = useSystemStore()

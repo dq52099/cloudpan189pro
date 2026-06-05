@@ -69,7 +69,7 @@ func (s *service) DeleteStrm(ctx context.Context, fid int64, rootPath string) er
 // 任一磁盘删除失败时返回错误并保留 DB 记录，避免磁盘残留但索引丢失。
 //
 // 安全检查：
-//   - rootPath 必须与 shared.MediaConfig.StoragePath 一致，防止调用方传入错误的危险路径；
+//   - rootPath 必须与当前媒体配置的 StoragePath 一致，防止调用方传入错误的危险路径；
 //   - rootPath 不能是根目录 `/` 或 Windows 盘符根 `C:\`。
 func (s *service) Clear(ctx context.Context, rootPath string) error {
 	validatedRoot, err := validateMediaStorageRoot(rootPath)
@@ -141,7 +141,7 @@ func validateMediaStorageRoot(rootPath string) (string, error) {
 	}
 
 	// 必须与当前配置的 StoragePath 一致（校准从 http handler 传来的值）
-	cfg := shared.MediaConfig
+	cfg := shared.GetMediaConfig()
 	if cfg == nil || strings.TrimSpace(cfg.StoragePath) == "" {
 		return "", errors.New("媒体存储路径未配置")
 	}

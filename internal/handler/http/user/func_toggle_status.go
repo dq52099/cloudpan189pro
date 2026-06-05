@@ -36,6 +36,10 @@ func (h *handler) ToggleStatus() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureUserService(ctx, codeUpdateUserFailed) {
+			return
+		}
+
 		// 更新用户状态
 		err := h.userService.Update(ctx.GetContext(), req.ID, utils.Field{Key: "status", Value: req.Status})
 		if err != nil {

@@ -66,14 +66,24 @@ func (s *userNotFoundServiceStub) Update(appContext.Context, int64, ...utils.Fie
 type userGroupNotFoundServiceStub struct {
 	usergroupSvi.Service
 
-	queryErr  error
-	queryCall int
+	queryGroup *models.UserGroup
+	queryErr   error
+	returnNil  bool
+	queryCall  int
 }
 
 func (s *userGroupNotFoundServiceStub) Query(appContext.Context, int64) (*models.UserGroup, error) {
 	s.queryCall++
 	if s.queryErr != nil {
 		return nil, s.queryErr
+	}
+
+	if s.returnNil {
+		return nil, nil
+	}
+
+	if s.queryGroup != nil {
+		return s.queryGroup, nil
 	}
 
 	return &models.UserGroup{ID: 2, Name: "test-group"}, nil
@@ -183,6 +193,58 @@ func TestInfoReturnsNotFoundWhenCurrentUserMissing(t *testing.T) {
 	assertUserHTTPError(t, recorder, codeUserResourceMissing)
 }
 
+func TestInfoReturnsNotFoundWhenCurrentUserQueryReturnsNil(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := newUserNotFoundRouter(
+		&userNotFoundServiceStub{},
+		&userGroupNotFoundServiceStub{},
+	)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/info", nil)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertUserHTTPError(t, recorder, codeUserResourceMissing)
+}
+
+func TestInfoShowsMissingGroupWhenUserGroupQueryReturnsNil(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := newUserNotFoundRouter(
+		&userNotFoundServiceStub{queryUser: &models.User{ID: 99, Username: "alice", GroupID: 2}},
+		&userGroupNotFoundServiceStub{returnNil: true},
+	)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/info", nil)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected http status 200, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Code int `json:"code"`
+		Data struct {
+			GroupName string `json:"groupName"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected business code %d, got %d", http.StatusOK, response.Code)
+	}
+
+	if response.Data.GroupName != "用户组不存在" {
+		t.Fatalf("expected missing group name, got %q", response.Data.GroupName)
+	}
+}
+
 func TestUpdateReturnsNotFoundWhenUserMissing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -196,6 +258,28 @@ func TestUpdateReturnsNotFoundWhenUserMissing(t *testing.T) {
 		http.MethodPost,
 		"/update",
 		strings.NewReader(`{"id":99,"status":2}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertUserHTTPError(t, recorder, codeUserResourceMissing)
+}
+
+func TestModifyOwnPassReturnsNotFoundWhenCurrentUserQueryReturnsNil(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := newUserNotFoundRouter(
+		&userNotFoundServiceStub{},
+		&userGroupNotFoundServiceStub{},
+	)
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/modify_own_pass",
+		strings.NewReader(`{"oldPassword":"old-pass","password":"new-pass"}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -252,11 +336,65 @@ func TestBindGroupReturnsNotFoundWhenUserMissing(t *testing.T) {
 	}
 }
 
+func TestBindGroupReturnsNotFoundWhenUserQueryReturnsNil(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userGroupService := &userGroupNotFoundServiceStub{}
+	userService := &userNotFoundServiceStub{}
+	router := newUserNotFoundRouter(userService, userGroupService)
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/bind_group",
+		strings.NewReader(`{"userId":99,"groupId":2}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertUserHTTPError(t, recorder, codeUserResourceMissing)
+
+	if userGroupService.queryCall != 0 {
+		t.Fatalf("expected group lookup skipped, got %d calls", userGroupService.queryCall)
+	}
+
+	if userService.bindGroupCall != 0 {
+		t.Fatalf("expected bind service skipped, got %d calls", userService.bindGroupCall)
+	}
+}
+
 func TestBindGroupReturnsNotFoundWhenUserGroupMissing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	userService := &userNotFoundServiceStub{queryUser: &models.User{ID: 99}}
 	userGroupService := &userGroupNotFoundServiceStub{queryErr: gorm.ErrRecordNotFound}
+	router := newUserNotFoundRouter(userService, userGroupService)
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/bind_group",
+		strings.NewReader(`{"userId":99,"groupId":2}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertUserHTTPError(t, recorder, codeUserGroupMissing)
+
+	if userService.bindGroupCall != 0 {
+		t.Fatalf("expected bind service skipped, got %d calls", userService.bindGroupCall)
+	}
+}
+
+func TestBindGroupReturnsNotFoundWhenUserGroupQueryReturnsNil(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userService := &userNotFoundServiceStub{queryUser: &models.User{ID: 99}}
+	userGroupService := &userGroupNotFoundServiceStub{returnNil: true}
 	router := newUserNotFoundRouter(userService, userGroupService)
 
 	req := httptest.NewRequestWithContext(

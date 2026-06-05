@@ -470,6 +470,94 @@ func TestListSkipsCloudTokenLookupWhenNoTokenIDs(t *testing.T) {
 	}
 }
 
+func TestListSkipsNilServiceRows(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(10))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.GET("/list", wrapper.Wrap(NewHandler(
+		nil,
+		&mockListVirtualFileService{
+			counts: []*virtualfileSvi.GroupCountByTopId{
+				nil,
+				{TopId: 1001, Count: 7},
+			},
+		},
+		nil,
+		&mockListCloudTokenService{
+			list: []*models.CloudToken{
+				nil,
+				{ID: 3001, UserID: 10, Name: "own-token"},
+			},
+		},
+		&mockListMountPointService{list: []*models.MountPoint{
+			nil,
+			{
+				ID:            1,
+				FileId:        1001,
+				Name:          "movies",
+				FullPath:      "/movies",
+				CreatorUserID: 10,
+			},
+			nil,
+			{
+				ID:            2,
+				FileId:        1002,
+				Name:          "shows",
+				FullPath:      "/shows",
+				CreatorUserID: 10,
+			},
+		}},
+		&mockListFileTaskLogService{
+			list: []*models.FileTaskLog{
+				nil,
+				{ID: 99, FileId: 1001, Status: models.StatusCompleted},
+			},
+		},
+		nil,
+		nil,
+		&mockListGroup2FileService{},
+		&mockListUserMountPointTokenService{tokens: map[int64]int64{1: 3001}},
+	).List()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/list", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Code int          `json:"code"`
+		Data listResponse `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(response.Data.Data) != 2 {
+		t.Fatalf("expected nil mount points to be skipped, got %d rows: %+v", len(response.Data.Data), response.Data.Data)
+	}
+
+	if response.Data.Data[0].MountPointID != 1 || response.Data.Data[0].TokenName != "own-token" {
+		t.Fatalf("unexpected first row: %+v", response.Data.Data[0])
+	}
+
+	if len(response.Data.Data[0].TaskLogs) != 1 || response.Data.Data[0].TaskLogs[0].ID != 99 {
+		t.Fatalf("expected nil task logs skipped and matching task log retained, got %+v", response.Data.Data[0].TaskLogs)
+	}
+
+	if response.Data.Data[0].FileCount != 7 {
+		t.Fatalf("expected nil file counts skipped and matching count retained, got %d", response.Data.Data[0].FileCount)
+	}
+}
+
 func TestListCloudTokenLookupUsesCurrentUserScope(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -715,6 +803,30 @@ func TestListReturnsErrorWhenGroupBindingsFail(t *testing.T) {
 	}
 }
 
+func TestListReturnsErrorWhenGroupBindingServiceMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := newStorageListDependencyTestRouter(
+		10,
+		false,
+		20,
+		&mockListVirtualFileService{},
+		&mockListCloudTokenService{},
+		&mockListMountPointService{},
+		&mockListFileTaskLogService{},
+		nil,
+		&mockListUserMountPointTokenService{},
+	)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/list", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestListReturnsErrorWhenUserTokenLookupFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -754,6 +866,150 @@ func TestListReturnsErrorWhenUserTokenLookupFails(t *testing.T) {
 	}
 }
 
+func TestListReturnsErrorWhenUserTokenServiceMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := newStorageListDependencyTestRouter(
+		10,
+		false,
+		0,
+		&mockListVirtualFileService{},
+		&mockListCloudTokenService{},
+		&mockListMountPointService{list: []*models.MountPoint{{
+			ID:            1,
+			FileId:        1001,
+			Name:          "movies",
+			FullPath:      "/movies",
+			CreatorUserID: 10,
+		}}},
+		&mockListFileTaskLogService{},
+		&mockListGroup2FileService{},
+		nil,
+	)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/list", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestListReturnsErrorWhenTaskLogServiceMissingForStatusFilter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := newStorageListDependencyTestRouter(
+		10,
+		false,
+		0,
+		&mockListVirtualFileService{},
+		&mockListCloudTokenService{},
+		&mockListMountPointService{},
+		nil,
+		&mockListGroup2FileService{},
+		&mockListUserMountPointTokenService{},
+	)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/list?taskLogStatus=failed", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestListReturnsErrorWhenCloudTokenServiceMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := newStorageListDependencyTestRouter(
+		10,
+		false,
+		0,
+		&mockListVirtualFileService{},
+		nil,
+		&mockListMountPointService{list: []*models.MountPoint{{
+			ID:            1,
+			FileId:        1001,
+			Name:          "movies",
+			FullPath:      "/movies",
+			CreatorUserID: 10,
+		}}},
+		&mockListFileTaskLogService{},
+		&mockListGroup2FileService{},
+		&mockListUserMountPointTokenService{tokens: map[int64]int64{1: 3001}},
+	)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/list", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestListReturnsErrorWhenTaskLogServiceMissingForCurrentPageLogs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := newStorageListDependencyTestRouter(
+		10,
+		false,
+		0,
+		&mockListVirtualFileService{},
+		&mockListCloudTokenService{},
+		&mockListMountPointService{list: []*models.MountPoint{{
+			ID:            1,
+			FileId:        1001,
+			Name:          "movies",
+			FullPath:      "/movies",
+			CreatorUserID: 10,
+		}}},
+		nil,
+		&mockListGroup2FileService{},
+		&mockListUserMountPointTokenService{},
+	)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/list", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestListReturnsErrorWhenVirtualFileServiceMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := newStorageListDependencyTestRouter(
+		10,
+		false,
+		0,
+		nil,
+		&mockListCloudTokenService{},
+		&mockListMountPointService{list: []*models.MountPoint{{
+			ID:            1,
+			FileId:        1001,
+			Name:          "movies",
+			FullPath:      "/movies",
+			CreatorUserID: 10,
+		}}},
+		&mockListFileTaskLogService{},
+		&mockListGroup2FileService{},
+		&mockListUserMountPointTokenService{},
+	)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/list", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestSelectListReturnsErrorWhenGroupBindingsFail(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -784,6 +1040,27 @@ func TestSelectListReturnsErrorWhenGroupBindingsFail(t *testing.T) {
 
 	if recorder.Code == http.StatusOK {
 		t.Fatalf("expected error response, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestSelectListReturnsErrorWhenGroupBindingServiceMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := newStorageSelectListDependencyTestRouter(
+		10,
+		false,
+		20,
+		&mockListMountPointService{},
+		nil,
+		&mockListUserMountPointTokenService{},
+	)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/select_list", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -844,6 +1121,66 @@ func TestSelectListPassesKeywordAsNameOrPathSearch(t *testing.T) {
 	}
 }
 
+func TestSelectListSkipsNilMountPointRows(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mountPointService := &mockListMountPointService{list: []*models.MountPoint{
+		nil,
+		{
+			ID:            1,
+			FileId:        1001,
+			Name:          "movies",
+			FullPath:      "/media/movies",
+			CreatorUserID: 10,
+		},
+		nil,
+	}}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(10))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.GET("/select_list", wrapper.Wrap(NewHandler(
+		nil,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		&mockListGroup2FileService{},
+		&mockListUserMountPointTokenService{},
+	).SelectList()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/select_list?noPaginate=true", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Code int                `json:"code"`
+		Data selectListResponse `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Data.Total != 1 || len(response.Data.Data) != 1 {
+		t.Fatalf("expected one non-nil select item, got %+v", response.Data)
+	}
+
+	if response.Data.Data[0].ID != 1001 || response.Data.Data[0].Name != "movies" {
+		t.Fatalf("unexpected select item: %+v", response.Data.Data[0])
+	}
+}
+
 func TestSelectListReturnsErrorWhenUserTokenLookupFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -881,4 +1218,98 @@ func TestSelectListReturnsErrorWhenUserTokenLookupFails(t *testing.T) {
 	if recorder.Code == http.StatusOK {
 		t.Fatalf("expected error response, got %d body=%s", recorder.Code, recorder.Body.String())
 	}
+}
+
+func TestSelectListReturnsErrorWhenUserTokenServiceMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := newStorageSelectListDependencyTestRouter(
+		10,
+		false,
+		0,
+		&mockListMountPointService{list: []*models.MountPoint{{
+			ID:            1,
+			FileId:        1001,
+			Name:          "movies",
+			FullPath:      "/movies",
+			CreatorUserID: 10,
+		}}},
+		&mockListGroup2FileService{},
+		nil,
+	)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/select_list", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func newStorageListDependencyTestRouter(
+	userID int64,
+	isAdmin bool,
+	userGroupID int64,
+	virtualFileService virtualfileSvi.Service,
+	cloudTokenService cloudtokenSvi.Service,
+	mountPointService mountPointSvi.Service,
+	fileTaskLogService filetasklogSvi.Service,
+	group2FileService group2fileSvi.Service,
+	userTokenService userMountPointTokenSvi.Service,
+) *gin.Engine {
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, userID)
+		ctx.Set(consts.CtxKeyIsAdmin, isAdmin)
+		ctx.Set(consts.CtxKeyUserGroupId, userGroupID)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.GET("/list", wrapper.Wrap(NewHandler(
+		nil,
+		virtualFileService,
+		nil,
+		cloudTokenService,
+		mountPointService,
+		fileTaskLogService,
+		nil,
+		nil,
+		group2FileService,
+		userTokenService,
+	).List()))
+
+	return router
+}
+
+func newStorageSelectListDependencyTestRouter(
+	userID int64,
+	isAdmin bool,
+	userGroupID int64,
+	mountPointService mountPointSvi.Service,
+	group2FileService group2fileSvi.Service,
+	userTokenService userMountPointTokenSvi.Service,
+) *gin.Engine {
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, userID)
+		ctx.Set(consts.CtxKeyIsAdmin, isAdmin)
+		ctx.Set(consts.CtxKeyUserGroupId, userGroupID)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.GET("/select_list", wrapper.Wrap(NewHandler(
+		nil,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		group2FileService,
+		userTokenService,
+	).SelectList()))
+
+	return router
 }

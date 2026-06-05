@@ -7,28 +7,33 @@
           v-model:value="state.username"
           placeholder="用户名"
           clearable
-          style="width: 140px"
+          class="login-filter-input"
         />
-        <n-input v-model:value="state.addr" placeholder="地址/IP" clearable style="width: 140px" />
+        <n-input
+          v-model:value="state.addr"
+          placeholder="地址/IP"
+          clearable
+          class="login-filter-input"
+        />
         <n-select
           v-model:value="state.event"
           :options="eventOptions"
           clearable
           placeholder="事件"
-          style="width: 120px"
+          class="login-filter-select"
         />
         <n-select
           v-model:value="state.status"
           :options="statusOptions"
           clearable
           placeholder="状态"
-          style="width: 120px"
+          class="login-filter-select"
         />
         <n-date-picker
           v-model:value="state.dateRange"
           type="datetimerange"
           clearable
-          style="width: 280px"
+          class="login-date-range"
           format="yyyy-MM-dd HH:mm:ss"
           value-format="yyyy-MM-ddTHH:mm:ssXXX"
           placeholder="选择时间范围"
@@ -109,6 +114,7 @@ import {
 } from '@vicons/ionicons5'
 import { getLoginLogList, clearLoginLogs, type LoginLogListQuery } from '@/api/loginlog'
 import { formatDate } from '@/utils/format'
+import { formatDateRangeQuery } from '@/utils/time'
 import { getListItems, getListTotal } from '@/utils/pagination'
 import { normalizeLoginLogs } from '@/utils/responseGuards'
 import { getErrorMessage } from '@/utils/api'
@@ -297,9 +303,10 @@ const fetchList = () => {
   if (state.addr) params.addr = state.addr
   if (state.event) params.event = state.event
   if (state.status) params.status = state.status
-  if (state.dateRange && state.dateRange.length === 2) {
-    params.beginAt = new Date(state.dateRange[0]).toISOString()
-    params.endAt = new Date(state.dateRange[1]).toISOString()
+  const dateRangeParams = formatDateRangeQuery(state.dateRange)
+  if (dateRangeParams) {
+    params.beginAt = dateRangeParams.beginAt
+    params.endAt = dateRangeParams.endAt
   }
 
   getLoginLogList(params)
@@ -336,8 +343,10 @@ const fetchList = () => {
         return
       }
 
-      console.error(err)
-      message.error(getErrorMessage(err, '获取登录日志失败'))
+      const errorMessage = getErrorMessage(err, '获取登录日志失败')
+
+      console.error('获取登录日志失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isComponentMounted && requestId === loginLogListRequestId) {
@@ -469,6 +478,18 @@ onUnmounted(() => {
   align-items: center;
 }
 
+.login-filter-input {
+  width: min(160px, 100%);
+}
+
+.login-filter-select {
+  width: min(140px, 100%);
+}
+
+.login-date-range {
+  width: min(300px, 100%);
+}
+
 .login-logs-table {
   background: var(--n-card-color);
   border-radius: 6px;
@@ -481,5 +502,29 @@ onUnmounted(() => {
 
 .login-logs-table :deep(.n-data-table-td) {
   text-align: center;
+}
+
+@media (width <= 768px) {
+  .header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .header-left,
+  .header-right {
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .header-left > *,
+  .header-right > * {
+    width: 100%;
+  }
+
+  .header-left :deep(.n-input),
+  .header-left :deep(.n-select),
+  .header-left :deep(.n-date-picker) {
+    width: 100% !important;
+  }
 }
 </style>

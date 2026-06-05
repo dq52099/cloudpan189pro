@@ -25,17 +25,18 @@
           <div class="batch-item" v-if="!allTokenSwitchDisabled">
             <n-text class="batch-label">云盘令牌</n-text>
             <n-select
-              v-model:value="storageSetting.selectedToken"
+              :value="storageSetting.selectedToken"
               :options="cloudTokenOptions"
               placeholder="选择令牌"
               clearable
               style="flex-grow: 1"
               :disabled="state.submitLoading"
+              @update:value="handleSelectedTokenUpdate"
             />
             <n-button
               type="primary"
               size="small"
-              :disabled="state.submitLoading || storageSetting.selectedToken === undefined"
+              :disabled="state.submitLoading"
               @click="handleBatchApplyToken"
             >
               应用
@@ -73,6 +74,7 @@
         :data="tableData"
         :pagination="false"
         :bordered="false"
+        :scroll-x="880"
         size="small"
         class="mount-table"
       />
@@ -164,7 +166,7 @@ import { getErrorMessage, type ApiResponse } from '@/utils/api'
 import { getCloudTokenList } from '@/api/cloudtoken'
 import { getListItems } from '@/utils/pagination'
 import { normalizeCloudTokens } from '@/utils/responseGuards'
-import { getOsTypeDisplayName, getOsTypeColor } from '@/utils/osType'
+import { OS_TYPES, getOsTypeDisplayName, getOsTypeColor } from '@/utils/osType'
 import { useSharedStore } from '@/stores/modules/shared'
 import type { FormRules } from 'naive-ui'
 
@@ -230,9 +232,11 @@ interface TableRow extends MountItem {
   id: string
   localPath: string
   selectedCloudToken?: number
+  mountError?: string
 }
 
 const tableData = reactive<TableRow[]>([])
+const confirmedMountItems = reactive<{ id: number; path: string }[]>([])
 
 // 自动刷新配置相关
 const showAutoRefreshModal = ref(false)
@@ -265,6 +269,331 @@ const autoRefreshRules: FormRules = {
   ],
 }
 
+const nulCharacter = String.fromCharCode(0)
+const maxLocalPathLength = 4096
+const sanitizedFileNamePattern = /[<>:"?*\\/]/g
+const pathTextEncoder = new TextEncoder()
+const pathTextDecoder = new TextDecoder('utf-8', { fatal: true })
+
+const hasInvalidPathCharacter = (path: string) =>
+  path.includes('\\') || path.includes('\n') || path.includes('\r') || path.includes(nulCharacter)
+
+const sanitizePathSegment = (segment: string) => {
+  return segment.replace(/\|/g, '丨').replace(sanitizedFileNamePattern, '_').trim()
+}
+
+const escapeStoragePathPercent = (segment: string) => {
+  return segment.replace(/%/g, '%25')
+}
+
+const getUtf8ByteLength = (value: string) => {
+  return pathTextEncoder.encode(value).length
+}
+
+const hexToNumber = (value: string) => {
+  const code = value.charCodeAt(0)
+  if (code >= 48 && code <= 57) {
+    return code - 48
+  }
+
+  if (code >= 65 && code <= 70) {
+    return code - 65 + 10
+  }
+
+  if (code >= 97 && code <= 102) {
+    return code - 97 + 10
+  }
+
+  return null
+}
+
+const decodePathSegment = (segment: string) => {
+  const bytes: number[] = []
+  for (let index = 0; index < segment.length; index++) {
+    const char = segment[index]
+    if (char === '%' && index + 2 < segment.length) {
+      const high = hexToNumber(segment[index + 1])
+      const low = hexToNumber(segment[index + 2])
+      if (high !== null && low !== null) {
+        bytes.push(high * 16 + low)
+        index += 2
+
+        continue
+      }
+    }
+
+    const codePoint = segment.codePointAt(index)
+    if (codePoint === undefined) {
+      continue
+    }
+
+    const codePointChar = String.fromCodePoint(codePoint)
+    for (const byte of pathTextEncoder.encode(codePointChar)) {
+      bytes.push(byte)
+    }
+    index += codePointChar.length - 1
+  }
+
+  try {
+    return pathTextDecoder.decode(new Uint8Array(bytes))
+  } catch {
+    return null
+  }
+}
+
+const normalizePathSegment = (segment: string) => {
+  const sanitizedSegment = sanitizePathSegment(segment)
+  if (!sanitizedSegment) {
+    return ''
+  }
+
+  return escapeStoragePathPercent(sanitizedSegment)
+}
+
+const getPathValidationError = (path: string, options?: { allowRoot?: boolean }) => {
+  const value = path.trim()
+  if (!value) {
+    return '不能为空'
+  }
+
+  if (getUtf8ByteLength(value) > maxLocalPathLength) {
+    return `长度不能超过 ${maxLocalPathLength}`
+  }
+
+  if (!value.startsWith('/')) {
+    return '必须以 / 开头'
+  }
+
+  if (hasInvalidPathCharacter(value)) {
+    return '不能包含反斜杠、换行或空字符'
+  }
+
+  let hasSegment = false
+  for (const segment of value.split('/')) {
+    if (!segment) {
+      continue
+    }
+
+    hasSegment = true
+
+    const decodedSegment = decodePathSegment(segment)
+    if (decodedSegment === null) {
+      return '包含不合法的 UTF-8 编码'
+    }
+
+    if (decodedSegment === '.' || decodedSegment === '..') {
+      return '不能包含 . 或 .. 路径段'
+    }
+
+    if (decodedSegment.includes('/') || hasInvalidPathCharacter(decodedSegment)) {
+      return '不能包含转义后的路径分隔符或非法字符'
+    }
+
+    if (!normalizePathSegment(decodedSegment)) {
+      return '不能包含清理后为空的路径段'
+    }
+  }
+
+  if (!options?.allowRoot && !hasSegment) {
+    return '不能为根路径'
+  }
+
+  return null
+}
+
+const pathPrefixValidationError = computed(() =>
+  getPathValidationError(storageSetting.value.pathPrefix, { allowRoot: true })
+)
+
+const getNormalizedLocalPathKey = (path: string) => {
+  const value = path.trim()
+  const segments: string[] = []
+
+  for (const segment of value.split('/')) {
+    if (!segment) {
+      continue
+    }
+
+    const decodedSegment = decodePathSegment(segment)
+    if (decodedSegment === null) {
+      return null
+    }
+
+    const normalizedSegment = normalizePathSegment(decodedSegment)
+    if (!normalizedSegment) {
+      return null
+    }
+
+    segments.push(normalizedSegment)
+  }
+
+  return `/${segments.join('/')}`
+}
+
+const normalizePathPrefix = (pathPrefix: string) => {
+  const normalizedPathPrefix = getNormalizedLocalPathKey(pathPrefix)
+  if (!normalizedPathPrefix || normalizedPathPrefix === '/') {
+    return '/'
+  }
+
+  return `${normalizedPathPrefix}/`
+}
+
+const joinLocalPathWithDisplayName = (pathPrefix: string, name: string) => {
+  const prefix = normalizePathPrefix(pathPrefix || '/')
+  const normalizedName = normalizePathSegment(name)
+  if (!normalizedName) {
+    return prefix
+  }
+
+  return `${prefix}${normalizedName}`
+}
+
+const duplicatedLocalPaths = computed(() => {
+  const pathCounts = new Map<string, number>()
+  for (const row of tableData) {
+    const localPathKey = getNormalizedLocalPathKey(row.localPath)
+    if (!localPathKey) {
+      continue
+    }
+
+    pathCounts.set(localPathKey, (pathCounts.get(localPathKey) ?? 0) + 1)
+  }
+
+  return new Set(
+    [...pathCounts.entries()].filter(([, count]) => count > 1).map(([localPathKey]) => localPathKey)
+  )
+})
+
+const getRowPathError = (row: TableRow) => {
+  const pathError = getPathValidationError(row.localPath)
+  if (pathError) {
+    return pathError
+  }
+
+  const localPathKey = getNormalizedLocalPathKey(row.localPath)
+  if (localPathKey && duplicatedLocalPaths.value.has(localPathKey)) {
+    return '不能重复'
+  }
+
+  return null
+}
+
+const normalizeCloudTokenID = (value: unknown) => {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    return undefined
+  }
+
+  return value
+}
+
+const shouldUseCloudTokenFallback = (osType: string) => {
+  return osType === OS_TYPES.PERSON_FOLDER || osType === OS_TYPES.FAMILY_FOLDER
+}
+
+const getInitialSelectedCloudToken = (item: MountItem) => {
+  const itemCloudToken = normalizeCloudTokenID(item.cloudToken)
+  if (item.disableSwitchCloudToken) {
+    return itemCloudToken
+  }
+
+  if (itemCloudToken !== undefined) {
+    return itemCloudToken
+  }
+
+  if (!shouldUseCloudTokenFallback(item.osType)) {
+    return 0
+  }
+
+  return (
+    normalizeCloudTokenID(props.defaultCloudToken) ??
+    normalizeCloudTokenID(storageSetting.value.selectedToken)
+  )
+}
+
+const hasBoundCloudToken = (cloudToken: unknown) => {
+  const normalizedCloudToken = normalizeCloudTokenID(cloudToken)
+
+  return normalizedCloudToken !== undefined && normalizedCloudToken > 0
+}
+
+const hasNonEmptyValue = (value: string | undefined) => {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+const getRowParamsError = (row: TableRow) => {
+  switch (row.osType) {
+    case OS_TYPES.SUBSCRIBE:
+      return hasNonEmptyValue(row.subscribeUser) ? null : '订阅用户不能为空'
+    case OS_TYPES.SUBSCRIBE_SHARE_FOLDER:
+      return hasNonEmptyValue(row.subscribeUser) && hasNonEmptyValue(row.shareCode)
+        ? null
+        : '订阅分享参数不完整'
+    case OS_TYPES.SHARE_FOLDER:
+      return hasNonEmptyValue(row.shareCode) ? null : '分享码不能为空'
+    case OS_TYPES.PERSON_FOLDER:
+      if (!hasNonEmptyValue(row.fileId)) {
+        return '个人文件夹ID不能为空'
+      }
+
+      return hasBoundCloudToken(row.selectedCloudToken) ? null : '个人文件夹必须绑定云盘令牌'
+    case OS_TYPES.FAMILY_FOLDER:
+      if (!hasNonEmptyValue(row.fileId) || !hasNonEmptyValue(row.familyId)) {
+        return '家庭云参数不完整'
+      }
+
+      return hasBoundCloudToken(row.selectedCloudToken) ? null : '家庭云必须绑定云盘令牌'
+    default:
+      return '挂载类型不支持'
+  }
+}
+
+const getRowValidationError = (row: TableRow) => {
+  const pathError = getRowPathError(row)
+  if (pathError) {
+    return `挂载路径${pathError}`
+  }
+
+  return getRowParamsError(row)
+}
+
+const invalidRows = computed(() =>
+  tableData
+    .map((row, index) => ({ index, error: getRowValidationError(row) }))
+    .filter((row): row is { index: number; error: string } => Boolean(row.error))
+)
+
+const getConfirmedItems = () => {
+  return confirmedMountItems.map((item) => ({ ...item }))
+}
+
+const normalizeRowsForSubmit = () => {
+  for (const row of tableData) {
+    const normalizedPath = getNormalizedLocalPathKey(row.localPath)
+    if (normalizedPath) {
+      row.localPath = normalizedPath
+    }
+  }
+}
+
+const appendConfirmedItems = (items: { id: number; path: string }[]) => {
+  for (const item of items) {
+    if (
+      confirmedMountItems.some(
+        (confirmed) => confirmed.id === item.id && confirmed.path === item.path
+      )
+    ) {
+      continue
+    }
+
+    confirmedMountItems.push(item)
+  }
+}
+
+const handleSelectedTokenUpdate = (value: unknown) => {
+  storageSetting.value.selectedToken = normalizeCloudTokenID(value) ?? 0
+}
+
 // 计算属性
 const cloudTokenOptions = computed(() => [
   { label: '不绑定', value: 0 },
@@ -274,11 +603,9 @@ const cloudTokenOptions = computed(() => [
   })),
 ])
 
-const hasValidPathPrefix = computed(
-  () => storageSetting.value.pathPrefix && storageSetting.value.pathPrefix.startsWith('/')
-)
+const hasValidPathPrefix = computed(() => !pathPrefixValidationError.value)
 
-const hasInvalidRows = computed(() => tableData.some((row) => !row.localPath.trim()))
+const hasInvalidRows = computed(() => invalidRows.value.length > 0)
 
 // 检查是否所有项目都禁用令牌切换
 const allTokenSwitchDisabled = computed(
@@ -323,18 +650,35 @@ const columns: DataTableColumns<TableRow> = [
     align: 'left',
     titleAlign: 'center',
     render: (row, index) => {
-      return h(NInput, {
-        value: row.localPath,
-        placeholder: '请输入挂载路径',
-        disabled: state.submitLoading,
-        onUpdateValue: (value: string) => {
-          if (state.submitLoading) {
-            return
-          }
+      const rowError = getRowValidationError(row)
+      const feedback = rowError || row.mountError
 
-          tableData[index].localPath = value
-        },
-      })
+      return h('div', { class: 'path-cell' }, [
+        h(NInput, {
+          value: row.localPath,
+          placeholder: '必须以 / 开头，且不能为根路径',
+          status: feedback ? ('error' as const) : undefined,
+          disabled: state.submitLoading,
+          onUpdateValue: (value: string) => {
+            if (state.submitLoading) {
+              return
+            }
+
+            tableData[index].localPath = value
+            tableData[index].mountError = undefined
+          },
+        }),
+        feedback
+          ? h(
+              NText,
+              {
+                class: 'path-error',
+                type: 'error',
+              },
+              { default: () => feedback }
+            )
+          : null,
+      ])
     },
   },
   {
@@ -349,12 +693,13 @@ const columns: DataTableColumns<TableRow> = [
         placeholder: '选择云盘令牌',
         clearable: true,
         disabled: state.submitLoading || row.disableSwitchCloudToken,
-        onUpdateValue: (value: number | undefined) => {
+        onUpdateValue: (value: unknown) => {
           if (state.submitLoading) {
             return
           }
 
-          tableData[index].selectedCloudToken = value
+          tableData[index].selectedCloudToken = normalizeCloudTokenID(value)
+          tableData[index].mountError = undefined
         },
       })
     },
@@ -371,20 +716,14 @@ const initTableData = () => {
   }
 
   const newItems = props.items.map((item, index) => {
-    // 构建路径：路径前缀 + 名称
-    let localPath: string
-    if (item.userName) {
-      localPath = `${storageSetting.value.pathPrefix || ''}${item.name}`
-    } else {
-      localPath = `${storageSetting.value.pathPrefix || '/'}${item.name}`
-    }
+    // 将识别出的名称作为单个路径段拼接，避免名称中的 / 或 % 改变挂载层级。
+    const localPath = joinLocalPathWithDisplayName(storageSetting.value.pathPrefix, item.name)
+
     return {
       ...item,
       id: `item_${index}`,
       localPath,
-      selectedCloudToken: item.disableSwitchCloudToken
-        ? item.cloudToken
-        : storageSetting.value.selectedToken,
+      selectedCloudToken: getInitialSelectedCloudToken(item),
     } as TableRow
   })
   tableData.length = 0
@@ -442,7 +781,8 @@ const handleBatchApplyToken = () => {
 
   tableData.forEach((row) => {
     if (!row.disableSwitchCloudToken) {
-      row.selectedCloudToken = storageSetting.value.selectedToken
+      row.selectedCloudToken = normalizeCloudTokenID(storageSetting.value.selectedToken)
+      row.mountError = undefined
       appliedCount++
     } else {
       skippedCount++
@@ -463,19 +803,18 @@ const handleBatchApplyPathPrefix = () => {
   }
 
   if (!hasValidPathPrefix.value) {
-    message.warning('路径前缀必须以 / 开头')
+    message.warning(`路径前缀${pathPrefixValidationError.value}`)
     return
   }
 
   // 确保前缀以 / 结尾（如果不是单独的 /）
-  let prefix = storageSetting.value.pathPrefix
-  if (prefix !== '/' && !prefix.endsWith('/')) {
-    prefix += '/'
-  }
+  const prefix = normalizePathPrefix(storageSetting.value.pathPrefix)
+  storageSetting.value.pathPrefix = prefix
 
   // 将路径前缀应用到所有行
   tableData.forEach((row) => {
-    row.localPath = `${prefix}${row.name}`
+    row.localPath = joinLocalPathWithDisplayName(prefix, row.name)
+    row.mountError = undefined
   })
 
   message.success('已批量应用路径前缀设置')
@@ -489,6 +828,13 @@ const handleCancel = () => {
 
   invalidatePendingWork()
   sharedStore.restorePathPrefix()
+  const confirmedItems = getConfirmedItems()
+  if (confirmedItems.length > 0) {
+    emit('confirm', confirmedItems)
+
+    return
+  }
+
   emit('cancel')
 }
 
@@ -555,7 +901,7 @@ const buildRequests = (): AddStorageRequest[] => {
   return tableData.map((row) => ({
     localPath: row.localPath.trim(),
     osType: row.osType as AddStorageRequest['osType'],
-    cloudToken: row.selectedCloudToken,
+    cloudToken: normalizeCloudTokenID(row.selectedCloudToken),
     subscribeUser: row.subscribeUser,
     shareCode: row.shareCode,
     shareAccessCode: row.shareAccessCode,
@@ -574,10 +920,6 @@ const buildRequests = (): AddStorageRequest[] => {
   }))
 }
 
-const isFiniteNumber = (value: unknown): value is number => {
-  return typeof value === 'number' && Number.isFinite(value)
-}
-
 const isNonNegativeInteger = (value: unknown): value is number => {
   return Number.isInteger(value) && Number(value) >= 0
 }
@@ -594,8 +936,8 @@ const isOptionalBoolean = (value: unknown): value is boolean | undefined => {
   return value === undefined || typeof value === 'boolean'
 }
 
-const isOptionalFiniteNumber = (value: unknown): value is number | undefined => {
-  return value === undefined || isFiniteNumber(value)
+const isOptionalNonNegativeInteger = (value: unknown): value is number | undefined => {
+  return value === undefined || isNonNegativeInteger(value)
 }
 
 const isBatchAddResultItem = (
@@ -610,7 +952,7 @@ const isBatchAddResultItem = (
   return (
     typeof item.localPath === 'string' &&
     typeof item.success === 'boolean' &&
-    isOptionalFiniteNumber(item.id) &&
+    isOptionalNonNegativeInteger(item.id) &&
     isOptionalString(item.error) &&
     isOptionalBoolean(item.scanQueued) &&
     isOptionalString(item.scanError)
@@ -623,15 +965,22 @@ const isBatchAddStorageResponse = (value: unknown): value is BatchAddStorageResp
   }
 
   const data = value as Partial<BatchAddStorageResponse>
+  const scanQueuedCount = data.scanQueuedCount ?? 0
+  const scanFailedCount = data.scanFailedCount ?? 0
 
-  return (
-    isNonNegativeInteger(data.successCount) &&
-    isNonNegativeInteger(data.failCount) &&
-    isOptionalFiniteNumber(data.scanQueuedCount) &&
-    isOptionalFiniteNumber(data.scanFailedCount) &&
-    Array.isArray(data.results) &&
-    data.results.every(isBatchAddResultItem)
-  )
+  if (
+    !isNonNegativeInteger(data.successCount) ||
+    !isNonNegativeInteger(data.failCount) ||
+    !isOptionalNonNegativeInteger(data.scanQueuedCount) ||
+    !isOptionalNonNegativeInteger(data.scanFailedCount) ||
+    scanQueuedCount + scanFailedCount !== data.successCount ||
+    !Array.isArray(data.results) ||
+    !data.results.every(isBatchAddResultItem)
+  ) {
+    return false
+  }
+
+  return true
 }
 
 // 处理批量挂载结果
@@ -660,24 +1009,60 @@ const handleMountResults = (response: ApiResponse<BatchAddStorageResponse>) => {
     })
   }
 
-  if (successItems.length !== successCount) {
+  if (successItems.length !== successCount || results.length !== successCount + failCount) {
     message.error('批量挂载响应结果异常')
     return
   }
 
-  if (successCount > 0) {
+  appendConfirmedItems(successItems)
+
+  const failedResultsByPath = new Map(
+    results
+      .filter((result) => !result.success)
+      .map((result) => [result.localPath.trim(), result.error || '挂载失败'])
+  )
+  const successPaths = new Set(
+    results.filter((result) => result.success).map((result) => result.localPath.trim())
+  )
+
+  for (let index = tableData.length - 1; index >= 0; index--) {
+    const rowPath = tableData[index].localPath.trim()
+    if (successPaths.has(rowPath)) {
+      tableData.splice(index, 1)
+
+      continue
+    }
+
+    tableData[index].mountError = failedResultsByPath.get(rowPath)
+  }
+
+  if (successCount > 0 && failCount === 0) {
+    const totalSuccessCount = confirmedMountItems.length
     message.success(
-      `成功挂载 ${successCount} 个存储点${failCount > 0 ? `，失败 ${failCount} 个` : ''}`
+      totalSuccessCount > successCount
+        ? `成功挂载 ${successCount} 个存储点，累计 ${totalSuccessCount} 个`
+        : `成功挂载 ${successCount} 个存储点`
     )
     if (scanFailedCount > 0) {
       message.warning(`${scanFailedCount} 个存储点已挂载，但扫描任务未提交`)
     }
     sharedStore.restorePathPrefix()
-    emit('confirm', successItems)
-  } else {
-    const firstError = results.find((r) => !r.success)?.error
-    message.error(`挂载全部失败${firstError ? `: ${firstError}` : ''}`)
+    emit('confirm', getConfirmedItems())
+
+    return
   }
+
+  if (successCount > 0) {
+    message.warning(`成功挂载 ${successCount} 个存储点，失败 ${failCount} 个，请修正失败项后重试`)
+    if (scanFailedCount > 0) {
+      message.warning(`${scanFailedCount} 个存储点已挂载，但扫描任务未提交`)
+    }
+
+    return
+  }
+
+  const firstError = results.find((r) => !r.success)?.error
+  message.error(`挂载全部失败${firstError ? `: ${firstError}` : ''}`)
 }
 
 // 确认挂载
@@ -688,9 +1073,11 @@ const handleConfirm = () => {
 
   // 验证数据
   if (hasInvalidRows.value) {
-    message.warning('请填写所有挂载路径')
+    const firstInvalidRow = invalidRows.value[0]
+    message.warning(`第 ${firstInvalidRow.index + 1} 行${firstInvalidRow.error}`)
     return
   }
+  normalizeRowsForSubmit()
 
   state.submitLoading = true
   const currentRequest = ++submitRequestVersion
@@ -712,8 +1099,10 @@ const handleConfirm = () => {
         return
       }
 
-      console.error('批量挂载失败:', error)
-      message.error(getErrorMessage(error, '批量挂载失败'))
+      const errorMessage = getErrorMessage(error, '批量挂载失败')
+
+      console.error('批量挂载失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isCurrentSubmitRequest(currentRequest)) {
@@ -728,10 +1117,6 @@ onMounted(() => {
   submitRequestVersion++
   cloudTokenRequestVersion++
 
-  // 如果有默认令牌，并且用户没有自定义设置，则使用默认令牌
-  if (props.defaultCloudToken && storageSetting.value.selectedToken === 0) {
-    storageSetting.value.selectedToken = props.defaultCloudToken
-  }
   initTableData()
   fetchCloudTokens()
 })
@@ -745,6 +1130,7 @@ onUnmounted(() => {
 defineExpose({
   handleConfirm,
   handleCancel,
+  getConfirmedItems,
   state,
 })
 </script>
@@ -760,7 +1146,7 @@ defineExpose({
 
 .batch-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
   gap: 16px;
 }
 
@@ -768,6 +1154,7 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .batch-label {
@@ -777,13 +1164,24 @@ defineExpose({
 
 .table-container {
   max-height: 400px;
-  overflow-y: auto;
+  overflow: auto;
   border: 1px solid var(--n-border-color);
   border-radius: 6px;
 }
 
 .mount-table {
   min-height: 200px;
+}
+
+.path-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.path-error {
+  font-size: 12px;
+  line-height: 1.3;
 }
 
 /* 固定表格标题 */
@@ -814,6 +1212,31 @@ defineExpose({
 @media (width <= 768px) {
   .modal-actions {
     flex-direction: column;
+  }
+}
+
+@media (width <= 640px) {
+  .mount-bind-content {
+    padding: 8px 0;
+  }
+
+  .batch-grid {
+    gap: 12px;
+  }
+
+  .batch-item {
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+
+  .batch-label {
+    width: 100%;
+  }
+
+  .batch-item :deep(.n-input),
+  .batch-item :deep(.n-select) {
+    flex: 1 1 0;
+    min-width: 0;
   }
 }
 </style>

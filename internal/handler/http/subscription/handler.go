@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -18,20 +17,21 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/datatypes"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/cloudbridge"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/douban"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/storagefacade"
+	subscriptionSvc "github.com/xxcheng123/cloudpan189-share/internal/services/subscription"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/tmdb"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-var shareCodeRegex = regexp.MustCompile(`/t/([a-zA-Z0-9]+)`)
-
 const (
-	defaultPanSearchURL          = "https://so.252035.xyz/api/search"
+	defaultPanSearchURL          = subscriptionSvc.DefaultPanSearchURL
 	defaultSubscriptionMountPath = "/热门订阅"
 	maxPanSearchResponseSize     = 5 << 20
 	subscriptionConfigName       = "subscription_config"
@@ -45,25 +45,54 @@ type Handler struct {
 	storageFacadeService storagefacade.Service
 	cloudBridgeService   cloudbridge.Service
 	httpClient           *http.Client
+	panSearchClientMu    sync.Mutex
+	panSearchProxyBase   *http.Client
+	panSearchProxyURL    string
+	panSearchProxyClient *http.Client
 	openaiSvc            interface {
 		GenerateUpgradeKeyword(title, category string) (string, error)
 	}
 	tmdbAPIKey           string
 	subscriptionConfigMu sync.Mutex
+	runtimeSubscription  runtimeSubscriptionConfigUpdater
+}
+
+type runtimeSubscriptionConfigUpdater interface {
+	UpdateConfig(subscriptionSvc.SubscriptionConfig)
+}
+
+type contextAwareOpenAIService interface {
+	GenerateUpgradeKeywordWithContext(ctx context.Context, title, category string) (string, error)
+}
+
+type contextAwareTMDBService interface {
+	GetPopularMoviesWithContext(ctx context.Context, page int) ([]tmdb.Movie, error)
+	GetPopularTVsWithContext(ctx context.Context, page int) ([]tmdb.TV, error)
+	GetMoviesByGenreWithContext(ctx context.Context, genreID int, page int) ([]tmdb.Movie, error)
+}
+
+type contextAwareDoubanService interface {
+	GetMoviesByTagWithContext(ctx context.Context, tag string) ([]douban.Subject, error)
 }
 
 func NewHandler(db *gorm.DB, tmdbSvc tmdb.Service, doubanSvc douban.Service, storageSvc storagefacade.Service, cloudBridgeSvc cloudbridge.Service, logger *zap.Logger, openaiSvc interface {
 	GenerateUpgradeKeyword(title, category string) (string, error)
-}) *Handler {
+}, runtimeSvc ...runtimeSubscriptionConfigUpdater) *Handler {
 	if err := db.AutoMigrate(&Setting{}); err != nil {
 		logger.Error("自动迁移订阅 Setting 失败", zap.Error(err))
 	}
 
-	logger.Info("Creating subscription handler", zap.Any("storageSvc", storageSvc != nil))
+	logger.Info("Creating subscription handler", zap.Any("storageSvc", !isNilDependency(storageSvc)))
 
 	var tmdbAPIKey string
 
-	if tmdbSvc != nil {
+	var runtimeSubscription runtimeSubscriptionConfigUpdater
+
+	if len(runtimeSvc) > 0 {
+		runtimeSubscription = runtimeSvc[0]
+	}
+
+	if !isNilDependency(tmdbSvc) {
 		cfg := tmdbSvc.GetConfig()
 		if cfg != nil {
 			tmdbAPIKey = cfg.APIKey
@@ -73,12 +102,16 @@ func NewHandler(db *gorm.DB, tmdbSvc tmdb.Service, doubanSvc douban.Service, sto
 	var setting Setting
 	if err := db.Where("name = ?", subscriptionConfigName).First(&setting).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		logger.Warn("读取订阅配置失败，将使用默认配置", zap.Error(err))
-	} else if setting.Value.TMDBAPIKey != "" {
-		if tmdbSvc != nil {
-			tmdbSvc.SetAPIKey(setting.Value.TMDBAPIKey)
+	} else if setting.ID != 0 {
+		if setting.Value.TMDBAPIKey != "" {
+			if !isNilDependency(tmdbSvc) {
+				tmdbSvc.SetAPIKey(setting.Value.TMDBAPIKey)
+			}
+
+			tmdbAPIKey = setting.Value.TMDBAPIKey
 		}
 
-		tmdbAPIKey = setting.Value.TMDBAPIKey
+		syncRuntimeSubscriptionConfig(runtimeSubscription, setting.Value)
 	}
 
 	return &Handler{
@@ -91,7 +124,22 @@ func NewHandler(db *gorm.DB, tmdbSvc tmdb.Service, doubanSvc douban.Service, sto
 		httpClient:           &http.Client{Timeout: 120 * time.Second},
 		openaiSvc:            openaiSvc,
 		tmdbAPIKey:           tmdbAPIKey,
+		runtimeSubscription:  runtimeSubscription,
 	}
+}
+
+func syncRuntimeSubscriptionConfig(runtime runtimeSubscriptionConfigUpdater, config models.SubscriptionConfig) {
+	if isNilDependency(runtime) {
+		return
+	}
+
+	runtime.UpdateConfig(subscriptionSvc.SubscriptionConfig{
+		Enabled:        config.Enabled,
+		PanSearchURL:   config.PanSearchURL,
+		EnableTMDB:     config.EnableTMDB,
+		EnableDouban:   config.EnableDouban,
+		CronExpression: config.CronExpression,
+	})
 }
 
 func invalidParams(err error) httpcontext.BusinessError {
@@ -312,6 +360,38 @@ var tmdbCategoryGenreMap = map[string]struct {
 	"doc_toprated":     {genreType: "movie", genreID: 99},
 }
 
+func getTMDBPopularMovies(ctx context.Context, svc tmdb.Service, page int) ([]tmdb.Movie, error) {
+	if contextAwareSvc, ok := svc.(contextAwareTMDBService); ok {
+		return contextAwareSvc.GetPopularMoviesWithContext(ctx, page)
+	}
+
+	return svc.GetPopularMovies(page)
+}
+
+func getTMDBPopularTVs(ctx context.Context, svc tmdb.Service, page int) ([]tmdb.TV, error) {
+	if contextAwareSvc, ok := svc.(contextAwareTMDBService); ok {
+		return contextAwareSvc.GetPopularTVsWithContext(ctx, page)
+	}
+
+	return svc.GetPopularTVs(page)
+}
+
+func getTMDBMoviesByGenre(ctx context.Context, svc tmdb.Service, genreID int, page int) ([]tmdb.Movie, error) {
+	if contextAwareSvc, ok := svc.(contextAwareTMDBService); ok {
+		return contextAwareSvc.GetMoviesByGenreWithContext(ctx, genreID, page)
+	}
+
+	return svc.GetMoviesByGenre(genreID, page)
+}
+
+func getDoubanMoviesByTag(ctx context.Context, svc douban.Service, tag string) ([]douban.Subject, error) {
+	if contextAwareSvc, ok := svc.(contextAwareDoubanService); ok {
+		return contextAwareSvc.GetMoviesByTagWithContext(ctx, tag)
+	}
+
+	return svc.GetMoviesByTag(tag)
+}
+
 // GetTMDbMovies 获取 TMDB 热门影视
 // @Summary 获取 TMDB 热门影视
 // @Description 按分类获取 TMDB 热门电影、剧集、动漫或纪录片
@@ -327,7 +407,7 @@ var tmdbCategoryGenreMap = map[string]struct {
 // @Router /api/subscription/tmdb/movies [get]
 func (h *Handler) GetTMDbMovies() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
-		if h.tmdb == nil {
+		if isNilDependency(h.tmdb) {
 			c.Fail(invalidParams(fmt.Errorf("TMDB 服务未初始化，请检查配置")))
 
 			return
@@ -346,14 +426,15 @@ func (h *Handler) GetTMDbMovies() httpcontext.HandlerFunc {
 			catInfo = tmdbCategoryGenreMap["movie_popular"]
 		}
 
+		requestCtx := c.Request.Context()
 		if catInfo.genreID > 0 {
-			items, err = h.tmdb.GetMoviesByGenre(catInfo.genreID, 1)
+			items, err = getTMDBMoviesByGenre(requestCtx, h.tmdb, catInfo.genreID, 1)
 		} else if category == "movie_popular" || category == "movie_toprated" || category == "movie_nowplaying" || category == "movie_upcoming" {
-			items, err = h.tmdb.GetPopularMovies(1)
+			items, err = getTMDBPopularMovies(requestCtx, h.tmdb, 1)
 		} else if category == "tv_popular" || category == "tv_toprated" || category == "tv_airing" {
-			items, err = h.tmdb.GetPopularTVs(1)
+			items, err = getTMDBPopularTVs(requestCtx, h.tmdb, 1)
 		} else {
-			items, err = h.tmdb.GetPopularMovies(1)
+			items, err = getTMDBPopularMovies(requestCtx, h.tmdb, 1)
 		}
 
 		if err != nil {
@@ -431,7 +512,7 @@ func (h *Handler) GetTMDbMovies() httpcontext.HandlerFunc {
 // @Router /api/subscription/tmdb/tvs [get]
 func (h *Handler) GetTMDbTVs() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
-		if h.tmdb == nil {
+		if isNilDependency(h.tmdb) {
 			c.Fail(invalidParams(fmt.Errorf("TMDB 服务未初始化，请检查配置")))
 
 			return
@@ -440,7 +521,7 @@ func (h *Handler) GetTMDbTVs() httpcontext.HandlerFunc {
 		category := c.DefaultQuery("category", "tv_popular")
 		h.logger.Info("[热门数据加载] 正在获取TMDB热门电视剧", zap.String("category", category))
 
-		items, err := h.tmdb.GetPopularTVs(1)
+		items, err := getTMDBPopularTVs(c.Request.Context(), h.tmdb, 1)
 		if err != nil {
 			h.logger.Error("failed to get TMDB TVs", zap.Error(err))
 			c.Fail(invalidParams(fmt.Errorf("获取TMDB热门电视剧失败: %w", err)))
@@ -493,7 +574,7 @@ func (h *Handler) GetTMDbTVs() httpcontext.HandlerFunc {
 // @Router /api/subscription/douban/movies [get]
 func (h *Handler) GetDoubanMovies() httpcontext.HandlerFunc {
 	return func(c *httpcontext.Context) {
-		if h.douban == nil {
+		if isNilDependency(h.douban) {
 			c.Fail(invalidParams(fmt.Errorf("豆瓣服务未初始化，请检查配置")))
 
 			return
@@ -502,7 +583,7 @@ func (h *Handler) GetDoubanMovies() httpcontext.HandlerFunc {
 		tag := c.DefaultQuery("category", "热门")
 		h.logger.Info("[热门数据加载] 正在获取豆瓣热门数据", zap.String("category", tag))
 
-		items, err := h.douban.GetMoviesByTag(tag)
+		items, err := getDoubanMoviesByTag(c.Request.Context(), h.douban, tag)
 		if err != nil {
 			h.logger.Error("failed to get Douban movies", zap.Error(err))
 			c.Fail(invalidParams(fmt.Errorf("获取豆瓣热门电影失败: %w", err)))
@@ -536,6 +617,7 @@ func (h *Handler) GetDoubanMovies() httpcontext.HandlerFunc {
 }
 
 type SubscriptionConfig struct {
+	Enabled          bool   `json:"enabled"`
 	EnableTMDB       bool   `json:"enableTMDB"`
 	EnableDouban     bool   `json:"enableDouban"`
 	PanSearchURL     string `json:"panSearchURL"`
@@ -582,39 +664,24 @@ func (h *Handler) GetConfig() httpcontext.HandlerFunc {
 		}
 
 		if setting.ID == 0 {
-			c.Success(h.defaultSubscriptionConfig())
+			c.Success(maskSubscriptionConfig(h.defaultSubscriptionConfig()))
 
 			return
 		}
 
-		config := SubscriptionConfig{
-			EnableTMDB:       setting.Value.EnableTMDB,
-			EnableDouban:     setting.Value.EnableDouban,
-			PanSearchURL:     setting.Value.PanSearchURL,
-			DefaultMountPath: setting.Value.DefaultMountPath,
-			AutoMount:        setting.Value.AutoMount,
-			CronExpression:   setting.Value.CronExpression,
-			TMDBAPIKey:       setting.Value.TMDBAPIKey,
-			OpenAIAPIKey:     setting.Value.OpenAIAPIKey,
-			OpenAIBaseURL:    setting.Value.OpenAIBaseURL,
-			OpenAIModel:      setting.Value.OpenAIModel,
-		}
-		if config.TMDBAPIKey == "" {
-			config.TMDBAPIKey = h.tmdbAPIKey
-		}
-
-		c.Success(config)
+		c.Success(h.subscriptionConfigResponse(setting.Value))
 	}
 }
 
 func (h *Handler) defaultSubscriptionConfig() SubscriptionConfig {
 	return SubscriptionConfig{
+		Enabled:          false,
 		EnableTMDB:       true,
 		EnableDouban:     true,
 		PanSearchURL:     defaultPanSearchURL,
 		DefaultMountPath: defaultSubscriptionMountPath,
 		AutoMount:        false,
-		CronExpression:   "0 2 * * *",
+		CronExpression:   consts.DefaultSubscriptionCronExpression,
 		TMDBAPIKey:       h.tmdbAPIKey,
 		OpenAIBaseURL:    "https://api.openai.com",
 		OpenAIModel:      "gpt-4o-mini",
@@ -661,6 +728,7 @@ func (h *Handler) defaultMountPathFromConfig() (string, error) {
 }
 
 type UpdateConfigReq struct {
+	Enabled          *bool   `json:"enabled"`
 	EnableTMDB       *bool   `json:"enableTMDB"`
 	EnableDouban     *bool   `json:"enableDouban"`
 	PanSearchURL     *string `json:"panSearchURL"`
@@ -713,8 +781,48 @@ func (h *Handler) UpdateConfig() httpcontext.HandlerFunc {
 			return
 		}
 
-		c.Success(config)
+		c.Success(h.subscriptionConfigResponse(config))
 	}
+}
+
+func (h *Handler) subscriptionConfigResponse(config models.SubscriptionConfig) SubscriptionConfig {
+	response := subscriptionConfigFromModel(config)
+	if strings.TrimSpace(response.TMDBAPIKey) == "" {
+		response.TMDBAPIKey = h.tmdbAPIKey
+	}
+
+	return maskSubscriptionConfig(response)
+}
+
+func subscriptionConfigFromModel(config models.SubscriptionConfig) SubscriptionConfig {
+	return SubscriptionConfig{
+		Enabled:          config.Enabled,
+		EnableTMDB:       config.EnableTMDB,
+		EnableDouban:     config.EnableDouban,
+		PanSearchURL:     config.PanSearchURL,
+		DefaultMountPath: config.DefaultMountPath,
+		AutoMount:        config.AutoMount,
+		CronExpression:   config.CronExpression,
+		TMDBAPIKey:       config.TMDBAPIKey,
+		OpenAIAPIKey:     config.OpenAIAPIKey,
+		OpenAIBaseURL:    config.OpenAIBaseURL,
+		OpenAIModel:      config.OpenAIModel,
+	}
+}
+
+func maskSubscriptionConfig(config SubscriptionConfig) SubscriptionConfig {
+	config.PanSearchURL = utils.RedactURLForLog(config.PanSearchURL)
+	config.OpenAIBaseURL = utils.RedactURLForLog(config.OpenAIBaseURL)
+
+	if strings.TrimSpace(config.TMDBAPIKey) != "" {
+		config.TMDBAPIKey = utils.RedactedSecret
+	}
+
+	if strings.TrimSpace(config.OpenAIAPIKey) != "" {
+		config.OpenAIAPIKey = utils.RedactedSecret
+	}
+
+	return config
 }
 
 func (h *Handler) updateSubscriptionConfig(ctx context.Context, req *UpdateConfigReq) (models.SubscriptionConfig, error) {
@@ -732,6 +840,14 @@ func (h *Handler) updateSubscriptionConfig(ctx context.Context, req *UpdateConfi
 			}
 
 			config := setting.Value
+			if err := normalizeSubscriptionURLUpdate(&req.PanSearchURL, config.PanSearchURL, "盘搜 API 地址"); err != nil {
+				return err
+			}
+
+			if err := normalizeSubscriptionURLUpdate(&req.OpenAIBaseURL, config.OpenAIBaseURL, "OpenAI API 地址"); err != nil {
+				return err
+			}
+
 			applySubscriptionConfigUpdate(&config, req)
 
 			result := tx.Model(&Setting{}).
@@ -748,11 +864,13 @@ func (h *Handler) updateSubscriptionConfig(ctx context.Context, req *UpdateConfi
 			return err
 		}
 
-		if h.tmdb != nil && req.TMDBAPIKey != nil {
+		if !isNilDependency(h.tmdb) && req.TMDBAPIKey != nil {
 			h.tmdb.SetAPIKey(updatedConfig.TMDBAPIKey)
 			h.tmdbAPIKey = updatedConfig.TMDBAPIKey
 			h.logger.Info("Updated TMDB API Key from subscription config")
 		}
+
+		syncRuntimeSubscriptionConfig(h.runtimeSubscription, updatedConfig)
 
 		return nil
 	})
@@ -774,6 +892,7 @@ func (h *Handler) defaultSubscriptionConfigValue() models.SubscriptionConfig {
 	defaultConfig := h.defaultSubscriptionConfig()
 
 	return models.SubscriptionConfig{
+		Enabled:          defaultConfig.Enabled,
 		EnableTMDB:       defaultConfig.EnableTMDB,
 		EnableDouban:     defaultConfig.EnableDouban,
 		PanSearchURL:     defaultConfig.PanSearchURL,
@@ -825,10 +944,6 @@ func subscriptionConfigSupportsRowLock(db *gorm.DB) bool {
 func normalizeSubscriptionConfigUpdate(req *UpdateConfigReq) error {
 	if req.PanSearchURL != nil {
 		value := strings.TrimSpace(*req.PanSearchURL)
-		if err := validateOptionalHTTPURL("盘搜 API 地址", value); err != nil {
-			return err
-		}
-
 		*req.PanSearchURL = value
 	}
 
@@ -854,12 +969,51 @@ func normalizeSubscriptionConfigUpdate(req *UpdateConfigReq) error {
 
 	if req.OpenAIBaseURL != nil {
 		value := strings.TrimSpace(*req.OpenAIBaseURL)
-		if err := validateOptionalHTTPURL("OpenAI API 地址", value); err != nil {
-			return err
-		}
-
 		*req.OpenAIBaseURL = value
 	}
+
+	normalizeSubscriptionSecretUpdate(&req.TMDBAPIKey)
+	normalizeSubscriptionSecretUpdate(&req.OpenAIAPIKey)
+
+	return nil
+}
+
+func normalizeSubscriptionSecretUpdate(value **string) {
+	if value == nil || *value == nil {
+		return
+	}
+
+	trimmed := strings.TrimSpace(**value)
+	if trimmed == utils.RedactedSecret {
+		*value = nil
+
+		return
+	}
+
+	**value = trimmed
+}
+
+func normalizeSubscriptionURLUpdate(value **string, current string, field string) error {
+	if value == nil || *value == nil {
+		return nil
+	}
+
+	trimmed := strings.TrimSpace(**value)
+
+	if current != "" {
+		redactedCurrent := utils.RedactURLForLog(current)
+		if redactedCurrent != current && trimmed == redactedCurrent {
+			*value = nil
+
+			return nil
+		}
+	}
+
+	if err := validateOptionalHTTPURL(field, trimmed); err != nil {
+		return err
+	}
+
+	**value = trimmed
 
 	return nil
 }
@@ -886,6 +1040,10 @@ func validateOptionalHTTPURL(field string, value string) error {
 }
 
 func applySubscriptionConfigUpdate(config *models.SubscriptionConfig, req *UpdateConfigReq) {
+	if req.Enabled != nil {
+		config.Enabled = *req.Enabled
+	}
+
 	if req.EnableTMDB != nil {
 		config.EnableTMDB = *req.EnableTMDB
 	}
@@ -953,22 +1111,24 @@ func (h *Handler) checkSubscriptionSettingUpdateResultInDB(db *gorm.DB, result *
 }
 
 type SearchResult struct {
-	ShareURL   string `json:"shareUrl"`
-	ShareCode  string `json:"shareCode"`
-	Name       string `json:"name"`
-	Size       string `json:"size"`
-	UploadTime string `json:"uploadTime"`
-	Source     string `json:"source"`
-	Cover      string `json:"cover,omitempty"`
-	Note       string `json:"note,omitempty"`
+	ShareURL        string `json:"shareUrl"`
+	ShareCode       string `json:"shareCode"`
+	ShareAccessCode string `json:"shareAccessCode,omitempty"`
+	Name            string `json:"name"`
+	Size            string `json:"size"`
+	UploadTime      string `json:"uploadTime"`
+	Source          string `json:"source"`
+	Cover           string `json:"cover,omitempty"`
+	Note            string `json:"note,omitempty"`
 }
 
 type mountSubscriptionReq struct {
-	Title     string `json:"title" binding:"required"`
-	ShareURL  string `json:"shareUrl" binding:"required"`
-	ShareCode string `json:"shareCode"`
-	Cover     string `json:"cover"`
-	MountPath string `json:"mountPath"`
+	Title           string `json:"title" binding:"required"`
+	ShareURL        string `json:"shareUrl" binding:"required"`
+	ShareCode       string `json:"shareCode"`
+	ShareAccessCode string `json:"shareAccessCode"`
+	Cover           string `json:"cover"`
+	MountPath       string `json:"mountPath"`
 }
 
 type panSearchResponseV2 struct {
@@ -1028,11 +1188,11 @@ func (h *Handler) searchPanResults(c *httpcontext.Context, keyword string) ([]Se
 		return nil, err
 	}
 
-	h.logger.Info("Searching pan", zap.String("url", searchURL))
+	h.logger.Info("Searching pan", zap.String("url", utils.RedactURLForLog(searchURL)))
 
 	req, err := http.NewRequestWithContext(c.Request.Context(), "GET", searchURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("请求失败: %w", err)
+		return nil, fmt.Errorf("请求失败: %s", subscriptionSvc.RedactPanSearchError(searchURL, err))
 	}
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -1042,13 +1202,15 @@ func (h *Handler) searchPanResults(c *httpcontext.Context, keyword string) ([]Se
 
 	resp, err := h.panSearchHTTPClient().Do(req)
 	if err != nil {
-		h.logger.Error("Pan search request failed", zap.Error(err))
+		safeErr := subscriptionSvc.RedactPanSearchError(searchURL, err)
+
+		h.logger.Error("Pan search request failed", zap.String("error", safeErr))
 
 		if isPanSearchTimeoutError(err) {
 			return nil, fmt.Errorf("请求超时，请稍后重试")
 		}
 
-		return nil, fmt.Errorf("搜索服务不可用: %v", err)
+		return nil, fmt.Errorf("搜索服务不可用: %s", safeErr)
 	}
 	defer func() {
 		_ = resp.Body.Close()
@@ -1056,9 +1218,11 @@ func (h *Handler) searchPanResults(c *httpcontext.Context, keyword string) ([]Se
 
 	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxPanSearchResponseSize+1))
 	if err != nil {
-		h.logger.Error("Failed to read response body", zap.Error(err))
+		safeErr := subscriptionSvc.RedactPanSearchError(searchURL, err)
 
-		return nil, fmt.Errorf("读取响应失败: %v", err)
+		h.logger.Error("Failed to read response body", zap.String("error", safeErr))
+
+		return nil, fmt.Errorf("读取响应失败: %s", safeErr)
 	}
 
 	if len(bodyBytes) > maxPanSearchResponseSize {
@@ -1068,7 +1232,7 @@ func (h *Handler) searchPanResults(c *httpcontext.Context, keyword string) ([]Se
 	h.logger.Info("Pan search response", zap.Int("status", resp.StatusCode), zap.Int("body_len", len(bodyBytes)))
 
 	if resp.StatusCode != http.StatusOK {
-		h.logger.Warn("Pan search returned non-OK status", zap.Int("status", resp.StatusCode), zap.String("url", searchURL))
+		h.logger.Warn("Pan search returned non-OK status", zap.Int("status", resp.StatusCode), zap.String("url", utils.RedactURLForLog(searchURL)))
 
 		return nil, fmt.Errorf("搜索接口返回状态: %d，请检查盘搜 API 地址是否正确", resp.StatusCode)
 	}
@@ -1081,7 +1245,7 @@ func (h *Handler) searchPanResults(c *httpcontext.Context, keyword string) ([]Se
 	}
 
 	if result.Code != 0 {
-		return nil, fmt.Errorf("%s", result.Message)
+		return nil, fmt.Errorf("%s", subscriptionSvc.RedactPanSearchError("", errors.New(result.Message)))
 	}
 
 	return panSearchResultsFromResponse(result), nil
@@ -1093,18 +1257,23 @@ func (h *Handler) panSearchRequestURL(keyword string) (string, error) {
 		return "", fmt.Errorf("读取订阅配置失败: %w", err)
 	}
 
-	searchURL := panSearchURL
-	if !strings.Contains(panSearchURL, "/api/search") {
-		searchURL = strings.TrimRight(panSearchURL, "/") + "/api/search"
-	}
+	return buildPanSearchRequestURL(panSearchURL, keyword)
+}
 
-	return fmt.Sprintf("%s?kw=%s&cloud_types=tianyi", searchURL, url.QueryEscape(keyword)), nil
+func buildPanSearchRequestURL(panSearchURL string, keyword string) (string, error) {
+	return subscriptionSvc.BuildPanSearchRequestURL(panSearchURL, keyword)
 }
 
 func (h *Handler) panSearchHTTPClient() *http.Client {
 	client := h.httpClient
 	if client == nil {
-		client = &http.Client{Timeout: 120 * time.Second}
+		h.panSearchClientMu.Lock()
+		if h.httpClient == nil {
+			h.httpClient = &http.Client{Timeout: 120 * time.Second}
+		}
+
+		client = h.httpClient
+		h.panSearchClientMu.Unlock()
 	}
 
 	proxyURL := os.Getenv("TG_PROXY")
@@ -1114,17 +1283,45 @@ func (h *Handler) panSearchHTTPClient() *http.Client {
 
 	parsedProxyURL, err := url.Parse(proxyURL)
 	if err != nil {
-		h.logger.Warn("Invalid TG_PROXY for pan search", zap.String("proxy", proxyURL), zap.Error(err))
+		h.logger.Warn("Invalid TG_PROXY for pan search",
+			zap.String("proxy", utils.RedactURLForLog(proxyURL)),
+			zap.String("error", subscriptionSvc.RedactPanSearchError("", err)),
+		)
 
 		return client
 	}
 
-	h.logger.Info("Using proxy for pan search", zap.String("proxy", proxyURL))
+	h.panSearchClientMu.Lock()
+	defer h.panSearchClientMu.Unlock()
 
-	return &http.Client{
-		Timeout:   client.Timeout,
-		Transport: &http.Transport{Proxy: http.ProxyURL(parsedProxyURL)},
+	if h.panSearchProxyClient != nil && h.panSearchProxyBase == client && h.panSearchProxyURL == proxyURL {
+		return h.panSearchProxyClient
 	}
+
+	proxyTransport := panSearchProxyTransport(client.Transport)
+	proxyTransport.Proxy = http.ProxyURL(parsedProxyURL)
+
+	proxyClient := *client
+	proxyClient.Transport = proxyTransport
+	h.panSearchProxyBase = client
+	h.panSearchProxyURL = proxyURL
+	h.panSearchProxyClient = &proxyClient
+
+	h.logger.Info("Using proxy for pan search", zap.String("proxy", utils.RedactURLForLog(proxyURL)))
+
+	return h.panSearchProxyClient
+}
+
+func panSearchProxyTransport(base http.RoundTripper) *http.Transport {
+	if transport, ok := base.(*http.Transport); ok && transport != nil {
+		return transport.Clone()
+	}
+
+	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
+		return transport.Clone()
+	}
+
+	return &http.Transport{}
 }
 
 func panSearchResultsFromResponse(result panSearchResponseV2) []SearchResult {
@@ -1136,12 +1333,7 @@ func panSearchResultsFromResponse(result panSearchResponseV2) []SearchResult {
 	}
 
 	for _, item := range tianyiData {
-		matches := shareCodeRegex.FindStringSubmatch(item.URL)
-
-		shareCode := ""
-		if len(matches) > 1 {
-			shareCode = matches[1]
-		}
+		shareCode, shareAccessCode := parseSubscriptionShareParams(item.URL, item.Password)
 
 		cover := ""
 		if len(item.Images) > 0 {
@@ -1149,17 +1341,30 @@ func panSearchResultsFromResponse(result panSearchResponseV2) []SearchResult {
 		}
 
 		results = append(results, SearchResult{
-			ShareURL:   item.URL,
-			ShareCode:  shareCode,
-			Name:       item.Note,
-			UploadTime: item.Datetime,
-			Source:     item.Source,
-			Cover:      cover,
-			Note:       item.Note,
+			ShareURL:        item.URL,
+			ShareCode:       shareCode,
+			ShareAccessCode: shareAccessCode,
+			Name:            item.Note,
+			UploadTime:      item.Datetime,
+			Source:          item.Source,
+			Cover:           cover,
+			Note:            item.Note,
 		})
 	}
 
 	return results
+}
+
+func parseSubscriptionShareParams(value string, explicitAccessCode string) (string, string) {
+	return utils.ParseCloud189ShareCode(value, explicitAccessCode)
+}
+
+func sanitizeSubscriptionMountError(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	return utils.RedactSensitiveText(utils.RedactURLsInTextForLog(err.Error()))
 }
 
 // MountSubscription 挂载订阅资源
@@ -1184,41 +1389,33 @@ func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 			return
 		}
 
-		shareCode := req.ShareCode
-		if shareCode == "" {
-			matches := shareCodeRegex.FindStringSubmatch(req.ShareURL)
-			if len(matches) >= 2 {
-				shareCode = matches[1]
-			}
+		shareCode, shareAccessCode := parseSubscriptionShareParams(req.ShareCode, req.ShareAccessCode)
+		if !utils.IsCloud189ShareCode(shareCode) {
+			shareCode, shareAccessCode = parseSubscriptionShareParams(req.ShareURL, req.ShareAccessCode)
+		} else if shareAccessCode == "" {
+			_, shareAccessCode = parseSubscriptionShareParams(req.ShareURL, "")
 		}
 
-		if shareCode == "" {
+		if !utils.IsCloud189ShareCode(shareCode) {
 			c.Fail(invalidParams(fmt.Errorf("无法从分享链接中提取分享码")))
 
 			return
 		}
 
-		mountPath := strings.TrimSpace(req.MountPath)
-		if mountPath == "" {
-			defaultMountPath, err := h.defaultMountPathFromConfig()
-			if err != nil {
-				c.Fail(invalidParams(fmt.Errorf("读取订阅配置失败: %w", err)))
-
-				return
-			}
-
-			mountPath = strings.TrimRight(defaultMountPath, "/") + "/" + strings.TrimLeft(req.Title, "/")
-		}
-
-		if !strings.HasPrefix(mountPath, "/") {
-			c.Fail(invalidParams(fmt.Errorf("挂载路径必须以 / 开头")))
+		if shareAccessCode != "" && !utils.IsCloud189AccessCode(shareAccessCode) {
+			c.Fail(invalidParams(fmt.Errorf("访问码格式无效")))
 
 			return
 		}
 
-		if h.storageFacadeService == nil {
-			c.Fail(invalidParams(fmt.Errorf("storage service is nil, please restart the application")))
+		mountPath, err := h.resolveMountSubscriptionPath(req)
+		if err != nil {
+			c.Fail(invalidParams(err))
 
+			return
+		}
+
+		if !h.ensureStorageFacadeService(c) {
 			return
 		}
 
@@ -1237,15 +1434,13 @@ func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 			return
 		}
 
-		if h.cloudBridgeService == nil {
-			c.Fail(invalidParams(fmt.Errorf("cloud bridge service is nil, please restart the application")))
-
+		if !h.ensureCloudBridgeService(c) {
 			return
 		}
 
-		shareInfo, err := h.cloudBridgeService.GetShareInfo(ctx, shareCode, "")
+		shareInfo, err := h.cloudBridgeService.GetShareInfo(ctx, shareCode, shareAccessCode)
 		if err != nil {
-			c.Fail(invalidParams(fmt.Errorf("获取分享信息失败: %v", err)))
+			c.Fail(invalidParams(fmt.Errorf("获取分享信息失败: %s", sanitizeSubscriptionMountError(err))))
 
 			return
 		}
@@ -1255,6 +1450,7 @@ func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 			OsType:        "subscribe_share_folder",
 			CloudToken:    0,
 			FileId:        shareInfo.ID,
+			Addition:      subscriptionShareAdditionWithAccessCode(shareInfo, shareAccessCode),
 			AllowExisting: true,
 			CreatorUserID: userID,
 			IsAdmin:       isAdmin,
@@ -1262,7 +1458,8 @@ func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 
 		id, err := h.storageFacadeService.CreateStorage(ctx, storageReq)
 		if err != nil {
-			h.logger.Error("Failed to create storage", zap.Error(err), zap.String("path", mountPath))
+			safeErr := sanitizeSubscriptionMountError(err)
+			h.logger.Error("Failed to create storage", zap.String("error", safeErr), zap.String("path", mountPath))
 
 			if errors.Is(err, storagefacade.ErrExistingPathForbidden) {
 				c.Forbidden("路径已被其他用户挂载")
@@ -1270,7 +1467,7 @@ func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 				return
 			}
 
-			c.Fail(invalidParams(fmt.Errorf("创建挂载点失败: %v", err)))
+			c.Fail(invalidParams(fmt.Errorf("创建挂载点失败: %s", safeErr)))
 
 			return
 		}
@@ -1283,6 +1480,56 @@ func (h *Handler) MountSubscription() httpcontext.HandlerFunc {
 			"fileId":    id,
 			"name":      shareInfo.Name,
 		})
+	}
+}
+
+func (h *Handler) resolveMountSubscriptionPath(req mountSubscriptionReq) (string, error) {
+	mountPath := strings.TrimSpace(req.MountPath)
+	if mountPath == "" {
+		defaultMountPath, err := h.defaultMountPathFromConfig()
+		if err != nil {
+			return "", fmt.Errorf("读取订阅配置失败: %w", err)
+		}
+
+		return utils.JoinStoragePath(defaultMountPath, req.Title)
+	}
+
+	if !strings.HasPrefix(mountPath, "/") {
+		return "", fmt.Errorf("挂载路径必须以 / 开头")
+	}
+
+	normalizedPath, err := utils.NormalizeStoragePath(mountPath)
+	if err != nil {
+		return "", fmt.Errorf("挂载路径不合法: %w", err)
+	}
+
+	if len(utils.SplitNormalizedStoragePath(normalizedPath)) == 0 {
+		return "", fmt.Errorf("不允许挂载根路径")
+	}
+
+	return normalizedPath, nil
+}
+
+func subscriptionShareAdditionWithAccessCode(shareInfo *cloudbridge.ShareInfo, fallbackAccessCode string) datatypes.JSONMap {
+	if shareInfo == nil {
+		return datatypes.JSONMap{}
+	}
+
+	shareMode := shareInfo.ShareMode
+	if shareMode <= 0 {
+		shareMode = 1
+	}
+
+	accessCode := shareInfo.AccessCode
+	if accessCode == "" {
+		accessCode = fallbackAccessCode
+	}
+
+	return datatypes.JSONMap{
+		consts.FileAdditionKeyShareId:    shareInfo.ShareId,
+		consts.FileAdditionKeyIsFolder:   shareInfo.IsFolder,
+		consts.FileAdditionKeyAccessCode: accessCode,
+		consts.FileAdditionKeyShareMode:  shareMode,
 	}
 }
 
@@ -1327,7 +1574,7 @@ func (h *Handler) SearchPanWithAI() httpcontext.HandlerFunc {
 			return
 		}
 
-		if h.openaiSvc == nil {
+		if isNilDependency(h.openaiSvc) {
 			c.Success(gin.H{
 				"message":       "AI服务未配置，返回全部搜索结果",
 				"keyword":       keyword,
@@ -1339,14 +1586,14 @@ func (h *Handler) SearchPanWithAI() httpcontext.HandlerFunc {
 			return
 		}
 
-		bestKeyword, err := h.openaiSvc.GenerateUpgradeKeyword(keyword, "movie")
+		bestKeyword, err := h.generateUpgradeKeyword(c.Request.Context(), keyword, "movie")
 		if err != nil {
 			h.logger.Warn("Failed to generate AI keyword", zap.Error(err))
 
 			bestKeyword = keyword
 		}
 
-		h.logger.Info("AI recommended keyword", zap.String("keyword", bestKeyword))
+		h.logger.Info("AI recommended keyword", zap.String("keyword", utils.RedactURLForLog(bestKeyword)))
 
 		var bestResult *SearchResult
 
@@ -1404,6 +1651,14 @@ func (h *Handler) SearchPanWithAI() httpcontext.HandlerFunc {
 			"allResults":    results,
 		})
 	}
+}
+
+func (h *Handler) generateUpgradeKeyword(ctx context.Context, title string, category string) (string, error) {
+	if contextAwareSvc, ok := h.openaiSvc.(contextAwareOpenAIService); ok {
+		return contextAwareSvc.GenerateUpgradeKeywordWithContext(ctx, title, category)
+	}
+
+	return h.openaiSvc.GenerateUpgradeKeyword(title, category)
 }
 
 func isPanSearchTimeoutError(err error) bool {

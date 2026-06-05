@@ -63,6 +63,10 @@ func (h *handler) UsernameLogin() httpcontext.HandlerFunc {
 			}
 		} else if req.Username == "" || req.Password == "" {
 			// 去查询账号密码
+			if !h.ensureCloudTokenService(ctx, codeQueryFailed) {
+				return
+			}
+
 			token, err := h.cloudTokenService.QueryAccessible(ctx.GetContext(), req.ID, currentUserID, isAdmin)
 			if err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -74,7 +78,15 @@ func (h *handler) UsernameLogin() httpcontext.HandlerFunc {
 				ctx.Fail(codeQueryFailed.WithError(err))
 
 				return
-			} else if token.LoginType != models.LoginTypePassword {
+			}
+
+			if token == nil {
+				ctx.Fail(codeTokenNotFound.WithError(gorm.ErrRecordNotFound))
+
+				return
+			}
+
+			if token.LoginType != models.LoginTypePassword {
 				ctx.Fail(codeNotMatchLoginType)
 
 				return
@@ -92,6 +104,10 @@ func (h *handler) UsernameLogin() httpcontext.HandlerFunc {
 		name := "云盘令牌（账密）"
 		if req.Name != "" {
 			name = req.Name
+		}
+
+		if !h.ensureCloudTokenService(ctx, codeUsernameLoginFailed) {
+			return
 		}
 
 		resp, err := h.cloudTokenService.UsernameLogin(ctx.GetContext(), &cloudtoken.UsernameLoginRequest{

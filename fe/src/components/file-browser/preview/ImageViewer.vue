@@ -38,49 +38,82 @@
 
       <!-- 工具栏 -->
       <div class="toolbar">
-        <n-space justify="center" size="small">
+        <n-space class="toolbar-content" justify="center" size="small">
           <n-button-group>
-            <n-button size="small" @click="zoomOut" :disabled="scale <= 0.1">
-              <template #icon>
-                <n-icon :component="RemoveOutline" />
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button size="small" aria-label="缩小" @click="zoomOut" :disabled="scale <= 0.1">
+                  <template #icon>
+                    <n-icon :component="RemoveOutline" />
+                  </template>
+                </n-button>
               </template>
-            </n-button>
-            <n-button size="small" @click="resetZoom"> {{ Math.round(scale * 100) }}% </n-button>
-            <n-button size="small" @click="zoomIn" :disabled="scale >= 5">
-              <template #icon>
-                <n-icon :component="AddOutline" />
+              缩小
+            </n-tooltip>
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button size="small" aria-label="重置缩放" @click="resetZoom">
+                  {{ Math.round(scale * 100) }}%
+                </n-button>
               </template>
-            </n-button>
+              重置缩放
+            </n-tooltip>
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button size="small" aria-label="放大" @click="zoomIn" :disabled="scale >= 5">
+                  <template #icon>
+                    <n-icon :component="AddOutline" />
+                  </template>
+                </n-button>
+              </template>
+              放大
+            </n-tooltip>
           </n-button-group>
 
           <n-button-group>
-            <n-button size="small" @click="rotateLeft">
-              <template #icon>
-                <n-icon :component="RefreshOutline" />
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button size="small" aria-label="左转" @click="rotateLeft">
+                  <template #icon>
+                    <n-icon class="rotate-left-icon" :component="RefreshOutline" />
+                  </template>
+                </n-button>
               </template>
               左转
-            </n-button>
-            <n-button size="small" @click="rotateRight">
-              <template #icon>
-                <n-icon :component="RefreshOutline" />
+            </n-tooltip>
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button size="small" aria-label="右转" @click="rotateRight">
+                  <template #icon>
+                    <n-icon :component="RefreshOutline" />
+                  </template>
+                </n-button>
               </template>
               右转
-            </n-button>
+            </n-tooltip>
           </n-button-group>
 
-          <n-button size="small" @click="toggleFullscreen">
-            <template #icon>
-              <n-icon :component="ExpandOutline" />
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button size="small" aria-label="全屏" @click="toggleFullscreen">
+                <template #icon>
+                  <n-icon :component="ExpandOutline" />
+                </template>
+              </n-button>
             </template>
             全屏
-          </n-button>
+          </n-tooltip>
 
-          <n-button size="small" @click="downloadImage">
-            <template #icon>
-              <n-icon :component="DownloadOutline" />
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button size="small" aria-label="下载" @click="downloadImage">
+                <template #icon>
+                  <n-icon :component="DownloadOutline" />
+                </template>
+              </n-button>
             </template>
             下载
-          </n-button>
+          </n-tooltip>
         </n-space>
       </div>
     </div>
@@ -89,7 +122,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { NIcon, NSpin, NButton, NButtonGroup, NSpace, useMessage } from 'naive-ui'
+import { NIcon, NSpin, NButton, NButtonGroup, NSpace, NTooltip, useMessage } from 'naive-ui'
 import {
   ImageOutline,
   RemoveOutline,
@@ -237,13 +270,26 @@ const rotateRight = () => {
 }
 
 const toggleFullscreen = () => {
+  const handleFullscreenError = (error: unknown, fallback: string) => {
+    const resolvedErrorMessage = getErrorMessage(error, fallback)
+
+    console.error('fullscreen error:', resolvedErrorMessage)
+    message.error(resolvedErrorMessage)
+  }
+
   if (document.fullscreenElement) {
-    document.exitFullscreen()
-  } else {
-    const container = imageRef.value?.closest('.image-viewer-container') as HTMLElement
-    if (container) {
-      container.requestFullscreen()
-    }
+    document
+      .exitFullscreen()
+      .catch((error: unknown) => handleFullscreenError(error, '退出全屏失败'))
+
+    return
+  }
+
+  const container = imageRef.value?.closest('.image-viewer-container') as HTMLElement | null
+  if (container) {
+    container
+      .requestFullscreen()
+      .catch((error: unknown) => handleFullscreenError(error, '进入全屏失败'))
   }
 }
 
@@ -380,10 +426,12 @@ const initSource = () => {
         return
       }
 
-      console.error('createDownloadUrl error:', e)
+      const resolvedErrorMessage = getErrorMessage(e, '获取图片链接失败')
+
+      console.error('createDownloadUrl error:', resolvedErrorMessage)
       error.value = true
       loading.value = false
-      errorMessage.value = getErrorMessage(e, '获取图片链接失败')
+      errorMessage.value = resolvedErrorMessage
       message.error(errorMessage.value)
     })
     .finally(() => {
@@ -498,6 +546,14 @@ watch(
   border-top: 1px solid var(--n-border-color);
 }
 
+.toolbar-content {
+  max-width: 100%;
+}
+
+.rotate-left-icon {
+  transform: scaleX(-1);
+}
+
 /* 全屏样式 */
 .image-viewer-container:fullscreen {
   background: #000;
@@ -523,11 +579,6 @@ watch(
 @media (width <= 768px) {
   .image-display {
     height: 50vh;
-  }
-
-  .toolbar .n-space {
-    flex-direction: column;
-    gap: 8px;
   }
 }
 

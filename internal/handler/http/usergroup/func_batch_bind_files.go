@@ -36,7 +36,12 @@ func (h *handler) BatchBindFiles() httpcontext.HandlerFunc {
 			return
 		}
 
-		if _, err := h.userGroupService.Query(ctx.GetContext(), req.GroupID); err != nil {
+		if !h.ensureUserGroupService(ctx, codeBatchBindFilesFailed) {
+			return
+		}
+
+		group, err := h.userGroupService.Query(ctx.GetContext(), req.GroupID)
+		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				ctx.Fail(codeUserGroupNotFound.WithError(err))
 
@@ -45,6 +50,16 @@ func (h *handler) BatchBindFiles() httpcontext.HandlerFunc {
 
 			ctx.Fail(codeBatchBindFilesFailed.WithError(err))
 
+			return
+		}
+
+		if group == nil {
+			ctx.Fail(codeUserGroupNotFound.WithError(gorm.ErrRecordNotFound))
+
+			return
+		}
+
+		if !h.ensureGroup2FileService(ctx, codeBatchBindFilesFailed) {
 			return
 		}
 

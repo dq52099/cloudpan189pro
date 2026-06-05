@@ -35,6 +35,10 @@ func (h *handler) Del() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureUserService(ctx, codeDelUserFailed) {
+			return
+		}
+
 		if err := h.userService.Del(ctx.GetContext(), req); err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				ctx.Fail(codeUserResourceMissing.WithError(err))

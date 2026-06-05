@@ -44,6 +44,10 @@ func (h *handler) ModifyOwnPass() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureUserService(ctx, codeModifyPassFailed) {
+			return
+		}
+
 		// 查询用户信息进行密码验证
 		user, err := h.userService.Query(ctx.GetContext(), uid)
 		if err != nil {
@@ -54,6 +58,12 @@ func (h *handler) ModifyOwnPass() httpcontext.HandlerFunc {
 			}
 
 			ctx.Fail(codeModifyPassFailed.WithError(err))
+
+			return
+		}
+
+		if user == nil {
+			ctx.Fail(codeUserResourceMissing.WithError(gorm.ErrRecordNotFound))
 
 			return
 		}

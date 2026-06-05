@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -20,8 +21,11 @@ import (
 
 type mockConfigUpdateMediaConfigService struct {
 	mediaconfigSvc.Service
-	fields []utils.Field
-	err    error
+	fields      []utils.Field
+	err         error
+	queryConfig *models.MediaConfig
+	queryErr    error
+	queryCalls  int
 }
 
 func (m *mockConfigUpdateMediaConfigService) Update(ctx appContext.Context, fields ...utils.Field) error {
@@ -35,7 +39,9 @@ func (m *mockConfigUpdateMediaConfigService) Update(ctx appContext.Context, fiel
 }
 
 func (m *mockConfigUpdateMediaConfigService) Query(ctx appContext.Context) (*models.MediaConfig, error) {
-	return nil, nil
+	m.queryCalls++
+
+	return m.queryConfig, m.queryErr
 }
 
 func TestConfigUpdatePassesAutoRebuildCron(t *testing.T) {
@@ -173,5 +179,142 @@ func TestConfigUpdateReturnsNotFoundWhenConfigMissing(t *testing.T) {
 
 	if response.Code != codeConfigNotInit.GetCode() {
 		t.Fatalf("expected business code %d, got %d", codeConfigNotInit.GetCode(), response.Code)
+	}
+}
+
+func TestConfigUpdatePreservesBaseURLWhenRedactedPlaceholderSubmitted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rawBaseURL := "https://media-user:media-pass@example.test/strm?access_token=secret-token#session=secret-session"
+	service := &mockConfigUpdateMediaConfigService{
+		queryConfig: &models.MediaConfig{
+			ID:      1,
+			BaseURL: rawBaseURL,
+		},
+	}
+	router := gin.New()
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/config/update", wrapper.Wrap(NewHandler(service, nil, nil, nil, nil, nil, nil).ConfigUpdate()))
+
+	body := `{"baseURL":` + strconv.Quote(utils.RedactURLForLog(rawBaseURL)) + `,"autoClean":true}`
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/config/update",
+		strings.NewReader(body),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected success, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	fields := make(map[string]any, len(service.fields))
+	for _, field := range service.fields {
+		fields[field.Key] = field.Value
+	}
+
+	if service.queryCalls != 1 {
+		t.Fatalf("expected current config to be queried once, got %d", service.queryCalls)
+	}
+
+	if _, ok := fields["base_url"]; ok {
+		t.Fatalf("expected redacted baseURL placeholder not to be persisted, got %#v", fields["base_url"])
+	}
+
+	if fields["auto_clean"] != true {
+		t.Fatalf("expected other update fields to be preserved, got %#v", fields)
+	}
+}
+
+func TestConfigUpdateRejectsInvalidBaseURLBeforeUpdate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name    string
+		baseURL string
+	}{
+		{name: "blank", baseURL: "   "},
+		{name: "relative", baseURL: "/media"},
+		{name: "unsupported scheme", baseURL: "mailto:media@example.test"},
+		{name: "missing host", baseURL: "https:///media"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := &mockConfigUpdateMediaConfigService{
+				queryConfig: &models.MediaConfig{
+					ID:      1,
+					BaseURL: "https://old.example.test",
+				},
+			}
+			router := gin.New()
+			wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+			router.POST("/config/update", wrapper.Wrap(NewHandler(service, nil, nil, nil, nil, nil, nil).ConfigUpdate()))
+
+			body := `{"baseURL":` + strconv.Quote(tt.baseURL) + `}`
+			req := httptest.NewRequestWithContext(
+				stdctx.Background(),
+				http.MethodPost,
+				"/config/update",
+				strings.NewReader(body),
+			)
+			req.Header.Set("Content-Type", "application/json")
+
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, req)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+			}
+
+			if service.queryCalls != 1 {
+				t.Fatalf("expected current config to be queried once, got %d", service.queryCalls)
+			}
+
+			if len(service.fields) != 0 {
+				t.Fatalf("expected invalid baseURL not to update config, got %#v", service.fields)
+			}
+		})
+	}
+}
+
+func TestConfigUpdateTrimsBaseURL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	service := &mockConfigUpdateMediaConfigService{
+		queryConfig: &models.MediaConfig{
+			ID:      1,
+			BaseURL: "https://old.example.test",
+		},
+	}
+	router := gin.New()
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/config/update", wrapper.Wrap(NewHandler(service, nil, nil, nil, nil, nil, nil).ConfigUpdate()))
+
+	req := httptest.NewRequestWithContext(
+		stdctx.Background(),
+		http.MethodPost,
+		"/config/update",
+		strings.NewReader(`{"baseURL":" https://new.example.test/media "}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected success, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if len(service.fields) != 1 {
+		t.Fatalf("expected one update field, got %#v", service.fields)
+	}
+
+	if service.fields[0].Key != "base_url" || service.fields[0].Value != "https://new.example.test/media" {
+		t.Fatalf("expected trimmed base_url update, got %#v", service.fields[0])
 	}
 }

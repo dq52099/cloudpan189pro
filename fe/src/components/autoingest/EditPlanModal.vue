@@ -363,8 +363,10 @@ const handleSubmit = () => {
           return
         }
 
-        console.error('修改失败', err)
-        message.error(getErrorMessage(err, '修改失败'))
+        const errorMessage = getErrorMessage(err, '修改失败')
+
+        console.error('修改失败', errorMessage)
+        message.error(errorMessage)
       })
       .finally(() => {
         if (isCurrentSubmitRequest(currentRequestId, currentOperation)) {

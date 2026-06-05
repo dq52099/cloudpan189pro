@@ -33,6 +33,10 @@ func (h *handler) ConfigToggle() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureMediaConfigService(ctx, codeConfigToggleFailed) {
+			return
+		}
+
 		if err := h.mediaConfigService.Toggle(ctx.GetContext(), *req.Enable); err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				ctx.Fail(codeConfigNotInit.WithError(err))

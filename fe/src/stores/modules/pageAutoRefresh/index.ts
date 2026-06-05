@@ -7,18 +7,43 @@ const DEFAULT_SETTINGS: StorageType.PageAutoRefreshSetting = {
   autoRefreshEnabled: true, // 默认开启
   refreshInterval: 30, // 默认30秒
 }
+const REFRESH_INTERVAL_VALUES = [30, 60, 180, 300, 600] as const
+
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return typeof value === 'object' && value !== null
+}
+
+const isRefreshInterval = (value: unknown): value is number => {
+  return (
+    typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    (REFRESH_INTERVAL_VALUES as readonly number[]).includes(value)
+  )
+}
+
+const normalizeSettings = (
+  value: unknown,
+  fallback: StorageType.PageAutoRefreshSetting = DEFAULT_SETTINGS
+): StorageType.PageAutoRefreshSetting => {
+  if (!isRecord(value)) {
+    return { ...fallback }
+  }
+
+  return {
+    autoRefreshEnabled:
+      typeof value.autoRefreshEnabled === 'boolean'
+        ? value.autoRefreshEnabled
+        : fallback.autoRefreshEnabled,
+    refreshInterval: isRefreshInterval(value.refreshInterval)
+      ? value.refreshInterval
+      : fallback.refreshInterval,
+  }
+}
 
 export const usePageAutoRefreshStore = defineStore('pageAutoRefresh', () => {
   // 从localStg读取设置
   const loadSettings = (): StorageType.PageAutoRefreshSetting => {
-    const saved = localStg.get('pageAutoRefreshSetting')
-    if (saved) {
-      return {
-        autoRefreshEnabled: saved.autoRefreshEnabled ?? DEFAULT_SETTINGS.autoRefreshEnabled,
-        refreshInterval: saved.refreshInterval ?? DEFAULT_SETTINGS.refreshInterval,
-      }
-    }
-    return { ...DEFAULT_SETTINGS }
+    return normalizeSettings(localStg.get('pageAutoRefreshSetting'))
   }
 
   // 保存设置到localStg
@@ -35,15 +60,19 @@ export const usePageAutoRefreshStore = defineStore('pageAutoRefresh', () => {
     const settings = loadSettings()
     autoRefreshEnabled.value = settings.autoRefreshEnabled
     refreshInterval.value = settings.refreshInterval
+    saveSettings(settings)
   }
 
   // 更新设置
   const updateSettings = (settings: Partial<StorageType.PageAutoRefreshSetting>) => {
+    const currentSettings = getCurrentSettings()
+    const nextSettings = normalizeSettings({ ...currentSettings, ...settings }, currentSettings)
+
     if (settings.autoRefreshEnabled !== undefined) {
-      autoRefreshEnabled.value = settings.autoRefreshEnabled
+      autoRefreshEnabled.value = nextSettings.autoRefreshEnabled
     }
     if (settings.refreshInterval !== undefined) {
-      refreshInterval.value = settings.refreshInterval
+      refreshInterval.value = nextSettings.refreshInterval
     }
   }
 

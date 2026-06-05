@@ -5,12 +5,12 @@
       <div v-if="currentStep === 1" class="step-content">
         <div class="step-header">
           <n-text strong>第一步：输入订阅号ID</n-text>
-          <n-text depth="3">请输入要挂载的天翼云盘订阅号ID</n-text>
+          <n-text depth="3">请输入要挂载的天翼云盘订阅号ID或链接</n-text>
         </div>
         <div class="input-section">
           <n-input
             v-model:value="subscribeUserId"
-            placeholder="请输入订阅号ID"
+            placeholder="请输入订阅号ID或订阅号链接"
             clearable
             size="large"
             :disabled="searchLoading"
@@ -43,7 +43,7 @@
           <div class="user-info-line">
             <n-text depth="3">用户：{{ resourceState.userInfo?.name || subscribeUserId }}</n-text>
             <n-text v-if="hasSelectedResources" type="primary" class="selected-count">
-              <n-icon :size="14" color="#2196f3" style="vertical-align: middle; margin-right: 4px">
+              <n-icon :size="14" color="#2196f3" class="selected-count-icon">
                 <CheckmarkCircleOutline />
               </n-icon>
               已选中 {{ resourceState.selected.length }} 个文件
@@ -60,7 +60,7 @@
               clearable
               :disabled="resourceState.loading || resourceState.loadingAll"
               @keyup.enter="handleSearchResource"
-              style="width: 200px"
+              class="resource-search-input"
             >
               <template #prefix
                 ><n-icon :size="16"><SearchOutline /></n-icon
@@ -70,13 +70,11 @@
               type="primary"
               :disabled="resourceState.loading || resourceState.loadingAll"
               @click="handleSearchResource"
-              style="margin-left: 8px"
               >搜索</n-button
             >
             <n-button
               :disabled="resourceState.loading || resourceState.loadingAll"
               @click="handleResetResourceSearch"
-              style="margin-left: 8px"
               >重置</n-button
             >
           </div>
@@ -183,6 +181,8 @@ import {
 import type { ShareResourceInfo } from '@/api/storage/advance'
 import { formatDateTime } from '@/utils/time'
 import { OS_TYPES } from '@/utils/osType'
+import { normalizeCloud189SubscribeUserInput } from '@/utils/subscribeUser'
+import { isCloud189AccessCode, parseCloud189ShareCode } from '@/utils/shareCode'
 import { useMountPointBind } from '@/composables/useMountPointBind'
 import { useSubscribeResource } from '@/composables/useSubscribeResource'
 
@@ -209,7 +209,10 @@ const currentStep = ref(1)
 const subscribeUserId = ref('')
 const searchLoading = ref(false)
 const bindLoading = ref(false)
-const isValidSubscribeUserId = computed(() => subscribeUserId.value.trim().length > 0)
+const normalizedSubscribeUserId = computed(() =>
+  normalizeCloud189SubscribeUserInput(subscribeUserId.value)
+)
+const isValidSubscribeUserId = computed(() => normalizedSubscribeUserId.value.length > 0)
 let operationVersion = 0
 let isComponentMounted = false
 
@@ -364,11 +367,13 @@ const handleSearchUser = async () => {
     return
   }
 
-  if (!isValidSubscribeUserId.value) {
+  const subscribeUser = normalizedSubscribeUserId.value
+  if (!subscribeUser) {
     message.warning('请输入订阅用户ID')
     return
   }
 
+  subscribeUserId.value = subscribeUser
   operationVersion++
   const currentOperation = operationVersion
 
@@ -419,8 +424,9 @@ const handleConfirm = () => {
   const itemsToMount = resourceState.selected.map((resource) => ({
     name: resource.name,
     osType: OS_TYPES.SUBSCRIBE_SHARE_FOLDER,
+    cloudToken: 0,
     subscribeUser: subscribeUserId.value.trim(),
-    shareCode: resource.accessCode,
+    ...resolveResourceShareParams(resource),
     fileId: resource.id,
     userName: userName,
   }))
@@ -440,6 +446,23 @@ const handleConfirm = () => {
         bindLoading.value = false
       }
     })
+}
+
+const resolveResourceShareParams = (resource: ShareResourceInfo) => {
+  const shareSource = resource.shareUrl || resource.accessCode || ''
+  const parsed = parseCloud189ShareCode(shareSource)
+  const legacyAccessCode = (resource.accessCode || '').trim()
+  const accessCode =
+    legacyAccessCode &&
+    legacyAccessCode !== parsed.shareCode &&
+    isCloud189AccessCode(legacyAccessCode)
+      ? legacyAccessCode
+      : parsed.accessCode
+
+  return {
+    shareCode: parsed.shareCode || shareSource,
+    shareAccessCode: accessCode || undefined,
+  }
 }
 
 // 挂载成功回调
@@ -472,8 +495,10 @@ onUnmounted(() => {
 
 <style scoped>
 .subscribe-mount-container {
-  min-width: 800px;
-  width: 100%;
+  box-sizing: border-box;
+  width: min(800px, 100%);
+  max-width: 100%;
+  min-width: 0;
 }
 
 .subscribe-mount-content {
@@ -507,11 +532,17 @@ onUnmounted(() => {
 .selected-count {
   display: flex;
   align-items: center;
+  gap: 4px;
   font-size: 14px;
   line-height: 1;
 }
 
+.selected-count-icon {
+  flex-shrink: 0;
+}
+
 .input-section {
+  width: min(400px, 100%);
   max-width: 400px;
   margin: 0 auto;
 }
@@ -539,11 +570,17 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.resource-search-input {
+  width: min(220px, 100%);
 }
 
 .table-container {
   max-height: 400px;
-  overflow-y: auto;
+  overflow: auto;
   border: 1px solid var(--n-border-color);
   border-radius: 6px;
 }
@@ -574,6 +611,8 @@ onUnmounted(() => {
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--n-border-color);
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .modal-actions {
@@ -586,16 +625,33 @@ onUnmounted(() => {
 
 @media (width <= 768px) {
   .search-section {
+    align-items: stretch;
     flex-direction: column;
     gap: 8px;
+    width: 100%;
   }
 
-  .search-section .n-input {
+  .resource-search-input,
+  .search-section :deep(.n-button),
+  .batch-select-actions,
+  .batch-select-actions :deep(.n-button) {
     width: 100%;
+  }
+
+  .batch-select-actions {
+    align-items: stretch;
+  }
+
+  .pagination-section {
+    justify-content: flex-start;
   }
 
   .modal-actions {
     flex-direction: column;
+  }
+
+  .modal-actions :deep(.n-button) {
+    width: 100%;
   }
 }
 </style>

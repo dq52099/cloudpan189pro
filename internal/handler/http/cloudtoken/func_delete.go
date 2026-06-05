@@ -39,6 +39,10 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 		req.UserID = ctx.GetInt64(consts.CtxKeyUserId)
 		req.IsAdmin = ctx.GetBool(consts.CtxKeyIsAdmin)
 
+		if !h.ensureMountPointService(ctx, codeQueryFailed) {
+			return
+		}
+
 		if count, err := h.mountPointService.Count(ctx.GetContext(), &mountPointSvi.ListRequest{
 			TokenId: &req.ID,
 			UserID:  req.UserID,
@@ -53,7 +57,7 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 			return
 		}
 
-		if !req.IsAdmin && h.userMountPointTokenService != nil {
+		if !req.IsAdmin && h.hasUserMountPointTokenService() {
 			count, err := h.userMountPointTokenService.CountByToken(ctx.GetContext(), req.UserID, req.ID)
 			if err != nil {
 				ctx.Fail(codeQueryFailed.WithError(err))
@@ -66,6 +70,10 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 
 				return
 			}
+		}
+
+		if !h.ensureCloudTokenService(ctx, codeDeleteFailed) {
+			return
 		}
 
 		if err := h.cloudTokenService.Delete(ctx.GetContext(), req); err != nil {

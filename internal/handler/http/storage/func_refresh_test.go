@@ -157,6 +157,58 @@ func TestRefreshAllowsMountPointOwner(t *testing.T) {
 	}
 }
 
+func TestRefreshReturnsFailureWhenTaskEngineMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mountPointService := &mockBatchDeleteMountPointService{
+		mountPoints: map[int64]*models.MountPoint{
+			11: {FileId: 11, FullPath: "/mine", CreatorUserID: 100},
+		},
+	}
+
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set(consts.CtxKeyUserId, int64(100))
+		ctx.Set(consts.CtxKeyIsAdmin, false)
+	})
+
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.POST("/refresh", wrapper.Wrap(NewHandler(
+		nil,
+		nil,
+		nil,
+		nil,
+		mountPointService,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	).Refresh()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/refresh", strings.NewReader(`{"id":11}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Code int `json:"code"`
+	}
+
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Code != busCodeStorageAddTaskFailed.GetCode() {
+		t.Fatalf("expected add task business code %d, got %d", busCodeStorageAddTaskFailed.GetCode(), response.Code)
+	}
+}
+
 func TestRefreshQueuesMountPointFileID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

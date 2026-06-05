@@ -64,6 +64,8 @@ var (
 	busCodeStorageTimeFormatErr            = bi.Next("时间格式错误")
 	busCodeStorageQueryFileCountError      = bi.Next("查询文件数量失败")
 	busCodeStorageModifyTokenFailed        = bi.Next("修改令牌失败")
+	busCodeStorageShareCodeInvalid         = bi.Next("分享码格式无效")
+	busCodeStorageShareAccessCodeInvalid   = bi.Next("访问码格式无效")
 )
 
 const (

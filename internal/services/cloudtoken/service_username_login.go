@@ -2,15 +2,20 @@ package cloudtoken
 
 import (
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
 
 	"github.com/tickstep/cloudpan189-api/cloudpan"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"go.uber.org/zap"
 )
+
+var cloudTokenLogURLPattern = regexp.MustCompile(`(?i)(?:[a-z][a-z0-9+.-]*://|/)[^\s"'<>]+`)
 
 var appLogin = func(username, password string) (*cloudpan.AppLoginToken, error) {
 	token, err := cloudpan.AppLogin(username, password)
@@ -19,6 +24,38 @@ var appLogin = func(username, password string) (*cloudpan.AppLoginToken, error) 
 	}
 
 	return token, nil
+}
+
+func sanitizeCloudTokenLogText(text string) string {
+	if text == "" {
+		return ""
+	}
+
+	text = cloudTokenLogURLPattern.ReplaceAllStringFunc(text, utils.RedactURLForLog)
+
+	return utils.RedactSensitiveText(text)
+}
+
+func sanitizeCloudTokenLogError(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	return sanitizeCloudTokenLogText(err.Error())
+}
+
+func sanitizeCloudTokenLoginFailure(err error, username string, password string) string {
+	message := sanitizeCloudTokenLogError(err)
+
+	for _, value := range []string{strings.TrimSpace(username), strings.TrimSpace(password)} {
+		if value == "" {
+			continue
+		}
+
+		message = strings.ReplaceAll(message, value, utils.RedactedSecret)
+	}
+
+	return message
 }
 
 // UsernameLoginRequest 用户名登录请求
@@ -56,9 +93,13 @@ func (s *service) UsernameLogin(ctx context.Context, req *UsernameLoginRequest) 
 
 		loginResult, loginErr := appLogin(req.Username, req.Password)
 		if loginErr != nil {
-			ctx.Error("用户名密码登录失败", zap.Error(loginErr), zap.String("username", req.Username))
+			safeErr := sanitizeCloudTokenLoginFailure(loginErr, req.Username, req.Password)
+			ctx.Error("用户名密码登录失败",
+				zap.String("error", safeErr),
+				zap.String("username", utils.MaskSecret(req.Username)),
+			)
 
-			return nil, errors.Wrap(loginErr, "登录失败")
+			return nil, fmt.Errorf("登录失败: %s", safeErr)
 		}
 
 		addition := oldToken.Addition
@@ -66,8 +107,10 @@ func (s *service) UsernameLogin(ctx context.Context, req *UsernameLoginRequest) 
 			addition = make(map[string]interface{})
 		}
 
-		addition[models.CloudTokenAdditionAutoLoginResultKey] = fmt.Sprintf("%s, token 刷新成功", time.Now().Format(time.DateTime))
+		now := time.Now()
+		addition[models.CloudTokenAdditionAutoLoginResultKey] = fmt.Sprintf("%s, token 刷新成功", now.Format(time.DateTime))
 		addition[models.CloudTokenAdditionAutoLoginTimes] = 0
+		addition[models.CloudTokenAdditionTokenIssuedAt] = now.UnixMilli()
 
 		updateMap := map[string]interface{}{
 			"access_token": loginResult.SskAccessToken,
@@ -104,9 +147,13 @@ func (s *service) UsernameLogin(ctx context.Context, req *UsernameLoginRequest) 
 
 	loginResult, loginErr := appLogin(req.Username, req.Password)
 	if loginErr != nil {
-		ctx.Error("用户名密码登录失败", zap.Error(loginErr), zap.String("username", req.Username))
+		safeErr := sanitizeCloudTokenLoginFailure(loginErr, req.Username, req.Password)
+		ctx.Error("用户名密码登录失败",
+			zap.String("error", safeErr),
+			zap.String("username", utils.MaskSecret(req.Username)),
+		)
 
-		return nil, errors.Wrap(loginErr, "登录失败")
+		return nil, fmt.Errorf("登录失败: %s", safeErr)
 	}
 
 	m := &models.CloudToken{
@@ -117,8 +164,10 @@ func (s *service) UsernameLogin(ctx context.Context, req *UsernameLoginRequest) 
 		Username:    req.Username,
 		Password:    req.Password,
 		LoginType:   models.LoginTypePassword,
-		Addition:    map[string]interface{}{},
-		UserID:      req.UserID,
+		Addition: map[string]interface{}{
+			models.CloudTokenAdditionTokenIssuedAt: time.Now().UnixMilli(),
+		},
+		UserID: req.UserID,
 	}
 
 	if err = s.getDB(ctx).Create(m).Error; err != nil {

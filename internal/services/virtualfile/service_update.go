@@ -1,6 +1,8 @@
 package virtualfile
 
 import (
+	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
@@ -56,15 +58,26 @@ func (s *service) ModifyAddition(ctx context.Context, id int64, key string, valu
 	}
 
 	result := s.withLock(ctx, func(db *gorm.DB) *gorm.DB {
-		path := "$." + key
+		path := jsonObjectPath(key)
 
 		var expr interface{}
 
 		switch db.Name() {
 		case "postgres":
-			expr = gorm.Expr("jsonb_set(addition, ?, ?::jsonb)", path, value)
+			valueJSON, err := json.Marshal(value)
+			if err != nil {
+				_ = db.AddError(err)
+
+				return db
+			}
+
+			expr = gorm.Expr(
+				"jsonb_set(COALESCE(addition, '{}'::jsonb), ?::text[], ?::jsonb, true)",
+				postgresJSONBPath(key),
+				string(valueJSON),
+			)
 		default:
-			expr = gorm.Expr("JSON_SET(addition, ?, ?)", path, value)
+			expr = gorm.Expr("JSON_SET(COALESCE(addition, '{}'), ?, ?)", path, value)
 		}
 
 		return db.Where("id = ?", id).Update("addition", expr)
@@ -78,6 +91,18 @@ func (s *service) ModifyAddition(ctx context.Context, id int64, key string, valu
 	}
 
 	return nil
+}
+
+func jsonObjectPath(key string) string {
+	escapedKey := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(key)
+
+	return `$."` + escapedKey + `"`
+}
+
+func postgresJSONBPath(key string) string {
+	escapedKey := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(key)
+
+	return `{"` + escapedKey + `"}`
 }
 
 func (s *service) BatchUpdatePlus(ctx context.Context, values []utils.Field, exps []clause.Expression) error {

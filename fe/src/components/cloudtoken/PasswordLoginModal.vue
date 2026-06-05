@@ -319,10 +319,12 @@ const performLogin = (currentOperation: number) => {
         return
       }
 
-      console.error('密码登录失败:', error)
-      statusMessage.value = getErrorMessage(error, '登录失败，请检查网络连接或稍后重试')
+      const errorMessage = getErrorMessage(error, '登录失败，请检查网络连接或稍后重试')
+
+      console.error('密码登录失败:', errorMessage)
+      statusMessage.value = errorMessage
       statusType.value = 'error'
-      message.error(getErrorMessage(error, '登录失败'))
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isCurrentOperation(currentOperation)) {

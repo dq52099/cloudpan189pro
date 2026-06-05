@@ -137,6 +137,7 @@ import {
 } from '@vicons/ionicons5'
 import {
   openFile,
+  normalizeFilePath,
   createDownloadUrl,
   batchDeleteFiles, // 引入批量删除API
   type FileChild,
@@ -169,6 +170,7 @@ const pendingDeleteRowKeys = ref<number[]>([])
 let isComponentMounted = true
 let fileOpenRequestId = 0
 const openApiBasePath = '/api/file/open'
+const activeDownloadIds = new Set<number>()
 
 // 计算属性
 const canGoBack = computed(() => breadcrumbs.value.length > 0)
@@ -331,29 +333,39 @@ const prunePendingDeleteRows = (children: FileChild[]) => {
   pendingDeleteRowKeys.value = pendingDeleteRowKeys.value.filter((id) => visibleIds.has(id))
 }
 
+const markFileDownloading = (fileId: number) => {
+  activeDownloadIds.add(fileId)
+  downloadingRowKeys.value = [...new Set([...downloadingRowKeys.value, fileId])]
+}
+
+const unmarkFileDownloading = (fileId: number) => {
+  activeDownloadIds.delete(fileId)
+  downloadingRowKeys.value = downloadingRowKeys.value.filter((id) => id !== fileId)
+}
+
 const loadPath = (path: string) => {
   if (!isComponentMounted) {
     return Promise.resolve()
   }
 
+  const normalizedPath = normalizeFilePath(path)
   const requestId = ++fileOpenRequestId
   loading.value = true
-  currentPath.value = path
+  currentPath.value = normalizedPath
   fileInfo.value = null
   breadcrumbs.value = []
   loadError.value = ''
   // 切换路径时清空选中状态
   selectedRowKeys.value = []
-  downloadingRowKeys.value = []
 
-  return openFile(path)
+  return openFile(normalizedPath)
     .then((response) => {
       if (!isCurrentFileOpenRequest(requestId)) return
 
       if (response.code === 200) {
         const openedFile = normalizeFileOpenResponse(response.data)
         if (!openedFile) {
-          console.error('文件打开响应数据格式异常:', response.data)
+          console.error('文件打开响应数据格式异常')
           loadError.value = '响应数据格式异常'
           message.error(loadError.value)
 
@@ -371,8 +383,10 @@ const loadPath = (path: string) => {
     .catch((error) => {
       if (!isCurrentFileOpenRequest(requestId)) return
 
-      console.error('加载文件失败:', error)
-      loadError.value = getErrorMessage(error, '加载文件失败')
+      const errorMessage = getErrorMessage(error, '加载文件失败')
+
+      console.error('加载文件失败:', errorMessage)
+      loadError.value = errorMessage
       message.error(loadError.value)
     })
     .finally(() => {
@@ -389,7 +403,7 @@ const handleFileClick = (file: FileChild) => {
 const navigateToPath = (path: string) => {
   router.push({
     path: '/',
-    query: { path: path },
+    query: { path: normalizeFilePath(path) },
   })
 }
 
@@ -397,10 +411,38 @@ const decodeOpenHref = (href: string) => {
   const path = href.startsWith(openApiBasePath) ? href.slice(openApiBasePath.length) : href
 
   try {
-    return decodeURIComponent(path || '/')
+    return normalizeFilePath(decodeURIComponent(path || '/'))
   } catch {
-    return path || '/'
+    return normalizeFilePath(path || '/')
   }
+}
+
+const getRouteParamPathValue = (pathParam: unknown) => {
+  if (Array.isArray(pathParam)) {
+    return pathParam
+      .filter((item): item is string => typeof item === 'string' && item.length > 0)
+      .join('/')
+  }
+
+  return typeof pathParam === 'string' ? pathParam : ''
+}
+
+const getRoutePathValue = (pathQuery: unknown, pathParam: unknown) => {
+  if (typeof pathQuery === 'string' && pathQuery) {
+    return pathQuery
+  }
+
+  const paramPath = getRouteParamPathValue(pathParam)
+
+  return paramPath || '/'
+}
+
+const shouldReplaceRoutePath = (pathQuery: unknown, normalizedPath: string) => {
+  if (pathQuery === undefined) {
+    return false
+  }
+
+  return pathQuery !== normalizedPath
 }
 
 const refreshCurrentPath = () => {
@@ -461,8 +503,10 @@ const handleBatchDelete = () => {
         .catch((err) => {
           if (!isComponentMounted) return
 
-          console.error(err)
-          message.error(getErrorMessage(err, '删除请求出错'))
+          const errorMessage = getErrorMessage(err, '删除请求出错')
+
+          console.error('删除请求出错:', errorMessage)
+          message.error(errorMessage)
         })
         .finally(() => {
           if (isComponentMounted) {
@@ -475,11 +519,7 @@ const handleBatchDelete = () => {
 }
 
 const onSearchSelect = (row: FileSearchItem) => {
-  let targetPath = row.fullPath || '/'
-  if (!row.isDir) {
-    const idx = targetPath.lastIndexOf('/')
-    targetPath = idx > 0 ? targetPath.slice(0, idx) : '/'
-  }
+  const targetPath = row.fullPath || '/'
   showSearch.value = false
   navigateToPath(targetPath)
 }
@@ -496,19 +536,18 @@ const goBack = () => {
 }
 
 const downloadFile = (file: FileChild) => {
-  if (file.isDir || downloadingRowKeys.value.includes(file.id) || !isComponentMounted) {
+  if (file.isDir || activeDownloadIds.has(file.id) || !isComponentMounted) {
     return
   }
 
   const fileId = file.id
   const fileName = file.name
-  const navigationRequestId = fileOpenRequestId
   selectedRowKeys.value = selectedRowKeys.value.filter((id) => id !== fileId)
-  downloadingRowKeys.value = [...downloadingRowKeys.value, fileId]
+  markFileDownloading(fileId)
 
   createDownloadUrl({ fileId: file.id })
     .then((response) => {
-      if (!isComponentMounted || navigationRequestId !== fileOpenRequestId) return
+      if (!isComponentMounted) return
 
       if (response.code === 200) {
         const data = normalizeCreateDownloadUrlResponse(response.data)
@@ -530,24 +569,36 @@ const downloadFile = (file: FileChild) => {
       }
     })
     .catch((error) => {
-      if (!isComponentMounted || navigationRequestId !== fileOpenRequestId) return
+      if (!isComponentMounted) return
 
-      console.error('下载失败:', error)
-      message.error(getErrorMessage(error, '下载失败'))
+      const errorMessage = getErrorMessage(error, '下载失败')
+
+      console.error('下载失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
-      if (!isComponentMounted || navigationRequestId !== fileOpenRequestId) return
+      if (!isComponentMounted) return
 
-      downloadingRowKeys.value = downloadingRowKeys.value.filter((id) => id !== fileId)
+      unmarkFileDownloading(fileId)
     })
 }
 
 // 监听路由变化
 watch(
-  () => route.query.path,
-  (newPath) => {
-    const path = typeof newPath === 'string' && newPath ? newPath : '/'
-    loadPath(path)
+  [() => route.query.path, () => route.params.pathMatch],
+  ([newPath, pathMatch]) => {
+    const path = getRoutePathValue(newPath, pathMatch)
+    const normalizedPath = normalizeFilePath(path)
+    if (shouldReplaceRoutePath(newPath, normalizedPath)) {
+      router.replace({
+        path: '/',
+        query: { ...route.query, path: normalizedPath },
+      })
+
+      return
+    }
+
+    loadPath(normalizedPath)
   },
   { immediate: true }
 )
@@ -558,6 +609,7 @@ onUnmounted(() => {
   loading.value = false
   batchDeleteSubmitting.value = false
   batchDeleteDialogOpen.value = false
+  activeDownloadIds.clear()
   downloadingRowKeys.value = []
   pendingDeleteRowKeys.value = []
 })

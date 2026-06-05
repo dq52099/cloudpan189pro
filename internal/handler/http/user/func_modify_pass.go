@@ -36,6 +36,10 @@ func (h *handler) ModifyPass() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureUserService(ctx, codeModifyPassFailed) {
+			return
+		}
+
 		if err := h.userService.ModifyPass(ctx.GetContext(), req.ID, req.Password); err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				ctx.Fail(codeUserResourceMissing.WithError(err))

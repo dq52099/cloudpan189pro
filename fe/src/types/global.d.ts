@@ -21,6 +21,7 @@ export namespace StorageType {
     expireTime: number
     user: Models.User
     systemInfo: Models.SystemInfo
+    theme: 'light' | 'dark'
     storageSetting: StorageType.StorageSetting
     pageAutoRefreshSetting: StorageType.PageAutoRefreshSetting
   }

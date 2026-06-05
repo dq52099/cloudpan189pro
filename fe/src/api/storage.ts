@@ -49,7 +49,7 @@ export interface BatchDispatchResponse {
 // 批量文本导入挂载请求接口
 export interface BatchCreateTextRequest {
   content: string // 文本内容（一行一个资源）
-  cloudToken: number // 云盘令牌ID
+  cloudToken?: number | null // 解析个人文件夹ID时使用的云盘令牌ID
   enableAutoRefresh?: boolean // 是否启用自动刷新
   refreshInterval?: number // 刷新间隔，单位分钟，最小值30，最大值1440
   shareAccessCode?: string // 默认提取码（可选）
@@ -203,7 +203,7 @@ export interface BatchParseItem {
 // 批量解析请求接口
 export interface BatchParseTextRequest {
   content: string
-  cloudToken: number
+  cloudToken?: number | null
 }
 
 // 批量解析文本

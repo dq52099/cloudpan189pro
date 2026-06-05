@@ -38,6 +38,10 @@ func (h *handler) CheckQrcode() httpcontext.HandlerFunc {
 		req.UserID = ctx.GetInt64(consts.CtxKeyUserId)
 		req.IsAdmin = ctx.GetBool(consts.CtxKeyIsAdmin)
 
+		if !h.ensureCloudTokenService(ctx, codeCheckQrcodeFailed) {
+			return
+		}
+
 		if err := h.cloudTokenService.CheckQrcode(ctx.GetContext(), req); err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				ctx.Fail(codeTokenNotFound.WithError(err))

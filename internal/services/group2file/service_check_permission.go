@@ -5,7 +5,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// CheckPermission 检查用户组是否有文件访问权限
+// CheckPermission 检查用户组是否有存储挂载点访问权限
 func (s *service) CheckPermission(ctx context.Context, groupId int64, fileId int64) (bool, error) {
 	if groupId <= 0 {
 		return false, errInvalidGroupID
@@ -16,7 +16,10 @@ func (s *service) CheckPermission(ctx context.Context, groupId int64, fileId int
 	}
 
 	var count int64
-	if err := s.getDB(ctx).Where("group_id = ? and file_id = ?", groupId, fileId).Count(&count).Error; err != nil {
+	if err := s.getDB(ctx).
+		Joins("INNER JOIN mount_points ON mount_points.file_id = group2files.file_id").
+		Where("group2files.group_id = ? and group2files.file_id = ?", groupId, fileId).
+		Count(&count).Error; err != nil {
 		ctx.Error("数据查询失败", zap.Int64("groupId", groupId), zap.Int64("fileId", fileId))
 
 		return false, err

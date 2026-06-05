@@ -1,6 +1,8 @@
 package filetasklog
 
 import (
+	"fmt"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -24,11 +26,10 @@ func (c *counter) Count() int {
 	return c.count
 }
 
-// allowedCounterColumns 白名单，限制可通过 FlushCount 更新的列名，避免 SQL 注入。
+// allowedCounterColumns 白名单，限制可通过 FlushCount 更新的真实计数字段，避免 SQL 注入。
 var allowedCounterColumns = map[string]struct{}{
 	"completed": {},
 	"total":     {},
-	"processed": {},
 	"failed":    {},
 }
 
@@ -57,7 +58,7 @@ func WithAllCounter(count int) []Counter {
 	}
 }
 
-// WithProcessedCounter 处理文件数量计数器
+// WithProcessedCounter 保留历史构造器；当前 file_task_logs 无 processed 列，FlushCount 会拒绝该计数器。
 func WithProcessedCounter(count int) Counter {
 	return &counter{
 		name:  "processed",
@@ -90,14 +91,14 @@ func (s *service) FlushCount(ctx context.Context, key LogKey, counters ...Counte
 	countMp := map[string]int{}
 
 	for _, ct := range counters {
-		name := ct.Name()
-		if _, ok := allowedCounterColumns[name]; !ok {
-			ctx.Warn("忽略未知的计数列", zap.String("column", name))
+		name, count, counterErr := validateFlushCounter(ct)
+		if counterErr != nil {
+			ctx.Error("文件任务日志计数器不合法", zap.Error(counterErr), zap.Int64("task_id", id))
 
-			continue
+			return counterErr
 		}
 
-		countMp[name] += ct.Count()
+		countMp[name] += count
 	}
 
 	if len(countMp) == 0 {
@@ -124,4 +125,31 @@ func (s *service) FlushCount(ctx context.Context, key LogKey, counters ...Counte
 // col 由白名单校验，不存在注入风险。
 func gormColumnExpr(col string) string {
 	return col + " + ?"
+}
+
+func validateFlushCounter(ct Counter) (name string, count int, err error) {
+	if ct == nil {
+		return "", 0, fmt.Errorf("%w: counter 为空", errInvalidFileTaskLogCounter)
+	}
+
+	defer func() {
+		if recover() != nil {
+			name = ""
+			count = 0
+			err = fmt.Errorf("%w: counter 读取失败", errInvalidFileTaskLogCounter)
+		}
+	}()
+
+	name = ct.Name()
+	count = ct.Count()
+
+	if _, ok := allowedCounterColumns[name]; !ok {
+		return "", 0, fmt.Errorf("%w: 未知计数列 %q", errInvalidFileTaskLogCounter, name)
+	}
+
+	if count < 0 {
+		return "", 0, fmt.Errorf("%w: %s 增量不能为负数", errInvalidFileTaskLogCounter, name)
+	}
+
+	return name, count, nil
 }

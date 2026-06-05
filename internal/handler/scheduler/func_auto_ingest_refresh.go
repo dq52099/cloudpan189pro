@@ -9,6 +9,7 @@ import (
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/taskengine"
+	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/autoingest"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
@@ -19,9 +20,11 @@ import (
 
 type AutoIngestRefreshScheduler struct {
 	running               bool
+	stopping              bool
 	mu                    sync.Mutex
 	ctx                   context.Context
 	cancel                context.CancelFunc
+	done                  chan struct{}
 	autoIngestPlanService autoingestplanSvi.Service
 	autoIngestLogService  autoingestlogSvi.Service
 	taskEngine            taskengine.TaskEngine
@@ -50,14 +53,34 @@ func (s *AutoIngestRefreshScheduler) Start(ctx context.Context) error {
 	}
 	defer s.mu.Unlock()
 
-	if s.running {
+	shouldStart, err := shouldStartScheduler(s.running, s.stopping)
+	if err != nil {
+		return err
+	}
+
+	if !shouldStart {
 		return nil
 	}
 
+	if isNilDependency(s.taskEngine) {
+		return ErrSchedulerTaskEngineMissing
+	}
+
+	if isNilDependency(s.autoIngestPlanService) {
+		return ErrSchedulerAutoIngestPlanServiceMissing
+	}
+
+	if isNilDependency(s.autoIngestLogService) {
+		return ErrSchedulerAutoIngestLogServiceMissing
+	}
+
 	s.ctx, s.cancel = context.WithCancel(ctx)
-	s.running = true
+	s.firstRunSkipped = false
+	done := markSchedulerRunStarted(&s.running, &s.stopping, &s.done)
 
 	gopool.Go(func() {
+		defer finishSchedulerRun(&s.mu, &s.running, &s.stopping, &s.cancel, &s.done, done)
+
 		for s.doJob() {
 		}
 
@@ -68,25 +91,25 @@ func (s *AutoIngestRefreshScheduler) Start(ctx context.Context) error {
 }
 
 func (s *AutoIngestRefreshScheduler) Stop() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if !s.running {
+	cancel, done, ok := beginSchedulerStop(&s.mu, &s.running, &s.stopping, &s.cancel, &s.done)
+	if !ok {
 		return
 	}
 
-	s.cancel()
-	s.running = false
+	waitSchedulerStop(cancel, done)
 }
 
-func (s *AutoIngestRefreshScheduler) doJob() bool {
+func (s *AutoIngestRefreshScheduler) doJob() (keepRunning bool) {
 	ctx := s.ctx
+	keepRunning = true
 
 	defer func() {
 		if r := recover(); r != nil {
 			ctx.Error("自动入库执行器发生异常",
-				zap.Any("panic", r),
+				zap.String("panic", sanitizeSchedulerPanicValue(r)),
 				zap.String("stack", string(debug.Stack())))
+
+			keepRunning = ctx.Err() == nil
 		}
 	}()
 
@@ -120,33 +143,43 @@ func (s *AutoIngestRefreshScheduler) doJob() bool {
 			return true
 		}
 
-		for _, plan := range list {
-			if plan.SourceType != autoingest.SourceTypeSubscribe {
-				ctx.Error("不支持的自动入库源类型", zap.String("name", plan.Name), zap.String("type", plan.SourceType.String()), zap.Int64("id", plan.ID))
-
-				continue
-			}
-
-			taskReq := &topic.AutoIngestRefreshSubscribeRequest{
-				PlanId: plan.ID,
-			}
-
-			msgBody, err := json.Marshal(taskReq)
-			if err != nil {
-				ctx.Error("序列化自动入库任务失败", zap.Int64("id", plan.ID), zap.Error(err))
-
-				continue
-			}
-
-			if err = s.taskEngine.PushMessage(ctx, taskReq.Topic(), msgBody); err != nil {
-				ctx.Error("推送自动入库任务失败", zap.Int64("id", plan.ID), zap.String("name", plan.Name), zap.Error(err))
-
-				continue
-			}
-
-			ctx.Info("自动入库任务已下发", zap.Int64("id", plan.ID), zap.String("name", plan.Name))
-		}
+		s.dispatchDuePlans(ctx, list)
 	}
 
 	return true
+}
+
+func (s *AutoIngestRefreshScheduler) dispatchDuePlans(ctx context.Context, list []*models.AutoIngestPlan) {
+	for _, plan := range list {
+		if plan == nil {
+			ctx.Warn("自动入库计划列表包含空记录，跳过")
+
+			continue
+		}
+
+		if plan.SourceType != autoingest.SourceTypeSubscribe {
+			ctx.Error("不支持的自动入库源类型", zap.String("name", plan.Name), zap.String("type", plan.SourceType.String()), zap.Int64("id", plan.ID))
+
+			continue
+		}
+
+		taskReq := &topic.AutoIngestRefreshSubscribeRequest{
+			PlanId: plan.ID,
+		}
+
+		msgBody, err := json.Marshal(taskReq)
+		if err != nil {
+			ctx.Error("序列化自动入库任务失败", zap.Int64("id", plan.ID), zap.Error(err))
+
+			continue
+		}
+
+		if err = s.taskEngine.PushMessage(ctx, taskReq.Topic(), msgBody); err != nil {
+			ctx.Error("推送自动入库任务失败", zap.Int64("id", plan.ID), zap.String("name", plan.Name), zap.Error(err))
+
+			continue
+		}
+
+		ctx.Info("自动入库任务已下发", zap.Int64("id", plan.ID), zap.String("name", plan.Name))
+	}
 }

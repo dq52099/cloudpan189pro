@@ -204,17 +204,14 @@ func assignShared(db *gorm.DB) (err error) {
 		return err
 	}
 
-	shared.SaltKey = setting.SaltKey
-	shared.BaseURL = setting.BaseURL
-	shared.EnableAuth = setting.EnableAuth
-	shared.SettingAddition = setting.Addition
+	shared.SetSetting(setting.SaltKey, setting.BaseURL, setting.EnableAuth, setting.Addition)
 
 	var mediaConfig = new(models.MediaConfig)
 	if err = db.First(mediaConfig).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
 
-	shared.MediaConfig = mediaConfig
+	shared.SetMediaConfig(mediaConfig)
 
 	return nil
 }

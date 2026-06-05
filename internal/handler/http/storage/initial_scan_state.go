@@ -8,7 +8,7 @@ import (
 )
 
 func (h *handler) markInitialScanFailed(ctx context.Context, fileID int64, reason string, err error) {
-	if h.mountPointService == nil {
+	if !h.hasMountPointService() {
 		return
 	}
 
@@ -17,6 +17,7 @@ func (h *handler) markInitialScanFailed(ctx context.Context, fileID int64, reaso
 		state = fmt.Sprintf("%s: %s", state, err.Error())
 	}
 
+	state = sanitizeStorageText(state)
 	if updateErr := h.mountPointService.UpdateLastState(ctx, fileID, state); updateErr != nil {
 		ctx.Warn("写入初始化扫描失败状态失败",
 			zap.Int64("file_id", fileID),

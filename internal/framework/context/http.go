@@ -4,13 +4,23 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
 
-	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"go.uber.org/zap"
 	"resty.dev/v3"
+
+	"github.com/xxcheng123/cloudpan189-share/internal/consts"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
+)
+
+var httpLogURLPattern = regexp.MustCompile(`(?i)(?:[a-z][a-z0-9+.-]*://|/)[^\s"'<>]+`)
+
+const (
+	truncatedHTTPLogBodySuffix = "...[truncated]"
+	oversizeHTTPLogBodyMessage = "[body omitted: exceeds log limit]"
 )
 
 // HTTPLogConfig HTTP日志配置
@@ -107,7 +117,7 @@ func (c Context) createRequestMiddleware(config *HTTPLogConfig) resty.RequestMid
 
 		fields := []zap.Field{
 			zap.String("method", req.Method),
-			zap.String("url", req.URL),
+			zap.String("url", redactHTTPLogURL(req.URL)),
 			zap.Time("start_time", startTime),
 		}
 
@@ -143,7 +153,7 @@ func (c Context) createResponseMiddleware(config *HTTPLogConfig) resty.ResponseM
 				Time:        time.Now().Format(consts.TimeFormat),
 				Stack:       c.getCallerStack(),
 				Method:      resp.Request.Method,
-				URL:         resp.Request.URL,
+				URL:         redactHTTPLogURL(resp.Request.URL),
 				StatusCode:  resp.StatusCode(),
 				StatusMsg:   resp.Status(),
 				CostSeconds: duration.Seconds(),
@@ -167,7 +177,7 @@ func (c Context) createResponseMiddleware(config *HTTPLogConfig) resty.ResponseM
 		if config.EnableResponseLog {
 			fields := []zap.Field{
 				zap.String("method", resp.Request.Method),
-				zap.String("url", resp.Request.URL),
+				zap.String("url", redactHTTPLogURL(resp.Request.URL)),
 				zap.Int("status_code", resp.StatusCode()),
 				zap.String("status", resp.Status()),
 				zap.Duration("duration", duration),
@@ -208,12 +218,39 @@ func (c Context) createErrorHook(config *HTTPLogConfig) resty.ErrorHook {
 	return func(req *resty.Request, err error) {
 		fields := []zap.Field{
 			zap.String("method", req.Method),
-			zap.String("url", req.URL),
-			zap.Error(err),
+			zap.String("url", redactHTTPLogURL(req.URL)),
+			zap.String("error", redactHTTPLogError(req.URL, err)),
 		}
 
 		c.logWithLevel("error", "HTTP Request Error", fields...)
 	}
+}
+
+func redactHTTPLogURL(rawURL string) string {
+	return utils.RedactURLForLog(rawURL)
+}
+
+func redactHTTPLogError(rawURL string, err error) string {
+	if err == nil {
+		return ""
+	}
+
+	message := err.Error()
+	if rawURL != "" {
+		message = strings.ReplaceAll(message, rawURL, redactHTTPLogURL(rawURL))
+	}
+
+	return sanitizeHTTPLogText(message)
+}
+
+func sanitizeHTTPLogText(text string) string {
+	if text == "" {
+		return ""
+	}
+
+	text = httpLogURLPattern.ReplaceAllStringFunc(text, utils.RedactURLForLog)
+
+	return utils.RedactSensitiveText(text)
 }
 
 // sanitizeHeaders 脱敏敏感请求头
@@ -232,10 +269,15 @@ func (c Context) sanitizeHeaders(headers http.Header, sensitiveHeaders []string)
 			}
 		}
 
-		if isSensitive {
-			sanitized[key] = []string{"[REDACTED]"}
+		if isSensitive || utils.IsSensitiveLogKey(key) {
+			sanitized[key] = []string{utils.RedactedSecret}
 		} else {
-			sanitized[key] = values
+			redactedValues := make([]string, 0, len(values))
+			for _, value := range values {
+				redactedValues = append(redactedValues, sanitizeHTTPLogText(value))
+			}
+
+			sanitized[key] = redactedValues
 		}
 	}
 
@@ -252,8 +294,16 @@ func (c Context) formatRequestBody(body interface{}, maxSize int) string {
 
 	switch v := body.(type) {
 	case string:
+		if isHTTPLogBodyOverLimit(len(v), maxSize) {
+			return oversizeHTTPLogBodyMessage + truncatedHTTPLogBodySuffix
+		}
+
 		bodyStr = v
 	case []byte:
+		if isHTTPLogBodyOverLimit(len(v), maxSize) {
+			return oversizeHTTPLogBodyMessage + truncatedHTTPLogBodySuffix
+		}
+
 		bodyStr = string(v)
 	case io.Reader:
 		// 对于 io.Reader，我们不读取内容以避免消耗流
@@ -262,11 +312,12 @@ func (c Context) formatRequestBody(body interface{}, maxSize int) string {
 		bodyStr = fmt.Sprintf("%v", v)
 	}
 
-	if maxSize > 0 && len(bodyStr) > maxSize {
-		return bodyStr[:maxSize] + "...[truncated]"
+	redactedBody := sanitizeHTTPLogText(bodyStr)
+	if maxSize > 0 && len(redactedBody) > maxSize {
+		return redactedBody[:maxSize] + truncatedHTTPLogBodySuffix
 	}
 
-	return bodyStr
+	return redactedBody
 }
 
 // formatResponseBody 格式化响应体
@@ -275,12 +326,20 @@ func (c Context) formatResponseBody(body []byte, maxSize int) string {
 		return ""
 	}
 
-	bodyStr := string(body)
-	if maxSize > 0 && len(bodyStr) > maxSize {
-		return bodyStr[:maxSize] + "...[truncated]"
+	if isHTTPLogBodyOverLimit(len(body), maxSize) {
+		return oversizeHTTPLogBodyMessage + truncatedHTTPLogBodySuffix
 	}
 
-	return bodyStr
+	redactedBody := sanitizeHTTPLogText(string(body))
+	if maxSize > 0 && len(redactedBody) > maxSize {
+		return redactedBody[:maxSize] + truncatedHTTPLogBodySuffix
+	}
+
+	return redactedBody
+}
+
+func isHTTPLogBodyOverLimit(size int, maxSize int) bool {
+	return maxSize > 0 && size > maxSize
 }
 
 // getCallerStack 获取调用栈信息

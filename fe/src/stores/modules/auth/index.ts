@@ -6,7 +6,7 @@ import {
   type LoginRequest,
   type LoginResponse,
 } from '@/api/auth'
-import type { ApiResponse } from '@/utils/api'
+import { getErrorMessage, type ApiResponse } from '@/utils/api'
 import { localStg } from '@/utils/storage'
 import { useUserStore } from '../user'
 
@@ -153,7 +153,7 @@ export const useAuthStore = defineStore('auth', () => {
         return null
       })
       .catch((error) => {
-        console.error('刷新登录状态失败:', error)
+        console.error('刷新登录状态失败:', getErrorMessage(error, '刷新登录状态失败'))
         clearSession()
 
         return null
@@ -201,6 +201,10 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   const getToken = () => {
+    if (!isAccessTokenValid.value) {
+      return ''
+    }
+
     return accessToken.value
   }
 

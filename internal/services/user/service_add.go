@@ -1,6 +1,8 @@
 package user
 
 import (
+	"strings"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
@@ -25,11 +27,11 @@ type AddResponse struct {
 }
 
 func (s *service) Add(ctx context.Context, req *AddRequest, opts ...AddOptionFunc) (resp *AddResponse, err error) {
-	if req == nil || req.Username == "" {
+	if req == nil || strings.TrimSpace(req.Username) == "" {
 		return nil, errInvalidUsername
 	}
 
-	if req.Password == "" {
+	if strings.TrimSpace(req.Password) == "" {
 		return nil, errInvalidUserPassword
 	}
 

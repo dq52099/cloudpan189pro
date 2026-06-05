@@ -39,7 +39,11 @@ func (h *handler) DeletePlan() httpcontext.HandlerFunc {
 
 		// 获取当前用户信息用于权限控制
 		userID := ctx.GetInt64(consts.CtxKeyUserId)
+
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
+		if !h.ensurePlanService(ctx, codePlanQueryFailed) {
+			return
+		}
 
 		plan, err := h.planService.Query(ctx.GetContext(), req.ID)
 		if err != nil {

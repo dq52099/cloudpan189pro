@@ -12,6 +12,7 @@ import (
 	filetasklogSvi "github.com/xxcheng123/cloudpan189-share/internal/services/filetasklog"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 func (h *handler) HandleBatchModifyToken() taskcontext.HandlerFunc {
@@ -61,11 +62,29 @@ func (h *handler) HandleBatchModifyToken() taskcontext.HandlerFunc {
 		var groupFileIDs []int64
 
 		if req.TokenID > 0 {
-			if h.cloudTokenService == nil {
+			if !h.hasCloudTokenService() {
 				return errors.New("云盘令牌服务未初始化")
 			}
 
-			if _, err = h.cloudTokenService.QueryAccessible(ctx.GetContext(), req.TokenID, req.UserID, req.IsAdmin); err != nil {
+			token, queryErr := h.cloudTokenService.QueryAccessible(ctx.GetContext(), req.TokenID, req.UserID, req.IsAdmin)
+			if queryErr != nil {
+				if statusErr := h.fileTaskLogService.Failed(ctx.GetContext(), tracker, tracker.WithCost(), utils.WithField("result", pkgErrors.Wrap(queryErr, "令牌不可用").Error())); statusErr != nil {
+					if errors.Is(statusErr, filetasklogSvi.ErrFileTaskLogTerminalState) {
+						ctx.GetContext().Warn("文件任务日志已处于终态，跳过批量修改令牌失败状态回写", zap.Error(statusErr))
+
+						return nil
+					}
+
+					ctx.GetContext().Error("更新批量修改令牌任务失败状态失败", zap.Error(statusErr))
+
+					return errors.Join(queryErr, statusErr)
+				}
+
+				return nil
+			}
+
+			if token == nil {
+				err = gorm.ErrRecordNotFound
 				if statusErr := h.fileTaskLogService.Failed(ctx.GetContext(), tracker, tracker.WithCost(), utils.WithField("result", pkgErrors.Wrap(err, "令牌不可用").Error())); statusErr != nil {
 					if errors.Is(statusErr, filetasklogSvi.ErrFileTaskLogTerminalState) {
 						ctx.GetContext().Warn("文件任务日志已处于终态，跳过批量修改令牌失败状态回写", zap.Error(statusErr))
@@ -132,7 +151,7 @@ func (h *handler) HandleBatchModifyToken() taskcontext.HandlerFunc {
 					}
 				}
 
-				if !hasAccess && h.userMountPointTokenService != nil {
+				if !hasAccess && h.hasUserMountPointTokenService() {
 					tokenID, err := h.userMountPointTokenService.GetTokenID(ctx.GetContext(), req.UserID, mp.ID)
 					if err != nil {
 						failCount++
@@ -245,10 +264,28 @@ func normalizeBatchModifyTokenIDs(req *topic.FileBatchModifyTokenRequest) ([]int
 
 func (h *handler) queryBatchModifyTokenMountPoint(ctx appContext.Context, id int64, useMountPointID bool) (*models.MountPoint, error) {
 	if useMountPointID {
-		return h.mountPointService.QueryByID(ctx, id)
+		mountPoint, err := h.mountPointService.QueryByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+
+		if mountPoint == nil {
+			return nil, gorm.ErrRecordNotFound
+		}
+
+		return mountPoint, nil
 	}
 
-	return h.mountPointService.Query(ctx, id)
+	mountPoint, err := h.mountPointService.Query(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	if mountPoint == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	return mountPoint, nil
 }
 
 func formatBatchModifyTokenResult(successCount, unchangedCount, failCount int) string {

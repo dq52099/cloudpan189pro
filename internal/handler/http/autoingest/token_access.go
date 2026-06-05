@@ -20,7 +20,7 @@ func (h *handler) validateCloudTokenAccess(ctx *httpcontext.Context, tokenID int
 		return nil
 	}
 
-	if h.cloudTokenService == nil {
+	if isNilDependency(h.cloudTokenService) {
 		return errors.New("云盘令牌服务不可用")
 	}
 

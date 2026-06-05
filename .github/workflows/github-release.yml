@@ -20,16 +20,75 @@ env:
   NODE_VERSION: '22'
 
 jobs:
-  backend-quality:
-    name: ✅ 后端测试和 Lint
+  validate-release:
+    name: 🔎 验证发布标签
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release-ref.outputs.version }}
+      ref: ${{ steps.release-ref.outputs.ref }}
 
     steps:
       - name: 📥 检出代码
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
           fetch-depth: 0
+
+      - name: 🔎 验证目标标签
+        id: release-ref
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="$INPUT_TAG"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+
+          case "$VERSION" in
+            v*) ;;
+            *)
+              echo "❌ 发布标签必须以 v 开头，当前: $VERSION"
+              exit 1
+              ;;
+          esac
+
+          if ! git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "❌ 标签不存在: $VERSION"
+            exit 1
+          fi
+
+          echo "✅ 发布标签有效: $VERSION"
+          {
+            echo "version=$VERSION"
+            echo "ref=refs/tags/$VERSION"
+          } >> "$GITHUB_OUTPUT"
+
+  backend-quality:
+    name: ✅ 后端测试和 Lint
+    runs-on: ubuntu-latest
+    needs: [validate-release, build-frontend]
+
+    steps:
+      - name: 📥 检出代码
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-release.outputs.ref }}
+          fetch-depth: 0
+
+      - name: 📥 下载前端构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: fe/dist/
+
+      - name: 🔍 验证前端资源
+        run: |
+          if [ ! -f "fe/dist/index.html" ]; then
+            echo "❌ 未找到 fe/dist/index.html，后端 go:embed 无法加载前端资源"
+            exit 1
+          fi
+
+          echo "✅ 后端测试前端资源已就绪"
 
       - name: 🔧 设置 Go ${{ env.GO_VERSION }}
         uses: actions/setup-go@v5
@@ -61,12 +120,13 @@ jobs:
   build-frontend:
     name: 🎨 构建前端
     runs-on: ubuntu-latest
+    needs: [validate-release]
 
     steps:
       - name: 📥 检出代码
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+          ref: ${{ needs.validate-release.outputs.ref }}
           fetch-depth: 0
 
       - name: 🧩 安装 pnpm
@@ -152,7 +212,7 @@ jobs:
   build-backend:
     name: 🔨 构建后端 (${{ matrix.suffix }})
     runs-on: ubuntu-latest
-    needs: [backend-quality, build-frontend]  # 依赖质量门禁和前端构建完成
+    needs: [validate-release, backend-quality, build-frontend]  # 依赖标签校验、质量门禁和前端构建完成
     strategy:
       matrix:
         include:
@@ -181,7 +241,7 @@ jobs:
       - name: 📥 检出代码
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+          ref: ${{ needs.validate-release.outputs.ref }}
           fetch-depth: 0  # 获取完整历史，用于生成版本信息
 
       - name: 🔧 设置 Go ${{ env.GO_VERSION }}
@@ -226,18 +286,15 @@ jobs:
 
       - name: 📊 生成构建变量
         id: vars
+        env:
+          RELEASE_VERSION: ${{ needs.validate-release.outputs.version }}
         run: |
           VAR_COMMIT="$(git rev-parse HEAD)"
           VAR_BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           VAR_GIT_SUMMARY="$(git describe --tags --dirty --always)"
           VAR_GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
           
-          # 获取版本号
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.tag }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-          fi
+          VERSION="$RELEASE_VERSION"
 
           {
             echo "VAR_COMMIT=$VAR_COMMIT"
@@ -364,7 +421,7 @@ jobs:
   release:
     name: 📋 创建 GitHub 发布
     runs-on: ubuntu-latest
-    needs: [build-frontend, build-backend]  # 依赖前端和后端构建
+    needs: [validate-release, build-frontend, build-backend]  # 依赖标签校验、前端和后端构建
     permissions:
       contents: write
 
@@ -372,18 +429,15 @@ jobs:
       - name: 📥 检出代码
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+          ref: ${{ needs.validate-release.outputs.ref }}
           fetch-depth: 0
 
       - name: 📊 生成发布变量
         id: vars
+        env:
+          RELEASE_VERSION: ${{ needs.validate-release.outputs.version }}
         run: |
-          # 获取版本号
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.tag }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-          fi
+          VERSION="$RELEASE_VERSION"
           
           # 生成构建信息
           VAR_COMMIT="$(git rev-parse HEAD)"
@@ -457,11 +511,29 @@ jobs:
           
           # 生成校验和文件
           cd release-files
+
+          expected_files=(
+            "${{ env.BINARY_NAME }}-linux-amd64.tar.gz"
+            "${{ env.BINARY_NAME }}-linux-arm64.tar.gz"
+            "${{ env.BINARY_NAME }}-linux-armv7a.tar.gz"
+            "${{ env.BINARY_NAME }}-darwin-amd64.tar.gz"
+            "${{ env.BINARY_NAME }}-darwin-arm64.tar.gz"
+            "${{ env.BINARY_NAME }}-windows-amd64.zip"
+          )
+
+          for file in "${expected_files[@]}"; do
+            if [ ! -s "$file" ]; then
+              echo "❌ 缺少发布文件或文件为空: $file"
+              exit 1
+            fi
+          done
+
           echo "🔐 生成校验和..."
-          sha256sum ./*.tar.gz ./*.zip > SHA256SUMS 2>/dev/null || true
-          
+          sha256sum "${expected_files[@]}" > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
           echo "📋 校验和文件内容："
-          cat SHA256SUMS || echo "未生成校验和文件"
+          cat SHA256SUMS
 
       - name: 📋 创建 GitHub 发布
         uses: softprops/action-gh-release@v2

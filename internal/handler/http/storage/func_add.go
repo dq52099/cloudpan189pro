@@ -69,9 +69,17 @@ func (h *handler) Add() httpcontext.HandlerFunc {
 			return
 		}
 
+		localPath, err := normalizeLocalPathForAdd(req.LocalPath)
+		if err != nil {
+			ctx.Fail(busCodeStorageQueryPathFailed.WithError(err))
+
+			return
+		}
+
+		req.LocalPath = localPath
+
 		var (
 			addition datatypes.JSONMap
-			err      error
 		)
 
 		fileId := req.FileId
@@ -87,9 +95,11 @@ func (h *handler) Add() httpcontext.HandlerFunc {
 			addition, fileId, err = h.executeOsTypeShare(ctx.GetContext(), req)
 		case protocolPerson:
 			err = h.executeOsTypePersonal(ctx.GetContext(), req, userID, isAdmin)
+			fileId = req.FileId
 			addition = datatypes.JSONMap{}
 		case protocolFamily:
 			addition, err = h.executeOsTypeFamily(ctx.GetContext(), req, userID, isAdmin)
+			fileId = req.FileId
 		default:
 			ctx.Fail(busCodeStorageOsTypeUnsupport)
 
@@ -106,6 +116,10 @@ func (h *handler) Add() httpcontext.HandlerFunc {
 
 			ctx.Fail(busCodeStorageQueryPathFailed.WithError(err))
 
+			return
+		}
+
+		if !h.ensureStorageFacadeService(ctx, busCodeStorageAddMountPointFailed) {
 			return
 		}
 
@@ -146,7 +160,17 @@ func (h *handler) Add() httpcontext.HandlerFunc {
 		if err != nil {
 			ctx.GetContext().Warn("序列化创建初始化扫描任务失败", zap.Int64("file_id", id), zap.Error(err))
 			h.markInitialScanFailed(ctx.GetContext(), id, "序列化失败", err)
-			resp.ScanError = err.Error()
+			resp.ScanError = sanitizeStorageError(err)
+			ctx.Success(resp)
+
+			return
+		}
+
+		if !h.hasTaskEngine() {
+			err = errors.New("任务引擎未初始化")
+			ctx.GetContext().Warn("推送创建初始化扫描任务失败", zap.Int64("file_id", id), zap.Error(err))
+			h.markInitialScanFailed(ctx.GetContext(), id, "入队失败", err)
+			resp.ScanError = sanitizeStorageError(err)
 			ctx.Success(resp)
 
 			return
@@ -159,7 +183,7 @@ func (h *handler) Add() httpcontext.HandlerFunc {
 			taskReq.Topic(), body); err != nil {
 			ctx.GetContext().Warn("推送创建初始化扫描任务失败", zap.Int64("file_id", id), zap.Error(err))
 			h.markInitialScanFailed(ctx.GetContext(), id, "入队失败", err)
-			resp.ScanError = err.Error()
+			resp.ScanError = sanitizeStorageError(err)
 			ctx.Success(resp)
 
 			return

@@ -205,7 +205,7 @@ const handleConfirm = () => {
 
       if (response.code === 200) {
         message.success('用户添加成功')
-        visible.value = false
+        emit('update:show', false)
         emit('success')
       } else {
         message.error(response.msg || '添加用户失败')
@@ -216,8 +216,10 @@ const handleConfirm = () => {
         return
       }
 
-      console.error('添加用户失败:', error)
-      message.error(getErrorMessage(error, '添加用户失败，请稍后重试'))
+      const errorMessage = getErrorMessage(error, '添加用户失败，请稍后重试')
+
+      console.error('添加用户失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isCurrentOperation(currentOperation)) {

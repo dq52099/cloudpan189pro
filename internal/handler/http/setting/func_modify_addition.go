@@ -1,23 +1,27 @@
 package setting
 
 import (
+	"strings"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 // 使用指针以便区分“未提供”和“提供零值”的场景
 type modifyAdditionRequest struct {
-	LocalProxy                *bool     `json:"localProxy" example:"false"`                                                // 是否启用本地代理（可选）
-	MultipleStream            *bool     `json:"multipleStream" example:"true"`                                             // 是否启用多线程分流（可选）
-	MultipleStreamThreadCount *int      `json:"multipleStreamThreadCount" binding:"omitempty,min=1,max=64" example:"4"`    // 多线程数量（可选）
-	MultipleStreamChunkSize   *int64    `json:"multipleStreamChunkSize" binding:"omitempty,min=1048576" example:"4194304"` // 分片大小，单位字节（可选，>=1MiB）
-	TaskThreadCount           *int      `json:"taskThreadCount" binding:"omitempty,min=1,max=32" example:"1"`              // 任务线程数量（可选）
-	WorkerCount               *int      `json:"workerCount" binding:"omitempty,min=1,max=32" example:"5"`                  // 工作流数量（可选）
-	EnableStorageAutoRefresh  *bool     `json:"enableStorageAutoRefresh" example:"true"`                                   // 是否启用存储自动刷新（可选）
-	WebDAVUserStrmOnly        *bool     `json:"webdavUserStrmOnly" example:"false"`                                        // 是否限制普通用户 WebDAV 仅显示 STRM 支持格式（可选）
-	WebDAVAllowedSuffixes     *[]string `json:"webdavAllowedSuffixes" example:"['.mp4','.mkv']"`                           // 普通用户 WebDAV 允许的后缀列表（可选）
+	LocalProxy                *bool     `json:"localProxy" example:"false"`                                                             // 是否启用本地代理（可选）
+	LocalProxyURL             *string   `json:"localProxyURL" example:"http://127.0.0.1:7890"`                                          // 本地代理地址（可选）
+	MultipleStream            *bool     `json:"multipleStream" example:"true"`                                                          // 是否启用多线程分流（可选）
+	MultipleStreamThreadCount *int      `json:"multipleStreamThreadCount" binding:"omitempty,min=1,max=64" example:"4"`                 // 多线程数量（可选）
+	MultipleStreamChunkSize   *int64    `json:"multipleStreamChunkSize" binding:"omitempty,min=1048576,max=67108864" example:"4194304"` // 分片大小，单位字节（可选，1MiB-64MiB）
+	TaskThreadCount           *int      `json:"taskThreadCount" binding:"omitempty,min=1,max=32" example:"1"`                           // 任务线程数量（可选）
+	WorkerCount               *int      `json:"workerCount" binding:"omitempty,min=1,max=32" example:"5"`                               // 工作流数量（可选）
+	EnableStorageAutoRefresh  *bool     `json:"enableStorageAutoRefresh" example:"true"`                                                // 是否启用存储自动刷新（可选）
+	WebDAVUserStrmOnly        *bool     `json:"webdavUserStrmOnly" example:"false"`                                                     // 是否限制普通用户 WebDAV 仅显示 STRM 支持格式（可选）
+	WebDAVAllowedSuffixes     *[]string `json:"webdavAllowedSuffixes" example:"['.mp4','.mkv']"`                                        // 普通用户 WebDAV 允许的后缀列表（可选）
 }
 
 // ModifyAddition 修改系统附加设置（可选字段更新）
@@ -42,10 +46,20 @@ func (h *handler) ModifyAddition() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureSettingService(ctx, codeQueryFailed) {
+			return
+		}
+
 		// 查询当前设置以进行合并更新
 		current, err := h.settingService.Query(ctx.GetContext())
 		if err != nil {
 			ctx.Fail(codeQueryFailed.WithError(err))
+
+			return
+		}
+
+		if current == nil {
+			ctx.Fail(codeQueryFailed.WithError(gorm.ErrRecordNotFound))
 
 			return
 		}
@@ -55,6 +69,17 @@ func (h *handler) ModifyAddition() httpcontext.HandlerFunc {
 		// 仅对提供的字段进行覆盖
 		if req.LocalProxy != nil {
 			merged.LocalProxy = *req.LocalProxy
+		}
+
+		if req.LocalProxyURL != nil && !isCurrentRedactedLocalProxyURL(*req.LocalProxyURL, current.Addition.LocalProxyURL) {
+			localProxyURL, normalizeErr := utils.NormalizeHTTPProxyURL(*req.LocalProxyURL)
+			if normalizeErr != nil {
+				ctx.Fail(codeInvalidLocalProxyURL.WithError(normalizeErr))
+
+				return
+			}
+
+			merged.LocalProxyURL = localProxyURL
 		}
 
 		if req.MultipleStream != nil {
@@ -75,13 +100,6 @@ func (h *handler) ModifyAddition() httpcontext.HandlerFunc {
 
 		if req.WorkerCount != nil {
 			merged.WorkerCount = *req.WorkerCount
-			if h.taskEngine != nil {
-				if err := h.taskEngine.SetWorkerCount(*req.WorkerCount); err != nil {
-					ctx.GetContext().Warn("热更新工作流数失败", zap.Error(err))
-				} else {
-					ctx.GetContext().Info("热更新工作流数成功", zap.Int("count", *req.WorkerCount))
-				}
-			}
 		}
 
 		if req.EnableStorageAutoRefresh != nil {
@@ -107,6 +125,27 @@ func (h *handler) ModifyAddition() httpcontext.HandlerFunc {
 			return
 		}
 
+		if req.WorkerCount != nil && !isNilDependency(h.taskEngine) {
+			if err := h.taskEngine.SetWorkerCount(*req.WorkerCount); err != nil {
+				ctx.GetContext().Warn("热更新工作流数失败", zap.Error(err))
+			} else {
+				ctx.GetContext().Info("热更新工作流数成功", zap.Int("count", *req.WorkerCount))
+			}
+		}
+
 		ctx.Success()
 	}
+}
+
+func isCurrentRedactedLocalProxyURL(value string, current string) bool {
+	value = strings.TrimSpace(value)
+	current = strings.TrimSpace(current)
+
+	if current == "" {
+		return false
+	}
+
+	redactedCurrent := utils.RedactURLForLog(current)
+
+	return redactedCurrent != current && value == redactedCurrent
 }

@@ -155,7 +155,7 @@ func (s *service) getListQuery(ctx context.Context, req *ListRequest) (*gorm.DB,
 			args = append(args, groupFileIDs)
 		}
 
-		if s.userMountPointTokenService != nil {
+		if !isNilDependency(s.userMountPointTokenService) {
 			boundMountPointIDs, err := s.userMountPointTokenService.GetUserMountPointIDs(ctx, req.UserID)
 			if err != nil {
 				return nil, err

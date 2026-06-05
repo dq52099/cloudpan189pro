@@ -152,7 +152,7 @@ func (s *service) CreateTop(ctx context.Context, parentId int64, file *models.Vi
 }
 
 func (s *service) createTopInTransaction(ctx context.Context, parentId int64, file *models.VirtualFile) (int64, error) {
-	id, err := s.Create(ctx, parentId, file)
+	id, err := s.createWithoutRename(ctx, parentId, file)
 	if err != nil {
 		return 0, err
 	}
@@ -164,6 +164,24 @@ func (s *service) createTopInTransaction(ctx context.Context, parentId int64, fi
 	}
 
 	return id, nil
+}
+
+func (s *service) createWithoutRename(ctx context.Context, parentId int64, file *models.VirtualFile) (int64, error) {
+	ctx.Debug("创建文件", zap.Int64("parent_id", parentId), zap.String("file_name", file.Name))
+
+	// 检查 pid
+	if parentId < 0 {
+		return 0, errors.New("parent_id is invalid")
+	}
+
+	file.ParentId = parentId
+	file.Name = utils.SanitizeFileName(file.Name)
+
+	result := s.withLock(ctx, func(db *gorm.DB) *gorm.DB {
+		return db.Create(file)
+	})
+
+	return file.ID, result.Error
 }
 
 func buildVirtualFileDuplicateName(name string, rev string) string {

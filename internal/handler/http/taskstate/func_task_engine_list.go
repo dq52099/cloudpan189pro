@@ -1,8 +1,11 @@
 package taskstate
 
 import (
+	"unicode/utf8"
+
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/taskengine"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 )
 
 type (
@@ -13,6 +16,69 @@ type (
 		IsRunning    bool                   `json:"isRunning"`    // 引擎是否正在运行
 	}
 )
+
+func sanitizeTaskEngineTasks(tasks []*taskengine.TaskInfo) []*taskengine.TaskInfo {
+	if len(tasks) == 0 {
+		return tasks
+	}
+
+	sanitizedTasks := make([]*taskengine.TaskInfo, 0, len(tasks))
+	for _, task := range tasks {
+		sanitizedTasks = append(sanitizedTasks, sanitizeTaskEngineTask(task))
+	}
+
+	return sanitizedTasks
+}
+
+func sanitizeTaskEngineTask(task *taskengine.TaskInfo) *taskengine.TaskInfo {
+	if task == nil {
+		return nil
+	}
+
+	sanitizedTask := &taskengine.TaskInfo{
+		Payload:   sanitizeTaskPayload(task.Payload),
+		ID:        task.ID,
+		Topic:     task.Topic,
+		WorkerId:  task.WorkerId,
+		ReceiveAt: task.ReceiveAt,
+		Status:    task.Status,
+	}
+
+	if task.StartAt != nil {
+		startAt := *task.StartAt
+		sanitizedTask.StartAt = &startAt
+	}
+
+	if task.EndAt != nil {
+		endAt := *task.EndAt
+		sanitizedTask.EndAt = &endAt
+	}
+
+	if task.Results != nil {
+		sanitizedTask.Results = append([]taskengine.ProcessorResult(nil), task.Results...)
+		for idx := range sanitizedTask.Results {
+			sanitizedTask.Results[idx].Error = sanitizeTaskText(sanitizedTask.Results[idx].Error)
+		}
+	}
+
+	return sanitizedTask
+}
+
+func sanitizeTaskPayload(payload []byte) []byte {
+	if payload == nil {
+		return nil
+	}
+
+	if !utf8.Valid(payload) {
+		return []byte(utils.RedactedSecret)
+	}
+
+	return []byte(sanitizeTaskText(string(payload)))
+}
+
+func sanitizeTaskText(text string) string {
+	return utils.RedactSensitiveText(utils.RedactURLsInTextForLog(text))
+}
 
 // TaskEngineList 获取任务引擎状态和运行中的任务列表
 // @Summary 获取任务引擎状态
@@ -28,10 +94,7 @@ type (
 // @Router /api/task_state/task_engine/list [get]
 func (h *handler) TaskEngineList() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
-		// 检查任务引擎是否可用
-		if h.taskEngine == nil {
-			ctx.Fail(codeGetTaskEngineStatsFailed.WithError(nil))
-
+		if !h.ensureTaskEngine(ctx) {
 			return
 		}
 
@@ -39,10 +102,10 @@ func (h *handler) TaskEngineList() httpcontext.HandlerFunc {
 		stats := h.taskEngine.GetStats()
 
 		// 获取正在运行的任务列表
-		runningTasks := h.taskEngine.GetRunningTasks()
+		runningTasks := sanitizeTaskEngineTasks(h.taskEngine.GetRunningTasks())
 
 		// 获取待处理的任务列表
-		pendingTasks := h.taskEngine.GetPendingTasks()
+		pendingTasks := sanitizeTaskEngineTasks(h.taskEngine.GetPendingTasks())
 
 		// 检查引擎是否正在运行
 		isRunning := h.taskEngine.IsRunning()

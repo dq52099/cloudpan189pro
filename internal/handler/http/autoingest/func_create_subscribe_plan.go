@@ -2,6 +2,7 @@ package autoingest
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
@@ -60,6 +61,24 @@ func (h *handler) CreateSubscribePlan() httpcontext.HandlerFunc {
 			return
 		}
 
+		parentPath, err := normalizeAutoIngestParentPath(req.ParentPath)
+		if err != nil {
+			ctx.AbortWithInvalidParams(err)
+
+			return
+		}
+
+		req.UpUserId = normalizeSubscribeUserID(req.UpUserId)
+		if req.UpUserId == "" {
+			ctx.AbortWithInvalidParams(errors.New("upUserId 不能为空"))
+
+			return
+		}
+
+		if !h.ensureCloudBridgeService(ctx, codeUpUserIdInvalid) {
+			return
+		}
+
 		// 先检查这个 UpUserId
 		if _, err := h.cloudBridgeService.GetSubscribeUserInfo(ctx.GetContext(), req.UpUserId); err != nil {
 			ctx.Fail(codeUpUserIdInvalid.WithError(err))
@@ -115,6 +134,9 @@ func (h *handler) CreateSubscribePlan() httpcontext.HandlerFunc {
 
 		// 获取当前用户ID
 		userID := ctx.GetInt64(consts.CtxKeyUserId)
+		if !h.ensurePlanService(ctx, codeCreatePlanFailed) {
+			return
+		}
 
 		id, err := h.planService.Create(ctx.GetContext(), &models.AutoIngestPlan{
 			Name:               req.Name,
@@ -122,7 +144,7 @@ func (h *handler) CreateSubscribePlan() httpcontext.HandlerFunc {
 			AutoIngestInterval: req.AutoIngestInterval,
 			SourceType:         autoingest.SourceTypeSubscribe,
 			Offset:             offset,
-			ParentPath:         req.ParentPath,
+			ParentPath:         parentPath,
 			OnConflict:         onConflict,
 			AddCount:           0,
 			FailedCount:        0,
@@ -143,11 +165,16 @@ func (h *handler) CreateSubscribePlan() httpcontext.HandlerFunc {
 
 			taskBody, jerr := json.Marshal(taskReq)
 			if jerr != nil {
-				ctx.GetContext().Warn("序列化一键入库任务失败", zap.Int64("plan_id", id), zap.Error(jerr))
-				resp.HistoryError = jerr.Error()
+				safeErr := sanitizeAutoIngestHTTPError(jerr)
+				ctx.GetContext().Warn("序列化一键入库任务失败", zap.Int64("plan_id", id), zap.String("error", safeErr))
+				resp.HistoryError = safeErr
+			} else if isNilDependency(h.taskEngine) {
+				resp.HistoryError = "任务引擎未初始化"
+				ctx.GetContext().Warn("一键入库任务下发失败", zap.Int64("plan_id", id), zap.String("error", resp.HistoryError))
 			} else if perr := h.taskEngine.PushMessage(ctx.GetContext(), taskReq.Topic(), taskBody); perr != nil {
-				ctx.GetContext().Warn("一键入库任务下发失败", zap.Int64("plan_id", id), zap.Error(perr))
-				resp.HistoryError = perr.Error()
+				safeErr := sanitizeAutoIngestHTTPError(perr)
+				ctx.GetContext().Warn("一键入库任务下发失败", zap.Int64("plan_id", id), zap.String("error", safeErr))
+				resp.HistoryError = safeErr
 			} else {
 				resp.HistoryQueued = true
 			}

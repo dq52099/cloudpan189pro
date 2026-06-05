@@ -36,6 +36,10 @@ func (h *handler) ClearTaskLogs() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureFileTaskLogService(ctx, codeClearTaskLogsFailed) {
+			return
+		}
+
 		var (
 			count int64
 			err   error

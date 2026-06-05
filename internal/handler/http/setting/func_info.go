@@ -5,6 +5,7 @@ import (
 
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
+	"gorm.io/gorm"
 )
 
 type infoResponse struct {
@@ -27,9 +28,19 @@ type infoResponse struct {
 // @Router /api/setting/info [get]
 func (h *handler) Info() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
+		if !h.ensureSettingService(ctx, codeQueryFailed) {
+			return
+		}
+
 		setting, err := h.settingService.Query(ctx.GetContext())
 		if err != nil {
 			ctx.Fail(codeQueryFailed.WithError(err))
+
+			return
+		}
+
+		if setting == nil {
+			ctx.Fail(codeQueryFailed.WithError(gorm.ErrRecordNotFound))
 
 			return
 		}

@@ -19,6 +19,7 @@ import type {
   SearchResult,
   SubscriptionConfig,
 } from '@/api/subscription'
+import type { NormalizedTaskEngineListResponse } from '@/api/taskstate'
 import type { TelegramSetting, TelegramUser } from '@/api/telegram'
 import type { UserGroupInfo } from '@/api/usergroup'
 
@@ -36,6 +37,18 @@ const isSafeNonNegativeInteger = (value: unknown): value is number => {
 
 const isString = (value: unknown): value is string => {
   return typeof value === 'string'
+}
+
+const isBase64ByteString = (value: string): boolean => {
+  if (value === '') {
+    return true
+  }
+
+  if (value.length % 4 !== 0) {
+    return false
+  }
+
+  return /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
 }
 
 const isOptionalString = (value: unknown): value is string | undefined => {
@@ -56,6 +69,10 @@ const isBoolean = (value: unknown): value is boolean => {
 
 const isFiniteNumber = (value: unknown): value is number => {
   return typeof value === 'number' && Number.isFinite(value)
+}
+
+const isOptionalRecord = (value: unknown): boolean => {
+  return value === undefined || value === null || (isRecord(value) && !Array.isArray(value))
 }
 
 const normalizeItems = <T>(value: unknown, isValidItem: (item: unknown) => boolean): T[] | null => {
@@ -85,19 +102,37 @@ export const normalizeDashboardUsers = (value: unknown): Models.UserInfo[] | nul
 }
 
 export const normalizeDashboardUserGroups = (value: unknown): Models.UserGroup[] | null => {
-  return normalizeItems<Models.UserGroup>(value, (item) => {
+  if (!Array.isArray(value)) {
+    return null
+  }
+
+  const items: Models.UserGroup[] = []
+  for (const item of value) {
     if (!isRecord(item)) {
-      return false
+      return null
     }
 
-    return (
-      isSafePositiveInteger(item.id) &&
-      isString(item.name) &&
-      isSafeNonNegativeInteger(item.userCount) &&
-      isString(item.createdAt) &&
-      isString(item.updatedAt)
-    )
-  })
+    const userCount = item.userCount ?? 0
+    if (
+      !isSafePositiveInteger(item.id) ||
+      !isString(item.name) ||
+      !isSafeNonNegativeInteger(userCount) ||
+      !isString(item.createdAt) ||
+      !isString(item.updatedAt)
+    ) {
+      return null
+    }
+
+    items.push({
+      id: item.id,
+      name: item.name,
+      userCount,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+    })
+  }
+
+  return items
 }
 
 export const normalizeDashboardCloudTokens = (value: unknown): Models.CloudToken[] | null => {
@@ -143,31 +178,259 @@ export const normalizeLoginLogs = (value: unknown): Models.LoginLog[] | null => 
 }
 
 export const normalizeFileTaskLogs = (value: unknown): Models.FileTaskLog[] | null => {
-  return normalizeItems<Models.FileTaskLog>(value, (item) => {
+  if (!Array.isArray(value)) {
+    return null
+  }
+
+  const logs: Models.FileTaskLog[] = []
+  for (const item of value) {
     if (!isRecord(item)) {
-      return false
+      return null
     }
 
-    return (
-      isSafePositiveInteger(item.id) &&
-      isString(item.title) &&
-      isString(item.type) &&
-      isString(item.desc) &&
-      isString(item.beginAt) &&
-      isNullableString(item.endAt) &&
-      isString(item.status) &&
-      isString(item.result) &&
-      isString(item.errorMsg) &&
-      isSafeNonNegativeInteger(item.duration) &&
-      isSafeNonNegativeInteger(item.fileId) &&
-      isSafeNonNegativeInteger(item.userId) &&
-      isSafeNonNegativeInteger(item.completed) &&
-      isSafeNonNegativeInteger(item.total) &&
-      isSafeNonNegativeInteger(item.failed) &&
-      isString(item.createdAt) &&
-      isString(item.updatedAt)
-    )
-  })
+    const desc = item.desc ?? ''
+    const endAt = item.endAt ?? null
+    const result = item.result ?? ''
+    const errorMsg = item.errorMsg ?? ''
+    const addition = item.addition ?? {}
+    const duration = item.duration ?? 0
+    const fileId = item.fileId ?? 0
+    const userId = item.userId ?? 0
+    const completed = item.completed ?? 0
+    const total = item.total ?? 0
+    const failed = item.failed ?? 0
+
+    if (
+      !isSafePositiveInteger(item.id) ||
+      !isString(item.title) ||
+      !isString(item.type) ||
+      !isString(desc) ||
+      !isString(item.beginAt) ||
+      !isNullableString(endAt) ||
+      !isString(item.status) ||
+      !isString(result) ||
+      !isString(errorMsg) ||
+      !isOptionalRecord(addition) ||
+      !isSafeNonNegativeInteger(duration) ||
+      !isSafeNonNegativeInteger(fileId) ||
+      !isSafeNonNegativeInteger(userId) ||
+      !isSafeNonNegativeInteger(completed) ||
+      !isSafeNonNegativeInteger(total) ||
+      !isSafeNonNegativeInteger(failed) ||
+      !isString(item.createdAt) ||
+      !isString(item.updatedAt)
+    ) {
+      return null
+    }
+
+    logs.push({
+      id: item.id,
+      title: item.title,
+      type: item.type,
+      desc,
+      beginAt: item.beginAt,
+      endAt,
+      status: item.status,
+      result,
+      errorMsg,
+      addition: isRecord(addition) && !Array.isArray(addition) ? addition : {},
+      duration,
+      fileId,
+      userId,
+      completed,
+      total,
+      failed,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+    })
+  }
+
+  return logs
+}
+
+const defaultTaskStats = (): Models.TaskStats => ({
+  totalTasks: 0,
+  pendingTasks: 0,
+  runningTasks: 0,
+  completedTasks: 0,
+  failedTasks: 0,
+  cancelledTasks: 0,
+})
+
+export const isCompleteTaskStats = (value: unknown): value is Models.TaskStats => {
+  if (!isRecord(value)) {
+    return false
+  }
+
+  return (
+    isSafeNonNegativeInteger(value.totalTasks) &&
+    isSafeNonNegativeInteger(value.pendingTasks) &&
+    isSafeNonNegativeInteger(value.runningTasks) &&
+    isSafeNonNegativeInteger(value.completedTasks) &&
+    isSafeNonNegativeInteger(value.failedTasks) &&
+    (value.cancelledTasks === undefined || isSafeNonNegativeInteger(value.cancelledTasks))
+  )
+}
+
+const normalizeTaskStats = (value: unknown): Models.TaskStats => {
+  if (!isCompleteTaskStats(value)) {
+    return defaultTaskStats()
+  }
+
+  return {
+    totalTasks: value.totalTasks,
+    pendingTasks: value.pendingTasks,
+    runningTasks: value.runningTasks,
+    completedTasks: value.completedTasks,
+    failedTasks: value.failedTasks,
+    cancelledTasks: value.cancelledTasks ?? 0,
+  }
+}
+
+const normalizeTaskPayload = (value: unknown): Models.TaskInfo['payload'] | null => {
+  if (value === undefined || value === null) {
+    return ''
+  }
+
+  if (isString(value)) {
+    return isBase64ByteString(value) ? value : null
+  }
+
+  if (
+    Array.isArray(value) &&
+    value.every((item) => Number.isInteger(item) && item >= 0 && item <= 255)
+  ) {
+    return value
+  }
+
+  return null
+}
+
+const normalizeProcessorResult = (value: unknown): Models.ProcessorResult | null => {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  const duration = value.duration === undefined || value.duration === null ? 0 : value.duration
+  if (
+    !isString(value.processorId) ||
+    !isString(value.status) ||
+    !isOptionalNullableString(value.error) ||
+    !isOptionalNullableString(value.startTime) ||
+    !isOptionalNullableString(value.endTime) ||
+    !isFiniteNumber(duration) ||
+    duration < 0
+  ) {
+    return null
+  }
+
+  return {
+    processorId: value.processorId,
+    status: value.status,
+    error: isString(value.error) ? value.error : undefined,
+    startTime: isString(value.startTime) ? value.startTime : '',
+    endTime: isString(value.endTime) ? value.endTime : '',
+    duration,
+  }
+}
+
+const normalizeProcessorResults = (value: unknown): Models.ProcessorResult[] | null => {
+  if (value === undefined || value === null) {
+    return []
+  }
+
+  if (!Array.isArray(value)) {
+    return null
+  }
+
+  const results: Models.ProcessorResult[] = []
+  for (const item of value) {
+    const result = normalizeProcessorResult(item)
+    if (!result) {
+      return null
+    }
+
+    results.push(result)
+  }
+
+  return results
+}
+
+const normalizeTaskInfo = (value: unknown): Models.TaskInfo | null => {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  const payload = normalizeTaskPayload(value.payload)
+  const results = normalizeProcessorResults(value.results)
+  if (
+    !isString(value.id) ||
+    !isString(value.topic) ||
+    payload === null ||
+    !isString(value.status) ||
+    !isOptionalNullableString(value.workerId) ||
+    !isOptionalNullableString(value.receiveAt) ||
+    !isOptionalNullableString(value.startAt) ||
+    !isOptionalNullableString(value.endAt) ||
+    !results
+  ) {
+    return null
+  }
+
+  return {
+    id: value.id,
+    topic: value.topic,
+    payload,
+    status: value.status,
+    workerId: isString(value.workerId) ? value.workerId : '',
+    receiveAt: isString(value.receiveAt) ? value.receiveAt : '',
+    startAt: isString(value.startAt) ? value.startAt : null,
+    endAt: isString(value.endAt) ? value.endAt : null,
+    results,
+  }
+}
+
+const normalizeTaskInfos = (value: unknown): Models.TaskInfo[] | null => {
+  if (value === undefined || value === null) {
+    return []
+  }
+
+  if (!Array.isArray(value)) {
+    return null
+  }
+
+  const tasks: Models.TaskInfo[] = []
+  for (const item of value) {
+    const task = normalizeTaskInfo(item)
+    if (!task) {
+      return null
+    }
+
+    tasks.push(task)
+  }
+
+  return tasks
+}
+
+export const normalizeTaskEngineListResponse = (
+  value: unknown
+): NormalizedTaskEngineListResponse | null => {
+  if (!isRecord(value) || !isBoolean(value.isRunning)) {
+    return null
+  }
+
+  const pendingTasks = normalizeTaskInfos(value.pendingTasks)
+  const runningTasks = normalizeTaskInfos(value.runningTasks)
+  if (!pendingTasks || !runningTasks) {
+    return null
+  }
+
+  return {
+    isRunning: value.isRunning,
+    stats: normalizeTaskStats(value.stats),
+    pendingTasks,
+    runningTasks,
+  }
 }
 
 const isOptionalFileTaskLogs = (value: unknown): boolean => {
@@ -265,10 +528,6 @@ export const normalizePlanLogResults = (value: unknown): PlanLogResult[] | null 
   })
 }
 
-const isOptionalRecord = (value: unknown): boolean => {
-  return value === undefined || value === null || (isRecord(value) && !Array.isArray(value))
-}
-
 export const normalizeFileSearchItems = (value: unknown): FileSearchItem[] | null => {
   return normalizeItems<FileSearchItem>(value, (item) => {
     if (!isRecord(item)) {
@@ -333,20 +592,44 @@ export const normalizeUserGroups = (value: unknown): UserGroupInfo[] | null => {
 }
 
 export const normalizeFamilies = (value: unknown): FamilyInfo[] | null => {
-  return normalizeItems<FamilyInfo>(value, (item) => {
+  if (!Array.isArray(value)) {
+    return null
+  }
+
+  const families: FamilyInfo[] = []
+  for (const item of value) {
     if (!isRecord(item)) {
-      return false
+      return null
     }
 
-    return (
-      isString(item.familyId) &&
-      isString(item.remarkName) &&
-      isString(item.createTime) &&
-      isString(item.expireTime) &&
-      isSafeNonNegativeInteger(item.count) &&
-      isSafeNonNegativeInteger(item.userRole)
-    )
-  })
+    const familyType = item.type === undefined || item.type === null ? 0 : item.type
+    const useFlag = item.useFlag === undefined || item.useFlag === null ? 0 : item.useFlag
+    if (
+      !isString(item.familyId) ||
+      !isString(item.remarkName) ||
+      !isString(item.createTime) ||
+      !isString(item.expireTime) ||
+      !isSafeNonNegativeInteger(item.count) ||
+      !isSafeNonNegativeInteger(familyType) ||
+      !isSafeNonNegativeInteger(useFlag) ||
+      !isSafeNonNegativeInteger(item.userRole)
+    ) {
+      return null
+    }
+
+    families.push({
+      familyId: item.familyId,
+      remarkName: item.remarkName,
+      createTime: item.createTime,
+      expireTime: item.expireTime,
+      count: item.count,
+      type: familyType,
+      useFlag,
+      userRole: item.userRole,
+    })
+  }
+
+  return families
 }
 
 export const normalizeFileNodes = (value: unknown): FileNode[] | null => {
@@ -364,15 +647,50 @@ export const normalizeFileNodes = (value: unknown): FileNode[] | null => {
   })
 }
 
+export interface FileNodePage {
+  files: FileNode[]
+  total: number
+  currentPage: number
+  pageSize: number
+}
+
+export const normalizeFileNodePage = (value: unknown): FileNodePage | null => {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  const files = normalizeFileNodes(value.data)
+  if (
+    !files ||
+    !isSafeNonNegativeInteger(value.total) ||
+    !isSafePositiveInteger(value.currentPage) ||
+    !isSafePositiveInteger(value.pageSize)
+  ) {
+    return null
+  }
+
+  return {
+    files,
+    total: value.total,
+    currentPage: value.currentPage,
+    pageSize: value.pageSize,
+  }
+}
+
 export const normalizeShareInfo = (value: unknown): ShareInfo | null => {
   if (!isRecord(value)) {
     return null
   }
 
+  const shareMode =
+    value.shareMode === undefined || value.shareMode === null || value.shareMode === 0
+      ? 1
+      : value.shareMode
   if (
     !isString(value.id) ||
     !isString(value.name) ||
     !isFiniteNumber(value.shareId) ||
+    !isSafePositiveInteger(shareMode) ||
     !isString(value.shareTime) ||
     !isBoolean(value.isFolder) ||
     !isString(value.accessCode)
@@ -384,6 +702,7 @@ export const normalizeShareInfo = (value: unknown): ShareInfo | null => {
     id: value.id,
     name: value.name,
     shareId: value.shareId,
+    shareMode,
     shareTime: value.shareTime,
     isFolder: value.isFolder,
     accessCode: value.accessCode,
@@ -395,14 +714,29 @@ const normalizeShareResourceInfo = (value: unknown): ShareResourceInfo | null =>
     return null
   }
 
+  const isTop = value.isTop === undefined || value.isTop === null ? 0 : value.isTop
+  let hasShareSource = false
+  let accessCode = ''
+  if (isString(value.accessCode)) {
+    accessCode = value.accessCode
+    hasShareSource = true
+  }
+
+  let shareUrl = accessCode
+  if (isString(value.shareUrl)) {
+    shareUrl = value.shareUrl
+    hasShareSource = true
+  }
+
   if (
     !isString(value.id) ||
     !isString(value.name) ||
     !isFiniteNumber(value.shareId) ||
     !isString(value.userId) ||
     !isBoolean(value.isFolder) ||
-    !isString(value.accessCode) ||
-    !isString(value.shareTime)
+    !hasShareSource ||
+    !isString(value.shareTime) ||
+    !isSafeNonNegativeInteger(isTop)
   ) {
     return null
   }
@@ -413,8 +747,10 @@ const normalizeShareResourceInfo = (value: unknown): ShareResourceInfo | null =>
     shareId: value.shareId,
     userId: value.userId,
     isFolder: value.isFolder,
-    accessCode: value.accessCode,
+    accessCode,
+    shareUrl,
     shareTime: value.shareTime,
+    isTop,
   }
 }
 
@@ -560,6 +896,7 @@ export const normalizeSearchResults = (value: unknown): SearchResult[] | null =>
       isString(item.name) &&
       isString(item.uploadTime) &&
       isString(item.source) &&
+      isOptionalString(item.shareAccessCode) &&
       isOptionalString(item.size) &&
       isOptionalString(item.cover) &&
       isOptionalString(item.note)
@@ -602,6 +939,7 @@ export const normalizeSubscriptionConfigResponse = (value: unknown): Subscriptio
   }
 
   if (
+    !isBoolean(value.enabled) ||
     !isBoolean(value.enableTMDB) ||
     !isBoolean(value.enableDouban) ||
     !isString(value.panSearchURL) ||
@@ -617,6 +955,7 @@ export const normalizeSubscriptionConfigResponse = (value: unknown): Subscriptio
   }
 
   return {
+    enabled: value.enabled,
     enableTMDB: value.enableTMDB,
     enableDouban: value.enableDouban,
     panSearchURL: value.panSearchURL,
@@ -690,22 +1029,43 @@ export const normalizeTelegramSetting = (value: unknown): TelegramSetting | null
 }
 
 export const normalizeTelegramUsers = (value: unknown): TelegramUser[] | null => {
-  return normalizeItems<TelegramUser>(value, (item) => {
+  if (!Array.isArray(value)) {
+    return null
+  }
+
+  const items: TelegramUser[] = []
+  for (const item of value) {
     if (!isRecord(item)) {
-      return false
+      return null
     }
 
-    return (
-      isSafePositiveInteger(item.userID) &&
-      isString(item.username) &&
-      isString(item.firstName) &&
-      isString(item.lastName) &&
-      isString(item.mountPath) &&
-      typeof item.isAdmin === 'boolean' &&
-      isString(item.lastSeenAt) &&
-      isString(item.createdAt)
-    )
-  })
+    const lastName = item.lastName ?? ''
+    if (
+      !isSafePositiveInteger(item.userID) ||
+      !isString(item.username) ||
+      !isString(item.firstName) ||
+      !isString(lastName) ||
+      !isString(item.mountPath) ||
+      typeof item.isAdmin !== 'boolean' ||
+      !isString(item.lastSeenAt) ||
+      !isString(item.createdAt)
+    ) {
+      return null
+    }
+
+    items.push({
+      userID: item.userID,
+      username: item.username,
+      firstName: item.firstName,
+      lastName,
+      mountPath: item.mountPath,
+      isAdmin: item.isAdmin,
+      lastSeenAt: item.lastSeenAt,
+      createdAt: item.createdAt,
+    })
+  }
+
+  return items
 }
 
 const isStringArray = (value: unknown): value is string[] => {
@@ -729,13 +1089,25 @@ const normalizeMediaConfig = (value: unknown): Models.MediaConfig | null => {
     !isMediaFileConflictPolicy(value.conflictPolicy) ||
     !isString(value.baseURL) ||
     !isStringArray(value.includedSuffixes) ||
-    !isBoolean(value.autoRebuildEnable) ||
-    !isString(value.autoRebuildCron)
+    (value.autoRebuildEnable !== undefined &&
+      value.autoRebuildEnable !== null &&
+      !isBoolean(value.autoRebuildEnable)) ||
+    (value.autoRebuildCron !== undefined &&
+      value.autoRebuildCron !== null &&
+      !isString(value.autoRebuildCron)) ||
+    (value.lastRebuildTime !== undefined &&
+      value.lastRebuildTime !== null &&
+      !isString(value.lastRebuildTime))
   ) {
     return null
   }
 
-  return value as unknown as Models.MediaConfig
+  return {
+    ...value,
+    autoRebuildEnable: value.autoRebuildEnable ?? false,
+    autoRebuildCron: value.autoRebuildCron ?? '0 2 * * *',
+    lastRebuildTime: value.lastRebuildTime ?? '',
+  } as unknown as Models.MediaConfig
 }
 
 export const normalizeMediaConfigInfoResponse = (value: unknown): ConfigInfoResponse | null => {

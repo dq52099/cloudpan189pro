@@ -46,7 +46,11 @@ func (h *handler) PlanList() httpcontext.HandlerFunc {
 
 		// 获取当前用户信息用于权限控制
 		req.UserID = ctx.GetInt64(consts.CtxKeyUserId)
+
 		req.IsAdmin = ctx.GetBool(consts.CtxKeyIsAdmin)
+		if !h.ensurePlanService(ctx, codePlanListFailed) {
+			return
+		}
 
 		list, err := h.planService.List(ctx.GetContext(), req)
 		if err != nil {
@@ -54,6 +58,8 @@ func (h *handler) PlanList() httpcontext.HandlerFunc {
 
 			return
 		}
+
+		list = compactAutoIngestPlans(list)
 
 		total, err := h.planService.Count(ctx.GetContext(), req)
 		if err != nil {

@@ -11,6 +11,8 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/taskengine"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
+	mediaconfigSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mediaconfig"
 	"github.com/xxcheng123/cloudpan189-share/internal/shared"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"go.uber.org/zap"
@@ -21,19 +23,23 @@ const defaultRebuildStrmCron = "0 2 * * *"
 
 type RebuildStrmScheduler struct {
 	running     bool
+	stopping    bool
 	mu          sync.Mutex
 	ctx         context.Context
 	cancel      context.CancelFunc
+	done        chan struct{}
 	taskEngine  taskengine.TaskEngine
+	mediaConfig mediaconfigSvi.Service
 	lastRun     time.Time
 	currentCron string
 	nextRunAt   time.Time
 }
 
-func NewRebuildStrmScheduler(taskEngine taskengine.TaskEngine) Scheduler {
+func NewRebuildStrmScheduler(taskEngine taskengine.TaskEngine, mediaConfig mediaconfigSvi.Service) Scheduler {
 	return &RebuildStrmScheduler{
-		taskEngine: taskEngine,
-		running:    false,
+		taskEngine:  taskEngine,
+		mediaConfig: mediaConfig,
+		running:     false,
 	}
 }
 
@@ -43,14 +49,25 @@ func (s *RebuildStrmScheduler) Start(ctx context.Context) error {
 	}
 	defer s.mu.Unlock()
 
-	if s.running {
+	shouldStart, err := shouldStartScheduler(s.running, s.stopping)
+	if err != nil {
+		return err
+	}
+
+	if !shouldStart {
 		return nil
 	}
 
+	if isNilDependency(s.taskEngine) {
+		return ErrSchedulerTaskEngineMissing
+	}
+
 	s.ctx, s.cancel = context.WithCancel(ctx)
-	s.running = true
+	done := markSchedulerRunStarted(&s.running, &s.stopping, &s.done)
 
 	gopool.Go(func() {
+		defer finishSchedulerRun(&s.mu, &s.running, &s.stopping, &s.cancel, &s.done, done)
+
 		s.loop()
 
 		ctx.Info("STRM定时重建执行器已停止~")
@@ -60,18 +77,12 @@ func (s *RebuildStrmScheduler) Start(ctx context.Context) error {
 }
 
 func (s *RebuildStrmScheduler) Stop() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if !s.running {
+	cancel, done, ok := beginSchedulerStop(&s.mu, &s.running, &s.stopping, &s.cancel, &s.done)
+	if !ok {
 		return
 	}
 
-	if s.cancel != nil {
-		s.cancel()
-	}
-
-	s.running = false
+	waitSchedulerStop(cancel, done)
 }
 
 // loop 每分钟检查一次是否到达下一次执行时间。
@@ -95,17 +106,18 @@ func (s *RebuildStrmScheduler) tick() {
 	defer func() {
 		if r := recover(); r != nil {
 			s.ctx.Error("STRM定时重建执行器发生异常",
-				zap.Any("panic", r),
+				zap.String("panic", sanitizeSchedulerPanicValue(r)),
 				zap.String("stack", string(debug.Stack())))
 		}
 	}()
 
 	// 检查是否启用自动重建
-	if shared.MediaConfig == nil || !shared.MediaConfig.Enable || !shared.MediaConfig.AutoRebuildEnable {
+	mediaConfig := shared.GetMediaConfig()
+	if mediaConfig == nil || !mediaConfig.Enable || !mediaConfig.AutoRebuildEnable {
 		return
 	}
 
-	cronExpr := shared.MediaConfig.AutoRebuildCron
+	cronExpr := mediaConfig.AutoRebuildCron
 	if cronExpr == "" {
 		cronExpr = defaultRebuildStrmCron
 	}
@@ -145,10 +157,24 @@ func (s *RebuildStrmScheduler) tick() {
 	s.nextRunAt = schedule.Next(now)
 	s.lastRun = now
 
-	// 更新全局配置 + 持久化到 DB，供前端展示"上次重建时间"
-	if shared.MediaConfig != nil {
-		shared.MediaConfig.LastRebuildTime = now
+	s.syncLastRebuildTime(now)
+}
+
+func (s *RebuildStrmScheduler) syncLastRebuildTime(now time.Time) {
+	if s.mediaConfig == nil {
+		shared.SetMediaConfigLastRebuildTime(now)
+
+		return
 	}
+
+	if err := s.mediaConfig.Update(s.ctx, utils.WithField("last_rebuild_time", now)); err != nil {
+		s.ctx.Error("更新 STRM 上次重建时间失败", zap.Error(err), zap.Time("last_rebuild_time", now))
+		shared.SetMediaConfigLastRebuildTime(now)
+
+		return
+	}
+
+	shared.SetMediaConfigLastRebuildTime(now)
 }
 
 func (s *RebuildStrmScheduler) doRebuild() error {

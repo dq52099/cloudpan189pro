@@ -68,20 +68,46 @@
       </div>
 
       <div class="action-buttons">
-        <button class="action-btn copy-link" :disabled="copyPending" @click="copyLink">
+        <button
+          type="button"
+          class="action-btn copy-link"
+          :disabled="copyPending"
+          @click="copyLink"
+        >
           <n-icon><LinkOutline /></n-icon>
           <span>复制链接</span>
         </button>
-        <button class="action-btn download" :disabled="downloadPending" @click="downloadFile">
+        <button
+          type="button"
+          class="action-btn download"
+          :disabled="downloadPending"
+          @click="downloadFile"
+        >
           <n-icon><DownloadOutline /></n-icon>
           <span>下载</span>
         </button>
-        <div class="qrcode-container">
-          <button class="action-btn qrcode">
+        <div
+          class="qrcode-container"
+          :class="{ 'is-open': qrcodeOpen }"
+          @keydown.escape.stop="closeQRCode"
+        >
+          <button
+            type="button"
+            class="action-btn qrcode"
+            aria-controls="file-detail-qrcode"
+            aria-haspopup="dialog"
+            :aria-expanded="qrcodeOpen"
+            @click="toggleQRCode"
+          >
             <n-icon><QrCodeOutline /></n-icon>
             <span>二维码</span>
           </button>
-          <div class="qrcode-tooltip">
+          <div
+            id="file-detail-qrcode"
+            class="qrcode-tooltip"
+            role="dialog"
+            aria-label="文件分享二维码"
+          >
             <n-qr-code
               :value="shareUrl"
               :size="120"
@@ -111,6 +137,7 @@ import {
   DocumentOutline,
 } from '@vicons/ionicons5'
 import { type FileChild, createDownloadUrl } from '@/api/file'
+import { formatFileSize } from '@/utils/format'
 import { formatDateTime } from '@/utils/time'
 import { normalizeCreateDownloadUrlResponse } from '@/utils/responseGuards'
 import { getErrorMessage } from '@/utils/api'
@@ -127,7 +154,7 @@ const props = defineProps<Props>()
 const isVideoFile = computed(() => {
   if (!props.fileInfo.name) return false
   const ext = props.fileInfo.name.split('.').pop()?.toLowerCase()
-  return ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'm4v', 'webm'].includes(ext || '')
+  return ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'm4v', 'webm', 'm3u8'].includes(ext || '')
 })
 
 const isImageFile = computed(() => {
@@ -140,7 +167,7 @@ const isImageFile = computed(() => {
 const getFileTypeIcon = (fileName: string) => {
   const ext = fileName.split('.').pop()?.toLowerCase()
 
-  if (['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'm4v', 'webm'].includes(ext || '')) {
+  if (['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'm4v', 'webm', 'm3u8'].includes(ext || '')) {
     return PlayOutline
   }
   if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg'].includes(ext || '')) {
@@ -154,7 +181,7 @@ const getFileTypeIcon = (fileName: string) => {
 const getFileTypeLabel = (fileName: string): string => {
   const ext = fileName.split('.').pop()?.toLowerCase()
 
-  if (['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'm4v', 'webm'].includes(ext || '')) {
+  if (['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'm4v', 'webm', 'm3u8'].includes(ext || '')) {
     return 'Video'
   }
   if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg'].includes(ext || '')) {
@@ -179,17 +206,6 @@ const getFileTypeLabel = (fileName: string): string => {
   return 'File'
 }
 
-// 格式化文件大小
-const formatFileSize = (bytes: number): string => {
-  if (bytes === 0) return '0 B'
-
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-}
-
 // 消息提示
 const message = useMessage()
 
@@ -200,6 +216,7 @@ const isMounted = ref(true)
 const openPlayerPending = ref(false)
 const downloadPending = ref(false)
 const copyPending = ref(false)
+const qrcodeOpen = ref(false)
 const openPlayerRequestId = ref(0)
 const downloadRequestId = ref(0)
 const copyRequestId = ref(0)
@@ -225,6 +242,7 @@ watch(
     openPlayerPending.value = false
     downloadPending.value = false
     copyPending.value = false
+    qrcodeOpen.value = false
   }
 )
 
@@ -234,6 +252,14 @@ onUnmounted(() => {
   downloadRequestId.value += 1
   copyRequestId.value += 1
 })
+
+const toggleQRCode = () => {
+  qrcodeOpen.value = !qrcodeOpen.value
+}
+
+const closeQRCode = () => {
+  qrcodeOpen.value = false
+}
 
 // 功能实现
 const openWithPlayer = (player: string) => {
@@ -294,8 +320,10 @@ const openWithPlayer = (player: string) => {
         return
       }
 
-      console.error('获取播放链接失败:', error)
-      message.error(getErrorMessage(error, '获取播放链接失败'))
+      const errorMessage = getErrorMessage(error, '获取播放链接失败')
+
+      console.error('获取播放链接失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isActiveRequest(requestId, openPlayerRequestId.value, fileId)) {
@@ -330,12 +358,14 @@ const copyLink = () => {
           return
         }
 
-        console.error('复制链接失败:', error)
+        const errorMessage = getErrorMessage(error, '复制链接失败')
+
+        console.error('复制链接失败:', errorMessage)
         // 降级方案：使用传统方法复制
         if (fallbackCopyToClipboard(currentUrl)) {
           message.success('链接已复制到剪贴板')
         } else {
-          message.error(getErrorMessage(error, '复制链接失败'))
+          message.error(errorMessage)
         }
       })
       .finally(() => {
@@ -406,8 +436,10 @@ const downloadFile = () => {
         return
       }
 
-      console.error('下载失败:', error)
-      message.error(getErrorMessage(error, '下载失败'))
+      const errorMessage = getErrorMessage(error, '下载失败')
+
+      console.error('下载失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isActiveRequest(requestId, downloadRequestId.value, fileId)) {
@@ -604,6 +636,14 @@ const downloadFile = () => {
   color: var(--n-text-color-2);
 }
 
+.file-placeholder p {
+  max-width: 100%;
+  margin: 12px 0 0;
+  padding: 0 16px;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
 .file-icon {
   font-size: 48px;
   margin-bottom: 12px;
@@ -686,17 +726,20 @@ const downloadFile = () => {
 }
 
 .file-info {
-  flex: 1;
-  min-width: 200px;
+  flex: 1 1 220px;
+  min-width: 0;
 }
 
 .info-item {
   display: flex;
+  gap: 4px;
   margin-bottom: 8px;
   font-size: 14px;
+  min-width: 0;
 }
 
 .info-item .label {
+  flex: 0 0 auto;
   color: var(--n-text-color-2);
   min-width: 80px;
 }
@@ -704,12 +747,16 @@ const downloadFile = () => {
 .info-item .value {
   color: var(--n-text-color);
   font-weight: 500;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .action-buttons {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 100%;
 }
 
 .action-btn {
@@ -725,6 +772,7 @@ const downloadFile = () => {
   font-size: 14px;
   text-decoration: none;
   color: var(--n-text-color);
+  min-width: 0;
 }
 
 .action-btn:hover {
@@ -772,6 +820,7 @@ const downloadFile = () => {
 .qrcode-tooltip {
   position: absolute;
   bottom: 100%;
+  right: 0;
   background: var(--n-card-color);
   border: 1px solid var(--n-border-color);
   border-radius: 8px;
@@ -784,6 +833,7 @@ const downloadFile = () => {
   margin-bottom: 8px;
   text-align: center;
   min-width: 150px;
+  max-width: calc(100vw - 32px);
 }
 
 .qrcode-tooltip::after {
@@ -795,7 +845,8 @@ const downloadFile = () => {
   border-top-color: var(--n-card-color);
 }
 
-.qrcode-container:hover .qrcode-tooltip {
+.qrcode-container:hover .qrcode-tooltip,
+.qrcode-container.is-open .qrcode-tooltip {
   opacity: 1;
   visibility: visible;
 }

@@ -41,6 +41,10 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureMountPointService(ctx, busCodeStorageQueryMountPointError) {
+			return
+		}
+
 		mountPointInfo, err := h.mountPointService.QueryByID(ctx.GetContext(), req.ID)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -48,6 +52,12 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 			} else {
 				ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
 			}
+
+			return
+		}
+
+		if mountPointInfo == nil {
+			ctx.Fail(busCodeStorageMountPointNotFound.WithError(gorm.ErrRecordNotFound))
 
 			return
 		}
@@ -73,6 +83,10 @@ func (h *handler) Delete() httpcontext.HandlerFunc {
 			ctx.GetContext().Error("序列化存储删除任务失败", zap.Error(err))
 			ctx.Fail(busCodeStorageSendTaskFail.WithError(err))
 
+			return
+		}
+
+		if !h.ensureTaskEngine(ctx, busCodeStorageSendTaskFail) {
 			return
 		}
 

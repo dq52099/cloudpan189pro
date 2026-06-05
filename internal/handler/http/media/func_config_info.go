@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"gorm.io/gorm"
 )
@@ -24,6 +25,10 @@ type configInfoResponse struct {
 // @Router /api/media/config/info [get]
 func (h *handler) ConfigInfo() httpcontext.HandlerFunc {
 	return func(ctx *httpcontext.Context) {
+		if !h.ensureMediaConfigService(ctx, codeConfigQueryFailed) {
+			return
+		}
+
 		cfg, err := h.mediaConfigService.Query(ctx.GetContext())
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -40,9 +45,29 @@ func (h *handler) ConfigInfo() httpcontext.HandlerFunc {
 			return
 		}
 
+		if cfg == nil {
+			ctx.Success(&configInfoResponse{
+				Initialized: false,
+				Config:      nil,
+			})
+
+			return
+		}
+
 		ctx.Success(&configInfoResponse{
 			Initialized: true,
-			Config:      cfg,
+			Config:      mediaConfigResponse(cfg),
 		})
 	}
+}
+
+func mediaConfigResponse(cfg *models.MediaConfig) *models.MediaConfig {
+	if cfg == nil {
+		return nil
+	}
+
+	response := *cfg
+	response.BaseURL = utils.RedactURLForLog(response.BaseURL)
+
+	return &response
 }

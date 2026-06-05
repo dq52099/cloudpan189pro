@@ -1,186 +1,144 @@
 <template>
   <div class="dashboard">
-    <n-grid :cols="24" :x-gap="16" :y-gap="16">
+    <div class="dashboard-grid">
       <!-- 个人信息展示区 -->
-      <n-grid-item :span="12">
-        <n-card title="个人信息" class="info-card">
-          <n-descriptions
-            :column="1"
-            label-placement="left"
-            label-style="width: 120px; font-weight: 500;"
-          >
-            <n-descriptions-item label="用户名">
-              <n-text strong>{{ userInfo.username || '-' }}</n-text>
-            </n-descriptions-item>
-            <n-descriptions-item label="状态">
-              <n-tag :type="getUserStatusType(userInfo.status)" size="small">
-                {{ getUserStatusText(userInfo.status) }}
-              </n-tag>
-            </n-descriptions-item>
-            <n-descriptions-item label="用户组">
-              <n-text>{{ userInfo.groupName || '-' }}</n-text>
-            </n-descriptions-item>
-            <n-descriptions-item label="管理员权限">
-              <n-tag :type="canUseAdminFeatures ? 'success' : 'default'" size="small">
-                {{ canUseAdminFeatures ? '是' : '否' }}
-              </n-tag>
-            </n-descriptions-item>
-          </n-descriptions>
-        </n-card>
-      </n-grid-item>
+      <n-card title="个人信息" class="info-card">
+        <n-descriptions :column="1" label-placement="left">
+          <n-descriptions-item label="用户名">
+            <n-text strong>{{ displayUsername }}</n-text>
+          </n-descriptions-item>
+          <n-descriptions-item label="状态">
+            <n-tag :type="getUserStatusType(displayUserStatus)" size="small">
+              {{ getUserStatusText(displayUserStatus) }}
+            </n-tag>
+          </n-descriptions-item>
+          <n-descriptions-item label="用户组">
+            <n-text>{{ displayUserGroup }}</n-text>
+          </n-descriptions-item>
+          <n-descriptions-item label="管理员权限">
+            <n-tag :type="displayIsAdmin ? 'success' : 'default'" size="small">
+              {{ displayIsAdmin ? '是' : '否' }}
+            </n-tag>
+          </n-descriptions-item>
+        </n-descriptions>
+      </n-card>
 
       <!-- 系统信息展示区 -->
-      <n-grid-item :span="12">
-        <n-card title="系统信息" class="info-card">
-          <n-descriptions
-            :column="1"
-            label-placement="left"
-            label-style="width: 120px; font-weight: 500;"
-          >
-            <n-descriptions-item label="站点名称">
-              <n-text strong>{{ systemInfo.title || '-' }}</n-text>
-            </n-descriptions-item>
-            <n-descriptions-item label="站点URL">
-              <n-text>{{ systemInfo.baseURL || '-' }}</n-text>
-            </n-descriptions-item>
-            <n-descriptions-item label="运行时间">
-              <n-text>{{ systemInfo.runTimeHuman || '-' }}</n-text>
-            </n-descriptions-item>
-            <n-descriptions-item label="WebDAV认证">
-              <n-tag :type="systemInfo.enableAuth ? 'success' : 'warning'" size="small">
-                {{ systemInfo.enableAuth ? '需要认证' : '无需认证' }}
-              </n-tag>
-            </n-descriptions-item>
-          </n-descriptions>
-        </n-card>
-      </n-grid-item>
+      <n-card title="系统信息" class="info-card">
+        <n-descriptions :column="1" label-placement="left">
+          <n-descriptions-item label="站点名称">
+            <n-text strong>{{ systemInfo.title || '-' }}</n-text>
+          </n-descriptions-item>
+          <n-descriptions-item label="站点URL">
+            <n-text>{{ systemInfo.baseURL || '-' }}</n-text>
+          </n-descriptions-item>
+          <n-descriptions-item label="运行时间">
+            <n-text>{{ systemInfo.runTimeHuman || '-' }}</n-text>
+          </n-descriptions-item>
+          <n-descriptions-item label="WebDAV认证">
+            <n-tag :type="systemInfo.enableAuth ? 'success' : 'warning'" size="small">
+              {{ systemInfo.enableAuth ? '需要认证' : '无需认证' }}
+            </n-tag>
+          </n-descriptions-item>
+        </n-descriptions>
+      </n-card>
 
       <!-- 资源统计展示区 -->
-      <n-grid-item v-if="canUseAdminFeatures" :span="24">
-        <n-card title="资源统计" class="resource-card">
-          <div v-if="loadingSummary" class="summary-loading">资源统计加载中...</div>
-          <n-grid v-else :cols="5" :x-gap="24" :y-gap="24">
-            <n-grid-item>
-              <div class="stat-item">
-                <div class="stat-icon" style="background: #2080f0">
-                  <n-icon size="24"><PeopleOutline /></n-icon>
-                </div>
-                <div class="stat-content">
-                  <div class="stat-value">{{ summaryData.users.total }}</div>
-                  <div class="stat-label">用户总数</div>
-                </div>
+      <n-card v-if="canUseAdminFeatures" title="资源统计" class="resource-card">
+        <div v-if="loadingSummary" class="summary-loading">资源统计加载中...</div>
+        <div v-else class="stats-grid">
+          <div class="stat-item">
+            <div class="stat-icon" style="background: #2080f0">
+              <n-icon size="24"><PeopleOutline /></n-icon>
+            </div>
+            <div class="stat-content">
+              <div class="stat-value">{{ summaryData.users.total }}</div>
+              <div class="stat-label">用户总数</div>
+            </div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-icon" style="background: #18a058">
+              <n-icon size="24"><FolderOutline /></n-icon>
+            </div>
+            <div class="stat-content">
+              <div class="stat-value">{{ summaryData.mountPoints.total }}</div>
+              <div class="stat-label">挂载点</div>
+            </div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-icon" style="background: #f0a20a">
+              <n-icon size="24"><KeyOutline /></n-icon>
+            </div>
+            <div class="stat-content">
+              <div class="stat-value">{{ summaryData.cloudTokens.total }}</div>
+              <div class="stat-label">云盘令牌</div>
+            </div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-icon" style="background: #9c27b0">
+              <n-icon size="24"><ShareSocialOutline /></n-icon>
+            </div>
+            <div class="stat-content">
+              <div class="stat-value">{{ summaryData.subscribeShares }}</div>
+              <div class="stat-label">订阅分享</div>
+            </div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-icon" style="background: #ff9800">
+              <n-icon size="24"><FolderOpenOutline /></n-icon>
+            </div>
+            <div class="stat-content">
+              <div class="stat-value">{{ summaryData.virtualFiles.folders }}</div>
+              <div class="stat-label">文件夹数</div>
+            </div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-icon" style="background: #00acc1">
+              <n-icon size="24"><DocumentOutline /></n-icon>
+            </div>
+            <div class="stat-content">
+              <div class="stat-value">{{ summaryData.virtualFiles.files }}</div>
+              <div class="stat-label">文件数</div>
+            </div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-icon" style="background: #7b1fa2">
+              <n-icon size="24"><PlayOutline /></n-icon>
+            </div>
+            <div class="stat-content">
+              <div class="stat-value">
+                {{ summaryData.media.enabled ? summaryData.media.strmFiles : 0 }}
               </div>
-            </n-grid-item>
-            <n-grid-item>
-              <div class="stat-item">
-                <div class="stat-icon" style="background: #18a058">
-                  <n-icon size="24"><FolderOutline /></n-icon>
-                </div>
-                <div class="stat-content">
-                  <div class="stat-value">{{ summaryData.mountPoints.total }}</div>
-                  <div class="stat-label">挂载点</div>
-                </div>
-              </div>
-            </n-grid-item>
-            <n-grid-item>
-              <div class="stat-item">
-                <div class="stat-icon" style="background: #f0a20a">
-                  <n-icon size="24"><KeyOutline /></n-icon>
-                </div>
-                <div class="stat-content">
-                  <div class="stat-value">{{ summaryData.cloudTokens.total }}</div>
-                  <div class="stat-label">云盘令牌</div>
-                </div>
-              </div>
-            </n-grid-item>
-            <n-grid-item>
-              <div class="stat-item">
-                <div class="stat-icon" style="background: #9c27b0">
-                  <n-icon size="24"><ShareSocialOutline /></n-icon>
-                </div>
-                <div class="stat-content">
-                  <div class="stat-value">{{ summaryData.subscribeShares }}</div>
-                  <div class="stat-label">订阅分享</div>
-                </div>
-              </div>
-            </n-grid-item>
-            <n-grid-item>
-              <div class="stat-item">
-                <div class="stat-icon" style="background: #ff9800">
-                  <n-icon size="24"><FolderOpenOutline /></n-icon>
-                </div>
-                <div class="stat-content">
-                  <div class="stat-value">{{ summaryData.virtualFiles.folders }}</div>
-                  <div class="stat-label">文件夹数</div>
-                </div>
-              </div>
-            </n-grid-item>
-            <n-grid-item>
-              <div class="stat-item">
-                <div class="stat-icon" style="background: #00acc1">
-                  <n-icon size="24"><DocumentOutline /></n-icon>
-                </div>
-                <div class="stat-content">
-                  <div class="stat-value">{{ summaryData.virtualFiles.files }}</div>
-                  <div class="stat-label">文件数</div>
-                </div>
-              </div>
-            </n-grid-item>
-            <n-grid-item>
-              <div class="stat-item">
-                <div class="stat-icon" style="background: #7b1fa2">
-                  <n-icon size="24"><PlayOutline /></n-icon>
-                </div>
-                <div class="stat-content">
-                  <div class="stat-value">
-                    {{ summaryData.media.enabled ? summaryData.media.strmFiles : 0 }}
-                  </div>
-                  <div class="stat-label">STRM文件</div>
-                </div>
-              </div>
-            </n-grid-item>
-            <n-grid-item>
-              <div class="stat-item">
-                <div class="stat-icon" style="background: #e42c1e">
-                  <n-icon size="24"><ServerOutline /></n-icon>
-                </div>
-                <div class="stat-content">
-                  <div class="stat-value">{{ summaryData.autoIngest.plans }}</div>
-                  <div class="stat-label">入库计划</div>
-                </div>
-              </div>
-            </n-grid-item>
-            <n-grid-item>
-              <div class="stat-item">
-                <div class="stat-icon" style="background: #00bcd4">
-                  <n-icon size="24"><TimeOutline /></n-icon>
-                </div>
-                <div class="stat-content">
-                  <div class="stat-value">{{ summaryData.tasks.running }}</div>
-                  <div class="stat-label">运行中任务</div>
-                </div>
-              </div>
-            </n-grid-item>
-          </n-grid>
-        </n-card>
-      </n-grid-item>
-    </n-grid>
+              <div class="stat-label">STRM文件</div>
+            </div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-icon" style="background: #e42c1e">
+              <n-icon size="24"><ServerOutline /></n-icon>
+            </div>
+            <div class="stat-content">
+              <div class="stat-value">{{ summaryData.autoIngest.plans }}</div>
+              <div class="stat-label">入库计划</div>
+            </div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-icon" style="background: #00bcd4">
+              <n-icon size="24"><TimeOutline /></n-icon>
+            </div>
+            <div class="stat-content">
+              <div class="stat-value">{{ summaryData.tasks.running }}</div>
+              <div class="stat-label">运行中任务</div>
+            </div>
+          </div>
+        </div>
+      </n-card>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted } from 'vue'
-import {
-  NGrid,
-  NGridItem,
-  NCard,
-  NDescriptions,
-  NDescriptionsItem,
-  NTag,
-  NText,
-  NIcon,
-  useMessage,
-} from 'naive-ui'
+import { NCard, NDescriptions, NDescriptionsItem, NTag, NText, NIcon, useMessage } from 'naive-ui'
 import {
   PeopleOutline,
   FolderOutline,
@@ -202,7 +160,16 @@ const message = useMessage()
 
 const userInfo = userStore.get()
 const systemInfo = systemStore.get()
-const canUseAdminFeatures = computed(() => userInfo.isAdmin)
+const authDisabled = computed(() => !systemInfo.enableAuth)
+const displayUsername = computed(() =>
+  authDisabled.value ? 'anonymous' : userInfo.username || '-'
+)
+const displayUserStatus = computed(() => (authDisabled.value ? 1 : userInfo.status))
+const displayUserGroup = computed(() =>
+  authDisabled.value ? '匿名访问' : userInfo.groupName || '-'
+)
+const displayIsAdmin = computed(() => authDisabled.value || userInfo.isAdmin)
+const canUseAdminFeatures = displayIsAdmin
 
 const loadingSummary = ref(false)
 let isDashboardMounted = false
@@ -320,7 +287,7 @@ const loadSummary = async () => {
     if (res.code === 200) {
       const summary = normalizeResourceSummary(res.data)
       if (!summary) {
-        console.error('资源统计响应数据格式异常', res.data)
+        console.error('资源统计响应数据格式异常')
         message.error('资源统计响应数据格式异常')
 
         return
@@ -335,8 +302,10 @@ const loadSummary = async () => {
       return
     }
 
-    console.error('加载资源统计失败', err)
-    message.error(getErrorMessage(err, '加载资源统计失败'))
+    const errorMessage = getErrorMessage(err, '加载资源统计失败')
+
+    console.error('加载资源统计失败', errorMessage)
+    message.error(errorMessage)
   } finally {
     if (isDashboardMounted && requestId === summaryRequestId) {
       loadingSummary.value = false
@@ -349,10 +318,10 @@ const getUserStatusType = (status: number) => {
     case 1:
       return 'success'
     case 2:
-      return 'warning'
     case 0:
-    default:
       return 'error'
+    default:
+      return 'default'
   }
 }
 
@@ -361,10 +330,10 @@ const getUserStatusText = (status: number) => {
     case 1:
       return '正常'
     case 2:
-      return '受限'
     case 0:
-    default:
       return '禁用'
+    default:
+      return '未知'
   }
 }
 
@@ -388,11 +357,17 @@ onUnmounted(() => {
   background: var(--n-color-target);
 }
 
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
 .info-card {
   height: 280px;
   background: var(--n-card-color);
   border: 1px solid var(--n-border-color);
-  border-radius: 12px;
+  border-radius: 8px;
   box-shadow: 0 2px 8px rgb(0 0 0 / 6%);
 }
 
@@ -416,7 +391,9 @@ onUnmounted(() => {
 }
 
 .info-card :deep(.n-descriptions-item__label) {
+  width: min(120px, 36vw);
   color: var(--n-text-color-2);
+  font-weight: 500;
 }
 
 .info-card :deep(.n-descriptions-item__content) {
@@ -424,16 +401,22 @@ onUnmounted(() => {
 }
 
 .resource-card {
-  margin-top: 16px;
+  grid-column: 1 / -1;
   background: var(--n-card-color);
   border: 1px solid var(--n-border-color);
-  border-radius: 12px;
+  border-radius: 8px;
   box-shadow: 0 2px 8px rgb(0 0 0 / 6%);
 }
 
 .summary-loading {
   padding: 12px 4px;
   color: var(--n-text-color-3);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
 }
 
 .stat-item {
@@ -443,9 +426,12 @@ onUnmounted(() => {
   padding: 12px;
   background: var(--n-color-hover);
   border-radius: 8px;
+  min-width: 0;
+  min-height: 72px;
 }
 
 .stat-icon {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -457,17 +443,24 @@ onUnmounted(() => {
 
 .stat-content {
   flex: 1;
+  min-width: 0;
 }
 
 .stat-value {
   font-size: 24px;
   font-weight: 600;
   color: var(--n-text-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .stat-label {
   font-size: 12px;
   color: var(--n-text-color-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 响应式设计 */
@@ -479,9 +472,33 @@ onUnmounted(() => {
 }
 
 @media (width <= 768px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
   .info-card {
     height: auto;
     min-height: 220px;
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .stat-item {
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .stat-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+  }
+
+  .stat-value {
+    font-size: 20px;
   }
 
   .info-card :deep(.n-descriptions-item) {

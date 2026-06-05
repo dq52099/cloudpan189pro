@@ -2,6 +2,7 @@ package loginlog
 
 import (
 	stdctx "context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,6 +20,8 @@ import (
 type mockLoginLogService struct {
 	clearAllCalled bool
 	clearBefore    time.Time
+	logs           []*models.LoginLog
+	count          int64
 }
 
 func (m *mockLoginLogService) Create(ctx appContext.Context, log *models.LoginLog) (int64, error) {
@@ -34,11 +37,11 @@ func (m *mockLoginLogService) RecordRefreshToken(ctx appContext.Context, in *log
 }
 
 func (m *mockLoginLogService) List(ctx appContext.Context, req *loginlogSvi.ListRequest) ([]*models.LoginLog, error) {
-	return nil, nil
+	return m.logs, nil
 }
 
 func (m *mockLoginLogService) Count(ctx appContext.Context, req *loginlogSvi.ListRequest) (int64, error) {
-	return 0, nil
+	return m.count, nil
 }
 
 func (m *mockLoginLogService) ClearAll(ctx appContext.Context) (int64, error) {
@@ -55,14 +58,23 @@ func (m *mockLoginLogService) ClearBefore(ctx appContext.Context, before time.Ti
 
 var _ loginlogSvi.Service = (*mockLoginLogService)(nil)
 
-func performClearRequest(t *testing.T, svc *mockLoginLogService, body string) *httptest.ResponseRecorder {
-	t.Helper()
-
+func newLoginLogTestRouter(svc loginlogSvi.Service) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
 	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
-	router.POST("/clear", wrapper.Wrap(NewHandler(svc).Clear()))
+	handler := NewHandler(svc)
+
+	router.GET("/list", wrapper.Wrap(handler.List()))
+	router.POST("/clear", wrapper.Wrap(handler.Clear()))
+
+	return router
+}
+
+func performClearRequest(t *testing.T, svc loginlogSvi.Service, body string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	router := newLoginLogTestRouter(svc)
 
 	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/clear", strings.NewReader(body))
 	if body != "" {
@@ -75,6 +87,23 @@ func performClearRequest(t *testing.T, svc *mockLoginLogService, body string) *h
 	return recorder
 }
 
+func assertLoginLogHTTPError(t *testing.T, recorder *httptest.ResponseRecorder, expectedStatus int, expectedErr httpcontext.BusinessError) {
+	t.Helper()
+
+	if recorder.Code != expectedStatus {
+		t.Fatalf("expected HTTP %d, got %d body=%s", expectedStatus, recorder.Code, recorder.Body.String())
+	}
+
+	var response httpcontext.Response
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.Code != expectedErr.GetCode() {
+		t.Fatalf("expected business code %d, got %d", expectedErr.GetCode(), response.Code)
+	}
+}
+
 func TestResolveCutoffRejectsNonPositiveDuration(t *testing.T) {
 	tests := []string{"0s", "0h", "-1h"}
 
@@ -85,6 +114,38 @@ func TestResolveCutoffRejectsNonPositiveDuration(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestListReturnsErrorWhenLoginLogServiceMissing(t *testing.T) {
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/list?currentPage=1&pageSize=10", nil)
+	recorder := httptest.NewRecorder()
+	newLoginLogTestRouter(nil).ServeHTTP(recorder, req)
+
+	assertLoginLogHTTPError(t, recorder, http.StatusBadRequest, codeListFailed)
+}
+
+func TestListReturnsErrorWhenLoginLogServiceTypedNil(t *testing.T) {
+	var svc *mockLoginLogService
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/list?currentPage=1&pageSize=10", nil)
+	recorder := httptest.NewRecorder()
+	newLoginLogTestRouter(svc).ServeHTTP(recorder, req)
+
+	assertLoginLogHTTPError(t, recorder, http.StatusBadRequest, codeListFailed)
+}
+
+func TestClearReturnsErrorWhenLoginLogServiceMissing(t *testing.T) {
+	recorder := performClearRequest(t, nil, "")
+
+	assertLoginLogHTTPError(t, recorder, http.StatusBadRequest, codeClearFailed)
+}
+
+func TestClearReturnsErrorWhenLoginLogServiceTypedNil(t *testing.T) {
+	var svc *mockLoginLogService
+
+	recorder := performClearRequest(t, svc, "")
+
+	assertLoginLogHTTPError(t, recorder, http.StatusBadRequest, codeClearFailed)
 }
 
 func TestClearRejectsMalformedJSON(t *testing.T) {
@@ -116,6 +177,54 @@ func TestClearAllowsEmptyBodyAsClearAll(t *testing.T) {
 
 	if !svc.clearAllCalled {
 		t.Fatal("expected empty body to clear all login logs")
+	}
+}
+
+func TestListSkipsNilLoginLogRows(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	svc := &mockLoginLogService{
+		logs: []*models.LoginLog{
+			nil,
+			{ID: 12, Username: "admin"},
+		},
+	}
+
+	router := gin.New()
+	wrapper := httpcontext.NewHandlerFuncWrapper(zap.NewNop())
+	router.GET("/list", wrapper.Wrap(NewHandler(svc).List()))
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/list?noPaginate=true", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Data struct {
+			Total int64 `json:"total"`
+			Data  []struct {
+				ID       int64  `json:"id"`
+				Username string `json:"username"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if response.Data.Total != 1 {
+		t.Fatalf("expected one non-nil row in total, got %d", response.Data.Total)
+	}
+
+	if len(response.Data.Data) != 1 {
+		t.Fatalf("expected one non-nil row, got %d", len(response.Data.Data))
+	}
+
+	if response.Data.Data[0].ID != 12 || response.Data.Data[0].Username != "admin" {
+		t.Fatalf("unexpected login log row: %#v", response.Data.Data[0])
 	}
 }
 

@@ -29,7 +29,7 @@
               v-model:value="form.botToken"
               placeholder="请输入 Bot Token"
               clearable
-              style="width: 320px"
+              class="setting-control"
               type="password"
               show-password-on="click"
             />
@@ -46,7 +46,7 @@
               v-model:value="form.chatID"
               placeholder="请输入 Chat ID"
               clearable
-              style="width: 320px"
+              class="setting-control"
             />
           </div>
         </div>
@@ -61,7 +61,7 @@
               v-model:value="form.defaultMountPath"
               placeholder="/转存"
               clearable
-              style="width: 320px"
+              class="setting-control"
             />
           </div>
         </div>
@@ -86,7 +86,7 @@
               v-model:value="form.apiURL"
               placeholder="https://api.telegram.org"
               clearable
-              style="width: 320px"
+              class="setting-control"
             />
           </div>
         </div>
@@ -101,7 +101,7 @@
               v-model:value="form.proxyURL"
               placeholder="socks5://127.0.0.1:1080"
               clearable
-              style="width: 320px"
+              class="setting-control"
             />
           </div>
         </div>
@@ -115,7 +115,7 @@
             <n-select
               v-model:value="form.proxyType"
               :options="proxyTypeOptions"
-              style="width: 320px"
+              class="setting-control"
             />
           </div>
         </div>
@@ -136,7 +136,7 @@
           v-model:value="userSearch"
           placeholder="搜索用户..."
           clearable
-          style="width: 240px; margin-right: 12px"
+          class="search-input"
         >
           <template #prefix>
             <n-icon :size="16" :depth="3">
@@ -192,7 +192,7 @@
       :show="showUserModal"
       preset="card"
       title="编辑用户"
-      style="width: 480px"
+      style="width: min(480px, calc(100vw - 32px))"
       :closable="!savingUser"
       :mask-closable="!savingUser"
       :close-on-esc="!savingUser"
@@ -241,6 +241,7 @@ import {
 } from '@/api/telegram'
 import { getErrorMessage } from '@/utils/api'
 import { normalizeTelegramSetting, normalizeTelegramUsers } from '@/utils/responseGuards'
+import { formatDateTime } from '@/utils/time'
 
 const message = useMessage()
 
@@ -329,10 +330,7 @@ const userColumns = [
     title: '最后活跃',
     key: 'lastSeenAt',
     width: 180,
-    render: (row: TelegramUser) => {
-      if (!row.lastSeenAt) return '-'
-      return new Date(row.lastSeenAt).toLocaleString('zh-CN')
-    },
+    render: (row: TelegramUser) => formatDateTime(row.lastSeenAt),
   },
   {
     title: '操作',
@@ -412,9 +410,16 @@ const handleSave = async () => {
     }
 
     if (res.code === 200) {
+      const setting = normalizeTelegramSetting(res.data)
+      if (!setting) {
+        message.error('保存完成但响应设置缺失/异常')
+
+        return
+      }
+
       message.success('保存成功')
       if (isSameSetting(form.value, payload)) {
-        loadSetting()
+        form.value = setting
       }
     } else {
       message.error(res.msg || '保存失败')
@@ -657,6 +662,7 @@ onUnmounted(() => {
 
 .item-left {
   flex: 1;
+  min-width: 0;
 }
 
 .item-title {
@@ -673,6 +679,11 @@ onUnmounted(() => {
 
 .item-right {
   flex-shrink: 0;
+  min-width: 0;
+}
+
+.setting-control {
+  width: min(320px, 100%);
 }
 
 .setting-actions {
@@ -684,11 +695,45 @@ onUnmounted(() => {
 .header {
   display: flex;
   align-items: center;
+  gap: 12px;
   margin-top: 16px;
+}
+
+.search-input {
+  width: min(240px, 100%);
 }
 
 .send-section {
   max-width: 600px;
   margin-top: 16px;
+}
+
+@media (width <= 640px) {
+  .setting-item {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .item-right {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .setting-control {
+    width: 100%;
+  }
+
+  .setting-actions,
+  .header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .setting-actions :deep(.n-button),
+  .header :deep(.n-button),
+  .search-input {
+    width: 100%;
+  }
 }
 </style>

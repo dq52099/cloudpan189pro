@@ -40,13 +40,18 @@ func (h *handler) BindGroup() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureUserService(ctx, codeBindGroupFailed) {
+			return
+		}
+
 		serviceReq := &bindGroupRequest{
 			UserID:  req.UserID,
 			GroupID: req.GroupID,
 		}
 
 		// 检查用户是否存在
-		if _, err := h.userService.Query(ctx.GetContext(), req.UserID); err != nil {
+		userInfo, err := h.userService.Query(ctx.GetContext(), req.UserID)
+		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				ctx.Fail(codeUserResourceMissing.WithError(err))
 
@@ -58,10 +63,20 @@ func (h *handler) BindGroup() httpcontext.HandlerFunc {
 			return
 		}
 
+		if userInfo == nil {
+			ctx.Fail(codeUserResourceMissing.WithError(gorm.ErrRecordNotFound))
+
+			return
+		}
+
 		var groupName = "默认用户组"
 
 		// 检查用户组是否存在
 		if req.GroupID > 0 {
+			if !h.ensureUserGroupService(ctx, codeBindGroupFailed) {
+				return
+			}
+
 			if groupInfo, err := h.userGroupService.Query(ctx.GetContext(), req.GroupID); err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					ctx.Fail(codeUserGroupMissing.WithError(err))
@@ -73,6 +88,12 @@ func (h *handler) BindGroup() httpcontext.HandlerFunc {
 
 				return
 			} else {
+				if groupInfo == nil {
+					ctx.Fail(codeUserGroupMissing.WithError(gorm.ErrRecordNotFound))
+
+					return
+				}
+
 				groupName = groupInfo.Name
 			}
 		}

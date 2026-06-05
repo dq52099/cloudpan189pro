@@ -16,6 +16,7 @@ import (
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	mountpointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 	virtualfileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/virtualfile"
+	"github.com/xxcheng123/cloudpan189-share/internal/shared"
 	"go.uber.org/zap"
 )
 
@@ -25,6 +26,7 @@ type mockSearchVirtualFileService struct {
 	countReq *virtualfileSvi.ListRequest
 	list     []*models.VirtualFile
 	count    int64
+	pathByID map[int64]string
 }
 
 func (m *mockSearchVirtualFileService) List(ctx appContext.Context, req *virtualfileSvi.ListRequest) ([]*models.VirtualFile, error) {
@@ -40,6 +42,10 @@ func (m *mockSearchVirtualFileService) Count(ctx appContext.Context, req *virtua
 }
 
 func (m *mockSearchVirtualFileService) CalFullPath(ctx appContext.Context, fid int64) (string, error) {
+	if path, ok := m.pathByID[fid]; ok {
+		return path, nil
+	}
+
 	return "/visible", nil
 }
 
@@ -155,6 +161,87 @@ func TestSearchReturnsEmptyWhenUserHasNoAccessibleMountPoints(t *testing.T) {
 	}
 }
 
+func TestSearchReturnsErrorWhenGroupBindingServiceMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	virtualFileService := &mockSearchVirtualFileService{}
+	mountPointService := &mockSearchMountPointService{accessibleIDs: []int64{200}}
+
+	router := newSearchTestRouter(virtualFileService, mountPointService, 100, false, 7)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/search?keyword=movie&pageSize=10&currentPage=1&global=true", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertFileHTTPError(t, recorder, http.StatusBadRequest, busCodeQueryTopIdError)
+
+	if mountPointService.userID != 0 {
+		t.Fatalf("expected missing group binding service to stop before access lookup, got userID=%d", mountPointService.userID)
+	}
+
+	if virtualFileService.listReq != nil || virtualFileService.countReq != nil {
+		t.Fatalf("expected missing group binding service not to query files, list=%#v count=%#v", virtualFileService.listReq, virtualFileService.countReq)
+	}
+}
+
+func TestSearchReturnsErrorWhenMountPointServiceMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	virtualFileService := &mockSearchVirtualFileService{}
+
+	router := newSearchTestRouter(virtualFileService, nil, 100, false, 0)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/search?keyword=movie&pageSize=10&currentPage=1&global=true", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertFileHTTPError(t, recorder, http.StatusBadRequest, busCodeQueryTopIdError)
+
+	if virtualFileService.listReq != nil || virtualFileService.countReq != nil {
+		t.Fatalf("expected missing mount point service not to query files, list=%#v count=%#v", virtualFileService.listReq, virtualFileService.countReq)
+	}
+}
+
+func TestSearchReturnsErrorWhenMountPointServiceTypedNil(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	virtualFileService := &mockSearchVirtualFileService{}
+
+	var mountPointService *mockSearchMountPointService
+
+	router := newSearchTestRouter(virtualFileService, mountPointService, 100, false, 0)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/search?keyword=movie&pageSize=10&currentPage=1&global=true", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertFileHTTPError(t, recorder, http.StatusBadRequest, busCodeQueryTopIdError)
+
+	if virtualFileService.listReq != nil || virtualFileService.countReq != nil {
+		t.Fatalf("expected typed nil mount point service not to query files, list=%#v count=%#v", virtualFileService.listReq, virtualFileService.countReq)
+	}
+}
+
+func TestSearchReturnsErrorWhenVirtualFileServiceTypedNil(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var virtualFileService *mockSearchVirtualFileService
+
+	mountPointService := &mockSearchMountPointService{accessibleIDs: []int64{200}}
+
+	router := newSearchTestRouter(virtualFileService, mountPointService, 100, false, 0)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/search?keyword=movie&pageSize=10&currentPage=1&global=true", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	assertFileHTTPError(t, recorder, http.StatusBadRequest, busCodeList)
+
+	if mountPointService.userID != 100 {
+		t.Fatalf("expected access lookup before virtual file service check, got userID=%d", mountPointService.userID)
+	}
+}
+
 func TestSearchAllowsRootParentID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -190,6 +277,166 @@ func TestSearchAllowsRootParentID(t *testing.T) {
 
 	if virtualFileService.countReq.ParentId == nil || *virtualFileService.countReq.ParentId != 0 {
 		t.Fatalf("expected count root parent id 0, got %#v", virtualFileService.countReq.ParentId)
+	}
+}
+
+func TestSearchFullPathKeepsDisplayPercentText(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	virtualFileService := &mockSearchVirtualFileService{
+		list: []*models.VirtualFile{
+			{ID: 12, TopId: 200, ParentId: 50, Name: "a%2Fb"},
+		},
+		count: 1,
+		pathByID: map[int64]string{
+			50: "/literal",
+		},
+	}
+	mountPointService := &mockSearchMountPointService{accessibleIDs: []int64{200}}
+
+	router := newSearchTestRouter(virtualFileService, mountPointService, 100, false, 0)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/search?keyword=a&pageSize=10&currentPage=1&global=true", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Code int            `json:"code"`
+		Data searchResponse `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(response.Data.Data) != 1 {
+		t.Fatalf("expected one search result, got %d", len(response.Data.Data))
+	}
+
+	if response.Data.Data[0].FullPath != "/literal/a%2Fb" {
+		t.Fatalf("expected display full path, got %q", response.Data.Data[0].FullPath)
+	}
+}
+
+func TestSearchSkipsNilResultRows(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	virtualFileService := &mockSearchVirtualFileService{
+		list: []*models.VirtualFile{
+			nil,
+			{ID: 12, TopId: 200, ParentId: 50, Name: "movie.mp4"},
+		},
+		count: 2,
+		pathByID: map[int64]string{
+			50: "/visible",
+		},
+	}
+	mountPointService := &mockSearchMountPointService{accessibleIDs: []int64{200}}
+
+	router := newSearchTestRouter(virtualFileService, mountPointService, 100, false, 0)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/search?keyword=movie&pageSize=10&currentPage=1&global=true", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Code int            `json:"code"`
+		Data searchResponse `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Data.Total != 2 {
+		t.Fatalf("expected service count to be preserved, got %d", response.Data.Total)
+	}
+
+	if len(response.Data.Data) != 1 {
+		t.Fatalf("expected one non-nil search result, got %d", len(response.Data.Data))
+	}
+
+	if response.Data.Data[0].FullPath != "/visible/movie.mp4" {
+		t.Fatalf("expected full path for non-nil row, got %q", response.Data.Data[0].FullPath)
+	}
+}
+
+func TestSearchRejectsNegativeParentID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	virtualFileService := &mockSearchVirtualFileService{}
+	mountPointService := &mockSearchMountPointService{accessibleIDs: []int64{200}}
+
+	router := newSearchTestRouter(virtualFileService, mountPointService, 100, false, 0)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/search?keyword=root&pageSize=10&currentPage=1&pid=-1", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Code int `json:"code"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Code != 99998 {
+		t.Fatalf("expected invalid params code 99998, got %d", response.Code)
+	}
+
+	if virtualFileService.listReq != nil || virtualFileService.countReq != nil {
+		t.Fatalf("did not expect virtual file query for invalid pid, list=%#v count=%#v", virtualFileService.listReq, virtualFileService.countReq)
+	}
+}
+
+func TestSearchAppliesUserSuffixLimitToListAndCount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	oldSettingAddition := shared.SettingAddition
+	shared.SettingAddition = models.SettingAddition{
+		WebDAVUserStrmOnly:    true,
+		WebDAVAllowedSuffixes: []string{".mp4", ".mkv"},
+	}
+
+	defer func() {
+		shared.SettingAddition = oldSettingAddition
+	}()
+
+	virtualFileService := &mockSearchVirtualFileService{
+		list: []*models.VirtualFile{
+			{ID: 12, TopId: 200, ParentId: 0, Name: "root-file.mp4"},
+		},
+		count: 1,
+	}
+	mountPointService := &mockSearchMountPointService{accessibleIDs: []int64{200}}
+
+	router := newSearchTestRouter(virtualFileService, mountPointService, 100, false, 0)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodGet, "/search?keyword=root&pageSize=10&currentPage=1&global=true", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	wantSuffixes := []string{".mp4", ".mkv"}
+	if !reflect.DeepEqual(virtualFileService.listReq.AllowedSuffixes, wantSuffixes) {
+		t.Fatalf("expected list suffix filter %v, got %v", wantSuffixes, virtualFileService.listReq.AllowedSuffixes)
+	}
+
+	if !reflect.DeepEqual(virtualFileService.countReq.AllowedSuffixes, wantSuffixes) {
+		t.Fatalf("expected count suffix filter %v, got %v", wantSuffixes, virtualFileService.countReq.AllowedSuffixes)
 	}
 }
 

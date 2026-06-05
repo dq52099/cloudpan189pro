@@ -1,11 +1,14 @@
 import { defineStore } from 'pinia'
 import { ref, reactive } from 'vue'
 import { getSystemInfo } from '@/api/setting'
-import { localStg } from '@/utils/storage'
-import type { ApiResponse } from '@/utils/api'
+import { localStg, sessionStg } from '@/utils/storage'
+import { getErrorMessage, type ApiResponse } from '@/utils/api'
 
 type SystemInfo = Models.SystemInfo
 type SystemRefreshResult = ApiResponse<SystemInfo> | void
+
+const authRequiredOverrideKey = 'systemAuthRequiredUntil'
+const authRequiredOverrideTTL = 60 * 1000
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === 'object' && value !== null
@@ -45,6 +48,44 @@ const normalizeSystemInfo = (value: unknown): SystemInfo | null => {
   }
 }
 
+const getAuthRequiredOverrideUntil = () => {
+  const value = sessionStg.get(authRequiredOverrideKey)
+  if (value === null) {
+    return 0
+  }
+
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    sessionStg.remove(authRequiredOverrideKey)
+
+    return 0
+  }
+
+  if (value <= Date.now()) {
+    sessionStg.remove(authRequiredOverrideKey)
+
+    return 0
+  }
+
+  return value
+}
+
+const hasAuthRequiredOverride = () => getAuthRequiredOverrideUntil() > Date.now()
+
+const clearAuthRequiredOverride = () => {
+  sessionStg.remove(authRequiredOverrideKey)
+}
+
+const applyAuthRequiredOverride = (systemInfo: SystemInfo): SystemInfo => {
+  if (!systemInfo.enableAuth && hasAuthRequiredOverride()) {
+    return {
+      ...systemInfo,
+      enableAuth: true,
+    }
+  }
+
+  return systemInfo
+}
+
 // 默认系统信息
 const defaultSystemInfo: SystemInfo = {
   initialized: true,
@@ -61,7 +102,53 @@ export const useSystemStore = defineStore('system', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
   const loaded = ref(false)
+  const remoteLoaded = ref(false)
   let refreshPromise: Promise<SystemRefreshResult> | null = null
+  let authRequiredOverrideTimer: ReturnType<typeof setTimeout> | null = null
+
+  const clearAuthRequiredOverrideTimer = () => {
+    if (!authRequiredOverrideTimer) {
+      return
+    }
+
+    clearTimeout(authRequiredOverrideTimer)
+    authRequiredOverrideTimer = null
+  }
+
+  const restoreCachedSystemInfo = () => {
+    const cachedSystemInfo = localStg.get('systemInfo')
+    const normalizedSystemInfo = normalizeSystemInfo(cachedSystemInfo)
+    if (!normalizedSystemInfo) {
+      return false
+    }
+
+    Object.assign(systemInfo, normalizedSystemInfo)
+    loaded.value = true
+    remoteLoaded.value = false
+    error.value = null
+
+    return true
+  }
+
+  const scheduleAuthRequiredOverrideExpiry = () => {
+    clearAuthRequiredOverrideTimer()
+
+    const overrideUntil = getAuthRequiredOverrideUntil()
+    if (overrideUntil <= Date.now()) {
+      return
+    }
+
+    authRequiredOverrideTimer = setTimeout(() => {
+      authRequiredOverrideTimer = null
+
+      if (!hasAuthRequiredOverride()) {
+        restoreCachedSystemInfo()
+        return
+      }
+
+      scheduleAuthRequiredOverrideExpiry()
+    }, overrideUntil - Date.now())
+  }
 
   const load = () => {
     const _systemInfo = localStg.get('systemInfo')
@@ -76,7 +163,11 @@ export const useSystemStore = defineStore('system', () => {
       return
     }
 
-    Object.assign(systemInfo, normalizedSystemInfo)
+    Object.assign(systemInfo, applyAuthRequiredOverride(normalizedSystemInfo))
+    loaded.value = true
+    remoteLoaded.value = false
+    error.value = null
+    scheduleAuthRequiredOverrideExpiry()
   }
 
   const store = (_systemInfo: unknown) => {
@@ -85,8 +176,54 @@ export const useSystemStore = defineStore('system', () => {
       return false
     }
 
+    const effectiveSystemInfo = applyAuthRequiredOverride(normalizedSystemInfo)
     localStg.set('systemInfo', normalizedSystemInfo)
-    Object.assign(systemInfo, normalizedSystemInfo)
+    Object.assign(systemInfo, effectiveSystemInfo)
+    loaded.value = true
+    remoteLoaded.value = true
+    error.value = null
+    scheduleAuthRequiredOverrideExpiry()
+
+    return true
+  }
+
+  const patchCached = (patch: Partial<SystemInfo>) => {
+    if (patch.enableAuth === false) {
+      clearAuthRequiredOverride()
+    }
+
+    const patchedSystemInfo = normalizeSystemInfo({
+      ...systemInfo,
+      ...patch,
+    })
+
+    if (!patchedSystemInfo) {
+      return false
+    }
+
+    localStg.set('systemInfo', patchedSystemInfo)
+    Object.assign(systemInfo, patchedSystemInfo)
+    loaded.value = true
+    scheduleAuthRequiredOverrideExpiry()
+
+    return true
+  }
+
+  const markAuthRequired = () => {
+    sessionStg.set(authRequiredOverrideKey, Date.now() + authRequiredOverrideTTL)
+
+    const patchedSystemInfo = normalizeSystemInfo({
+      ...systemInfo,
+      enableAuth: true,
+    })
+
+    if (!patchedSystemInfo) {
+      return false
+    }
+
+    Object.assign(systemInfo, patchedSystemInfo)
+    loaded.value = true
+    scheduleAuthRequiredOverrideExpiry()
 
     return true
   }
@@ -107,8 +244,6 @@ export const useSystemStore = defineStore('system', () => {
 
             return response
           }
-
-          loaded.value = true
         } else {
           error.value = response.msg || '获取系统信息失败'
         }
@@ -116,8 +251,10 @@ export const useSystemStore = defineStore('system', () => {
         return response
       })
       .catch((err) => {
-        error.value = err instanceof Error ? err.message : '网络错误'
-        console.error('获取系统信息失败:', err)
+        const errorMessage = getErrorMessage(err, '网络错误')
+
+        error.value = errorMessage
+        console.error('获取系统信息失败:', errorMessage)
       })
       .finally(() => {
         loading.value = false
@@ -130,12 +267,12 @@ export const useSystemStore = defineStore('system', () => {
   }
 
   const ensureLoaded = () => {
-    if (loaded.value) {
+    if (remoteLoaded.value) {
       return Promise.resolve()
     }
 
     return refresh().then(() => {
-      if (!loaded.value) {
+      if (!remoteLoaded.value) {
         throw new Error(error.value || '获取系统信息失败')
       }
     })
@@ -146,8 +283,12 @@ export const useSystemStore = defineStore('system', () => {
   return {
     loading,
     error,
+    loaded,
+    remoteLoaded,
 
     load,
+    markAuthRequired,
+    patchCached,
     refresh,
     ensureLoaded,
     get,

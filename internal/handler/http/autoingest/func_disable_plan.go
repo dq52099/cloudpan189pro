@@ -37,6 +37,10 @@ func (h *handler) DisablePlan() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensurePlanService(ctx, codePlanQueryFailed) {
+			return
+		}
+
 		plan, err := h.planService.Query(ctx.GetContext(), req.ID)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {

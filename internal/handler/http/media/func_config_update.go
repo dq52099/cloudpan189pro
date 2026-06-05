@@ -3,10 +3,12 @@ package media
 import (
 	"errors"
 	"io"
+	"strings"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/datatypes"
 	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
+	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/media"
 	"gorm.io/gorm"
 )
@@ -45,6 +47,10 @@ func (h *handler) ConfigUpdate() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureMediaConfigService(ctx, codeConfigUpdateFailed) {
+			return
+		}
+
 		fields := make([]utils.Field, 0, 5)
 
 		if req.Enable != nil {
@@ -64,7 +70,29 @@ func (h *handler) ConfigUpdate() httpcontext.HandlerFunc {
 		}
 
 		if req.BaseURL != nil {
-			fields = append(fields, utils.WithField("base_url", *req.BaseURL))
+			currentConfig, err := h.mediaConfigService.Query(ctx.GetContext())
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					ctx.Fail(codeConfigNotInit.WithError(err))
+
+					return
+				}
+
+				ctx.Fail(codeConfigUpdateFailed.WithError(err))
+
+				return
+			}
+
+			if !isCurrentMediaBaseURLPlaceholder(*req.BaseURL, currentConfig) {
+				baseURL, normalizeErr := normalizeMediaBaseURL(*req.BaseURL)
+				if normalizeErr != nil {
+					ctx.AbortWithInvalidParams(normalizeErr)
+
+					return
+				}
+
+				fields = append(fields, utils.WithField("base_url", baseURL))
+			}
 		}
 
 		if req.IncludedSuffixes != nil {
@@ -103,4 +131,15 @@ func (h *handler) ConfigUpdate() httpcontext.HandlerFunc {
 
 		ctx.Success()
 	}
+}
+
+func isCurrentMediaBaseURLPlaceholder(value string, currentConfig *models.MediaConfig) bool {
+	if currentConfig == nil || currentConfig.BaseURL == "" {
+		return false
+	}
+
+	value = strings.TrimSpace(value)
+	redactedCurrent := utils.RedactURLForLog(currentConfig.BaseURL)
+
+	return redactedCurrent != currentConfig.BaseURL && value == redactedCurrent
 }

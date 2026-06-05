@@ -67,6 +67,10 @@ func (h *handler) SelectList() httpcontext.HandlerFunc {
 		if userGroupId > 0 {
 			var err error
 
+			if !h.ensureGroup2FileService(ctx, busCodeStorageQueryMountPointError) {
+				return
+			}
+
 			groupFileIds, err = h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
 			if err != nil {
 				ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
@@ -87,12 +91,18 @@ func (h *handler) SelectList() httpcontext.HandlerFunc {
 			GroupFileIds: groupFileIds,
 		}
 
+		if !h.ensureMountPointService(ctx, busCodeStorageQueryMountPointError) {
+			return
+		}
+
 		list, err := h.mountPointService.List(ctx.GetContext(), mpReq)
 		if err != nil {
 			ctx.Fail(busCodeStorageQueryMountPointError.WithError(err))
 
 			return
 		}
+
+		list = compactMountPoints(list)
 
 		var total int64
 		if req.NoPaginate {
@@ -115,6 +125,10 @@ func (h *handler) SelectList() httpcontext.HandlerFunc {
 
 		if len(mountPointIDs) > 0 {
 			var err error
+
+			if !h.ensureUserMountPointTokenService(ctx, busCodeStorageQueryMountPointError) {
+				return
+			}
 
 			userTokenMap, err = h.userMountPointTokenService.GetUserTokens(ctx.GetContext(), userID, mountPointIDs)
 			if err != nil {

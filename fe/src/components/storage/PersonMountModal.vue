@@ -153,7 +153,9 @@
         v-if="currentStep === 2"
         type="primary"
         :loading="bindLoading"
-        :disabled="!fileState.selectedFile || bindLoading"
+        :disabled="
+          !fileState.selectedFile || bindLoading || fileState.loading || fileState.treeLoading
+        "
         @click="handleConfirm"
       >
         绑定挂载点
@@ -189,7 +191,7 @@ import { getCloudTokenList } from '@/api/cloudtoken'
 import { getPersonFiles } from '@/api/storage/advance'
 import type { FileNode, GetPersonFilesQuery } from '@/api/storage/advance'
 import { getListItems } from '@/utils/pagination'
-import { normalizeCloudTokens, normalizeFileNodes } from '@/utils/responseGuards'
+import { normalizeCloudTokens, normalizeFileNodePage } from '@/utils/responseGuards'
 import { OS_TYPES } from '@/utils/osType'
 import { useMountPointBind } from '@/composables/useMountPointBind'
 import { getErrorMessage } from '@/utils/api'
@@ -229,6 +231,7 @@ const fileState = reactive({
 })
 
 const bindLoading = ref(false)
+const personFilesPageSize = 100
 let isComponentMounted = false
 let operationVersion = 0
 let tokenRequestId = 0
@@ -308,8 +311,10 @@ const fetchTokenList = () => {
         return
       }
 
-      console.error('获取令牌列表失败:', error)
-      message.error(getErrorMessage(error, '获取令牌列表失败'))
+      const errorMessage = getErrorMessage(error, '获取令牌列表失败')
+
+      console.error('获取令牌列表失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isCurrentTokenRequest(currentRequestId, currentOperation)) {
@@ -346,7 +351,7 @@ const handleNextToFileSelection = () => {
 }
 
 // 获取个人文件列表
-const fetchPersonFiles = (parentId: string = '-11') => {
+const fetchPersonFiles = async (parentId: string = '-11') => {
   if (!tokenState.selectedTokenId) return
 
   const currentOperation = operationVersion
@@ -360,54 +365,77 @@ const fetchPersonFiles = (parentId: string = '-11') => {
     fileState.treeLoading = true
   }
 
-  const params: GetPersonFilesQuery = {
-    pageNum: 1,
-    pageSize: 100,
-    cloudToken: currentCloudToken,
-    parentId: parentId,
-  }
+  const files: FileNode[] = []
+  let pageNum = 1
+  let total = 0
 
-  getPersonFiles(params)
-    .then((response) => {
+  try {
+    do {
+      const params: GetPersonFilesQuery = {
+        pageNum,
+        pageSize: personFilesPageSize,
+        cloudToken: currentCloudToken,
+        parentId: parentId,
+      }
+
+      const response = await getPersonFiles(params)
       if (!isCurrentFileRequest(parentId, currentRequestId, currentOperation, currentCloudToken)) {
         return
       }
 
-      if (response.code === 200 && response.data) {
-        const fileItems = getListItems<FileNode>(response.data)
-        const files = normalizeFileNodes(fileItems)
-        if (!files) {
-          message.error('获取文件列表失败：响应数据格式异常')
-
-          return
-        }
-
-        if (parentId === '-11') {
-          fileState.files = files
-          fileState.currentParentId = parentId
-        }
-        fileState.treeData.set(parentId, files)
-      } else {
+      if (response.code !== 200 || !response.data) {
         message.error(response.msg || '获取文件列表失败')
-      }
-    })
-    .catch((error) => {
-      if (!isCurrentFileRequest(parentId, currentRequestId, currentOperation, currentCloudToken)) {
+
         return
       }
 
-      console.error('获取文件列表失败:', error)
-      message.error(getErrorMessage(error, '获取文件列表失败'))
-    })
-    .finally(() => {
-      if (isCurrentFileRequest(parentId, currentRequestId, currentOperation, currentCloudToken)) {
-        if (parentId === '-11') {
-          fileState.loading = false
-        } else {
-          fileState.treeLoading = false
-        }
+      const page = normalizeFileNodePage(response.data)
+      if (!page) {
+        message.error('获取文件列表失败：响应数据格式异常')
+
+        return
       }
-    })
+
+      if (page.currentPage !== pageNum || page.pageSize !== personFilesPageSize) {
+        message.error('获取文件列表失败：分页信息异常')
+
+        return
+      }
+
+      files.push(...page.files)
+      total = page.total
+      if (total > files.length && page.files.length === 0) {
+        message.error('获取文件列表失败：分页数据不完整')
+
+        return
+      }
+
+      pageNum = page.currentPage + 1
+    } while (total > files.length)
+
+    if (parentId === '-11') {
+      fileState.files = files
+      fileState.currentParentId = parentId
+    }
+    fileState.treeData.set(parentId, files)
+  } catch (error) {
+    if (!isCurrentFileRequest(parentId, currentRequestId, currentOperation, currentCloudToken)) {
+      return
+    }
+
+    const errorMessage = getErrorMessage(error, '获取文件列表失败')
+
+    console.error('获取文件列表失败:', errorMessage)
+    message.error(errorMessage)
+  } finally {
+    if (isCurrentFileRequest(parentId, currentRequestId, currentOperation, currentCloudToken)) {
+      if (parentId === '-11') {
+        fileState.loading = false
+      } else {
+        fileState.treeLoading = false
+      }
+    }
+  }
 }
 
 // 构建树形数据
@@ -525,14 +553,43 @@ const handleNavigateToBreadcrumb = (index: number) => {
   fetchPersonFiles(targetBreadcrumb.id)
 }
 
+const findLoadedFilePath = (
+  targetId: string,
+  files: FileNode[],
+  visited = new Set<string>()
+): string[] | null => {
+  for (const file of files) {
+    if (file.id === targetId) {
+      return [file.name]
+    }
+
+    if (visited.has(file.id)) {
+      continue
+    }
+
+    visited.add(file.id)
+
+    const childFiles = fileState.treeData.get(file.id)
+    if (!childFiles) {
+      continue
+    }
+
+    const childPath = findLoadedFilePath(targetId, childFiles, visited)
+    if (childPath) {
+      return [file.name, ...childPath]
+    }
+  }
+
+  return null
+}
+
 // 获取选中文件路径
 const getSelectedFilePath = () => {
   if (!fileState.selectedFile) return ''
-  const pathParts = [
-    '根目录',
-    ...fileState.breadcrumbs.map((b) => b.name),
-    fileState.selectedFile.name,
-  ]
+
+  const loadedPath = findLoadedFilePath(fileState.selectedFile.id, fileState.files)
+  const pathParts = ['根目录', ...(loadedPath || [fileState.selectedFile.name])]
+
   return pathParts.join(' / ')
 }
 
@@ -565,6 +622,12 @@ const handleConfirm = () => {
     message.warning('请选择文件夹和令牌')
     return
   }
+
+  if (fileState.loading || fileState.treeLoading) {
+    message.warning('文件列表加载中，请稍后再试')
+    return
+  }
+
   const itemsToMount = [
     {
       name: fileState.selectedFile.name,
@@ -574,7 +637,7 @@ const handleConfirm = () => {
       fileId: fileState.selectedFile.id,
     },
   ]
-  const currentOperation = operationVersion
+  const currentOperation = ++operationVersion
   bindLoading.value = true
   mountPointBind
     .show(itemsToMount, { defaultCloudToken: tokenState.selectedTokenId || undefined })
@@ -611,8 +674,10 @@ onUnmounted(() => {
 
 <style scoped>
 .person-mount-container {
-  min-width: 800px;
-  width: 100%;
+  box-sizing: border-box;
+  width: min(800px, 100%);
+  max-width: 100%;
+  min-width: 0;
 }
 
 .person-mount-content {
@@ -683,11 +748,13 @@ onUnmounted(() => {
 
 .token-info {
   flex: 1;
+  min-width: 0;
 }
 
 .token-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 4px;
 }
@@ -718,17 +785,19 @@ onUnmounted(() => {
   border-radius: 8px;
   background: var(--n-card-color);
   overflow: hidden;
+  min-width: 0;
 }
 
 .breadcrumb-container {
   padding: 12px 16px;
   border-bottom: 1px solid var(--n-border-color);
   background: var(--n-color-target);
+  overflow-x: auto;
 }
 
 .file-tree {
   max-height: 400px;
-  overflow-y: auto;
+  overflow: auto;
 }
 
 .selected-info {
@@ -758,6 +827,7 @@ onUnmounted(() => {
 
 .selected-path {
   font-size: 13px;
+  word-break: break-all;
 }
 
 .modal-actions {
@@ -781,6 +851,10 @@ onUnmounted(() => {
 
   .modal-actions {
     flex-direction: column;
+  }
+
+  .modal-actions :deep(.n-button) {
+    width: 100%;
   }
 }
 </style>

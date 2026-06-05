@@ -23,6 +23,7 @@ import (
 	virtualfileSvi "github.com/xxcheng123/cloudpan189-share/internal/services/virtualfile"
 
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 type Handler interface {
@@ -83,6 +84,10 @@ func (h *handler) walkFile(ctx context.Context, rootId int64, walkFunc walkFunc)
 		if file, err = h.virtualFileService.Query(ctx, rootId); err != nil {
 			return err
 		}
+
+		if file == nil {
+			return gorm.ErrRecordNotFound
+		}
 	}
 
 	// 计算当前文件的路径
@@ -123,7 +128,7 @@ func (h *handler) walkFile(ctx context.Context, rootId int64, walkFunc walkFunc)
 		return walkErr
 	} else if len(nextFiles) > 0 {
 		// 获取线程数配置
-		threadCount := shared.SettingAddition.TaskThreadCount
+		threadCount := shared.GetSettingAddition().TaskThreadCount
 		if threadCount <= 0 {
 			threadCount = 1
 		}

@@ -224,7 +224,7 @@ const handleSubmit = async () => {
 
     if (response.code === 200) {
       message.success('密码修改成功，请重新登录')
-      showModal.value = false
+      emit('update:show', false)
       emit('success')
 
       // 延迟1秒后退出登录，让用户看到成功提示
@@ -241,8 +241,10 @@ const handleSubmit = async () => {
       return
     }
 
-    console.error('修改密码失败:', error)
-    message.error(getErrorMessage(error, '密码修改失败'))
+    const errorMessage = getErrorMessage(error, '密码修改失败')
+
+    console.error('修改密码失败:', errorMessage)
+    message.error(errorMessage)
   } finally {
     if (isCurrentOperation(currentOperation)) {
       loading.value = false

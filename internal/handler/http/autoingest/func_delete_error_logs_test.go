@@ -48,6 +48,7 @@ func (m *mockDeleteErrorLogsService) DeleteErrorLogsByPlanIds(ctx appContext.Con
 type mockDeleteErrorLogsPlanService struct {
 	autoingestplanSvi.Service
 	plans    map[int64]*models.AutoIngestPlan
+	list     []*models.AutoIngestPlan
 	listReqs []*autoingestplanSvi.ListRequest
 }
 
@@ -67,8 +68,16 @@ func (m *mockDeleteErrorLogsPlanService) List(ctx appContext.Context, req *autoi
 		return nil, errors.New("missing user")
 	}
 
+	if m.list != nil {
+		return m.list, nil
+	}
+
 	plans := make([]*models.AutoIngestPlan, 0, len(m.plans))
 	for _, plan := range m.plans {
+		if plan == nil {
+			continue
+		}
+
 		if req.IsAdmin || plan.UserID == req.UserID {
 			plans = append(plans, plan)
 		}
@@ -161,6 +170,38 @@ func TestDeleteErrorLogsEmptyBodyDeletesCurrentUsersErrors(t *testing.T) {
 	listReq := planService.listReqs[0]
 	if listReq.UserID != 100 || listReq.IsAdmin || !listReq.NoPaginate {
 		t.Fatalf("unexpected plan list request: %+v", listReq)
+	}
+}
+
+func TestDeleteErrorLogsEmptyBodySkipsNilVisiblePlans(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	logService := &mockDeleteErrorLogsService{}
+	planService := &mockDeleteErrorLogsPlanService{
+		list: []*models.AutoIngestPlan{
+			nil,
+			{ID: 11, UserID: 100},
+			nil,
+			{ID: 33, UserID: 100},
+		},
+	}
+	router := newDeleteErrorLogsRouter(planService, logService, false)
+
+	req := httptest.NewRequestWithContext(stdctx.Background(), http.MethodPost, "/delete_error", nil)
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	gotPlanIDs := append([]int64(nil), logService.planIDs...)
+	sort.Slice(gotPlanIDs, func(i, j int) bool { return gotPlanIDs[i] < gotPlanIDs[j] })
+
+	if want := []int64{11, 33}; !int64SlicesEqual(gotPlanIDs, want) {
+		t.Fatalf("expected non-nil visible plan IDs %v, got %v", want, gotPlanIDs)
 	}
 }
 

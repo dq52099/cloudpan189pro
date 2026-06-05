@@ -31,6 +31,10 @@ func (h *handler) ToggleEnableAuth() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureSettingService(ctx, codeToggleEnableAuthFailed) {
+			return
+		}
+
 		if err := h.settingService.Update(ctx.GetContext(),
 			utils.WithField("enable_auth", *req.EnableAuth),
 		); err != nil {

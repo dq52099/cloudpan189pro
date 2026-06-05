@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -29,7 +31,7 @@ type downloadRequest struct {
 }
 
 type downloadFileIdRequest struct {
-	FileId int64 `uri:"fileId" binding:"required" example:"123456"`
+	FileId int64 `uri:"fileId" binding:"required,min=1" example:"123456"`
 }
 
 // Download 下载文件
@@ -77,9 +79,17 @@ func (h *handler) Download() httpcontext.HandlerFunc {
 			return
 		}
 
+		if !h.ensureVerifyService(ctx, busCodeFileVerifyError) {
+			return
+		}
+
 		if err := h.verifyService.VerifyV1(ctx.GetContext(), fileIdReq.FileId, req.Sign, req.UUID, req.Timestamp, req.Signer); err != nil {
 			ctx.Fail(busCodeFileVerifyError.WithError(err))
 
+			return
+		}
+
+		if !h.ensureVirtualFileService(ctx, busCodeFileQueryError) {
 			return
 		}
 
@@ -91,9 +101,19 @@ func (h *handler) Download() httpcontext.HandlerFunc {
 			return
 		}
 
+		if file == nil {
+			ctx.Fail(busCodeFileNotFound.WithError(gorm.ErrRecordNotFound))
+
+			return
+		}
+
 		if file.IsDir {
 			ctx.Fail(busCodeFileIsDirNotSupport)
 
+			return
+		}
+
+		if !h.ensureMountPointService(ctx, busCodeFileQueryError) {
 			return
 		}
 
@@ -104,11 +124,17 @@ func (h *handler) Download() httpcontext.HandlerFunc {
 			return
 		}
 
+		if mountFile == nil {
+			ctx.Fail(busCodeFileQueryError.WithError(gorm.ErrRecordNotFound))
+
+			return
+		}
+
 		userID := ctx.GetInt64(consts.CtxKeyUserId)
 		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
 		tokenID := mountFile.TokenId
 
-		if userID > 0 {
+		if userID > 0 && h.hasUserMountPointTokenService() {
 			boundTokenID, bindErr := h.userMountPointTokenService.GetTokenID(ctx.GetContext(), userID, mountFile.ID)
 			if bindErr != nil {
 				ctx.Fail(busCodeTokenQueryError.WithError(bindErr))
@@ -132,6 +158,19 @@ func (h *handler) Download() httpcontext.HandlerFunc {
 			}
 		}
 
+		if tokenID == 0 && h.hasUserMountPointTokenService() && userID == 0 {
+			anyTokenMap, anyErr := h.userMountPointTokenService.GetAnyUserTokens(ctx.GetContext(), []int64{mountFile.ID})
+			if anyErr != nil {
+				ctx.Fail(busCodeTokenQueryError.WithError(anyErr))
+
+				return
+			}
+
+			if anyTokenID, ok := anyTokenMap[mountFile.ID]; ok && anyTokenID > 0 {
+				tokenID = anyTokenID
+			}
+		}
+
 		if tokenID == 0 {
 			ctx.Fail(busCodeTokenNotBind)
 
@@ -139,6 +178,10 @@ func (h *handler) Download() httpcontext.HandlerFunc {
 		}
 
 		// 获取令牌
+		if !h.ensureCloudTokenService(ctx, busCodeTokenQueryError) {
+			return
+		}
+
 		token, err := h.cloudTokenService.Query(ctx.GetContext(), tokenID)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -150,12 +193,22 @@ func (h *handler) Download() httpcontext.HandlerFunc {
 			return
 		}
 
-		authToken := cloudbridgeSvi.NewAuthToken(token.AccessToken, token.ExpiresIn)
+		if token == nil {
+			ctx.Fail(busCodeTokenNotBind)
+
+			return
+		}
+
+		authToken := cloudbridgeSvi.NewAuthToken(token.AccessToken, token.AuthExpiresAtMillis(time.Now()))
 
 		// 获取下载链接
 		var (
 			downloadLink string
 		)
+
+		if !h.ensureCloudBridgeService(ctx, busCodeGetDownloadLinkError) {
+			return
+		}
 
 		switch file.OsType {
 		case models.OsTypePersonFile:
@@ -199,17 +252,18 @@ func (h *handler) Download() httpcontext.HandlerFunc {
 			return
 		}
 
-		if shared.SettingAddition.MultipleStream {
+		settingAddition := shared.GetSettingAddition()
+		if settingAddition.MultipleStream {
 			ctx.Header(consts.HeaderKeyTransferType, consts.HeaderValueTransferTypeMultiStream)
-			ctx.Header(consts.HeaderKeyTransferChunkSize, fmt.Sprintf("%d", shared.SettingAddition.MultipleStreamChunkSize))
-			ctx.Header(consts.HeaderKeyTransferThreadCount, fmt.Sprintf("%d", shared.SettingAddition.MultipleStreamThreadCount))
-			ctx.Header(consts.HeaderKeyTransferChunkSizeFormat, utils.FormatBytes(shared.SettingAddition.MultipleStreamChunkSize))
+			ctx.Header(consts.HeaderKeyTransferChunkSize, fmt.Sprintf("%d", settingAddition.MultipleStreamChunkSize))
+			ctx.Header(consts.HeaderKeyTransferThreadCount, fmt.Sprintf("%d", settingAddition.MultipleStreamThreadCount))
+			ctx.Header(consts.HeaderKeyTransferChunkSizeFormat, utils.FormatBytes(settingAddition.MultipleStreamChunkSize))
 
-			h.doMultiStream(ctx, downloadLink)
-		} else if shared.SettingAddition.LocalProxy {
+			h.doMultiStream(ctx, downloadLink, settingAddition.MultipleStreamThreadCount, settingAddition.MultipleStreamChunkSize)
+		} else if settingAddition.LocalProxy {
 			ctx.Header(consts.HeaderKeyTransferType, consts.HeaderValueTransferTypeLocalProxy)
 
-			h.doProxy(ctx, downloadLink)
+			h.doProxy(ctx, downloadLink, settingAddition.LocalProxyURL)
 		} else {
 			ctx.Header(consts.HeaderKeyTransferType, consts.HeaderValueTransferTypeRedirect)
 			ctx.Redirect(http.StatusFound, downloadLink)
@@ -217,31 +271,59 @@ func (h *handler) Download() httpcontext.HandlerFunc {
 	}
 }
 
-// 全局HTTP客户端，复用连接
-var globalHTTPClient = &http.Client{
-	Timeout: 0,
-	Transport: &http.Transport{
-		DisableKeepAlives:     false,
-		MaxIdleConns:          200,
-		MaxIdleConnsPerHost:   20,
-		MaxConnsPerHost:       50,
-		IdleConnTimeout:       120 * time.Second,
-		TLSHandshakeTimeout:   5 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		DisableCompression:    true,
-		WriteBufferSize:       128 * 1024,
-		ReadBufferSize:        128 * 1024,
-		ForceAttemptHTTP2:     false,
-	},
+var globalHTTPTransport = &http.Transport{
+	DisableKeepAlives:     false,
+	MaxIdleConns:          200,
+	MaxIdleConnsPerHost:   20,
+	MaxConnsPerHost:       50,
+	IdleConnTimeout:       120 * time.Second,
+	TLSHandshakeTimeout:   5 * time.Second,
+	ExpectContinueTimeout: 1 * time.Second,
+	DisableCompression:    true,
+	WriteBufferSize:       128 * 1024,
+	ReadBufferSize:        128 * 1024,
+	ForceAttemptHTTP2:     false,
 }
 
-func (h *handler) doProxy(ctx *httpcontext.Context, link string) {
+// 全局HTTP客户端，复用连接
+var globalHTTPClient = &http.Client{
+	Timeout:   0,
+	Transport: globalHTTPTransport,
+}
+
+var downloadProxyLogURLPattern = regexp.MustCompile(`(?i)(?:[a-z][a-z0-9+.-]*://|/)[^\s"'<>]+`)
+
+func sanitizeDownloadProxyError(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	message := err.Error()
+	message = downloadProxyLogURLPattern.ReplaceAllStringFunc(message, utils.RedactURLForLog)
+
+	return utils.RedactSensitiveText(message)
+}
+
+func (h *handler) doProxy(ctx *httpcontext.Context, link string, proxyURL string) {
 	start := time.Now()
 	logger := ctx.GetContext().Logger
+	logLink := utils.RedactURLForLog(link)
+
+	client, err := localProxyHTTPClient(proxyURL)
+	if err != nil {
+		logger.Error("本地代理地址无效",
+			zap.String("proxy", utils.RedactURLForLog(proxyURL)),
+			zap.String("error", sanitizeDownloadProxyError(err)),
+		)
+
+		ctx.Fail(busCodeCreateLocalProxyRequestError.WithError(err))
+
+		return
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
 	if err != nil {
-		logger.Error("创建本地代理请求失败", zap.Error(err), zap.String("link", link))
+		logger.Error("创建本地代理请求失败", zap.String("error", sanitizeDownloadProxyError(err)), zap.String("link", logLink))
 
 		ctx.Fail(busCodeCreateLocalProxyRequestError.WithError(err))
 
@@ -257,15 +339,15 @@ func (h *handler) doProxy(ctx *httpcontext.Context, link string) {
 		req.Header.Set("Connection", "keep-alive")
 	}
 
-	resp, err := globalHTTPClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		if ctx.Request.Context().Err() != nil {
-			logger.Error("客户端断开连接", zap.String("link", link))
+			logger.Error("客户端断开连接", zap.String("link", logLink))
 
 			return
 		}
 
-		logger.Error("本地代理请求失败", zap.Error(err), zap.String("link", link))
+		logger.Error("本地代理请求失败", zap.String("error", sanitizeDownloadProxyError(err)), zap.String("link", logLink))
 
 		ctx.Fail(busCodeCreateLocalProxyRequestError.WithError(err))
 
@@ -282,23 +364,59 @@ func (h *handler) doProxy(ctx *httpcontext.Context, link string) {
 	ctx.Stream(func(w io.Writer) bool {
 		n, err := io.Copy(w, resp.Body)
 		if err != nil {
-			logger.Error("本地代理响应写入失败", zap.Error(err), zap.String("link", link))
+			logger.Error("本地代理响应写入失败", zap.String("error", sanitizeDownloadProxyError(err)), zap.String("link", logLink))
 
 			return false
 		}
 
-		logger.Debug("本地代理响应写入成功", zap.Int64("n", n), zap.String("link", link), zap.Duration("cost", time.Since(start)))
+		logger.Debug("本地代理响应写入成功", zap.Int64("n", n), zap.String("link", logLink), zap.Duration("cost", time.Since(start)))
 
 		return true
 	})
 }
 
-func (h *handler) doMultiStream(ctx *httpcontext.Context, link string) {
+func localProxyHTTPClient(proxyURL string) (*http.Client, error) {
+	transport, err := localProxyHTTPTransport(proxyURL)
+	if err != nil {
+		return nil, err
+	}
+
+	if transport == nil {
+		return globalHTTPClient, nil
+	}
+
+	return &http.Client{
+		Timeout:   globalHTTPClient.Timeout,
+		Transport: transport,
+	}, nil
+}
+
+func localProxyHTTPTransport(proxyURL string) (*http.Transport, error) {
+	normalizedProxyURL, err := utils.NormalizeHTTPProxyURL(proxyURL)
+	if err != nil {
+		return nil, err
+	}
+
+	if normalizedProxyURL == "" {
+		return nil, nil
+	}
+
+	parsedProxyURL, _ := url.Parse(normalizedProxyURL)
+
+	transport := globalHTTPTransport.Clone()
+	transport.Proxy = http.ProxyURL(parsedProxyURL)
+
+	return transport, nil
+}
+
+func (h *handler) doMultiStream(ctx *httpcontext.Context, link string, threadCount int, chunkSize int64) {
 	var (
-		logger = ctx.GetContext().Logger
+		logger  = ctx.GetContext().Logger
+		logLink = utils.RedactURLForLog(link)
 	)
 
-	httpReq := ctx.Request.Header.Clone()
+	httpReq := http.Header{}
+	h.copyOptimizedHeaders(ctx.Request.Header, httpReq)
 	httpReq.Set("Accept-Encoding", "identity")
 	httpReq.Del("Content-Type")
 
@@ -306,28 +424,26 @@ func (h *handler) doMultiStream(ctx *httpcontext.Context, link string) {
 		link,
 		httpReq,
 		multistreamer.WithLogger(logger),
-		multistreamer.WithThreads(shared.SettingAddition.MultipleStreamThreadCount),
-		multistreamer.WithChunkSize(shared.SettingAddition.MultipleStreamChunkSize),
+		multistreamer.WithThreads(threadCount),
+		multistreamer.WithChunkSize(chunkSize),
 	)
 	if err != nil {
-		logger.Error("多线程流初始化失败", zap.Error(err), zap.String("url", link))
+		logger.Error("多线程流初始化失败", zap.String("error", sanitizeDownloadProxyError(err)), zap.String("url", logLink))
 
 		ctx.Fail(busCodeCreateMultiStreamProxyError.WithError(err))
 
 		return
 	}
 
-	for k, v := range streamer.GetResponseHeader() {
-		ctx.Header(k, v[0])
-	}
+	h.copyOptimizedResponseHeaders(streamer.GetResponseHeader(), ctx)
 
 	ctx.Status(streamer.HTTPCode())
 
 	if err = streamer.Transfer(ctx, ctx.Writer); err != nil {
 		if h.isConnectionError(err) {
-			logger.Info("客户端连接断开", zap.String("link", link))
+			logger.Info("客户端连接断开", zap.String("link", logLink))
 		} else {
-			logger.Error("多线程流文件传输失败", zap.Error(err), zap.String("link", link))
+			logger.Error("多线程流文件传输失败", zap.String("error", sanitizeDownloadProxyError(err)), zap.String("link", logLink))
 		}
 	}
 }
@@ -335,7 +451,7 @@ func (h *handler) doMultiStream(ctx *httpcontext.Context, link string) {
 func (h *handler) copyOptimizedHeaders(src, dst http.Header) {
 	importantHeaders := []string{
 		"Range", "If-Range", "If-Modified-Since", "If-None-Match",
-		"User-Agent", "Accept", "Accept-Encoding", "Authorization",
+		"User-Agent", "Accept", "Accept-Encoding",
 		"Referer", "Origin",
 	}
 
@@ -358,9 +474,6 @@ func (h *handler) copyOptimizedResponseHeaders(src http.Header, ctx *httpcontext
 			ctx.Header(header, value)
 		}
 	}
-
-	ctx.Header("Connection", "keep-alive")
-	ctx.Header("Keep-Alive", "timeout=120, max=100")
 }
 
 func (h *handler) isConnectionError(err error) bool {

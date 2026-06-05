@@ -1,16 +1,21 @@
 package telegram
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"github.com/xxcheng123/cloudpan189-share/internal/repository/models"
 	"github.com/xxcheng123/cloudpan189-share/internal/services/telegram"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Handler struct {
@@ -28,11 +33,15 @@ func NewHandler(db *gorm.DB, tgService telegram.Service, logger *zap.Logger) *Ha
 }
 
 func invalidParams(err error) httpcontext.BusinessError {
-	return &customBusinessError{
+	if err == nil {
+		err = errors.New("参数错误")
+	}
+
+	return (&customBusinessError{
 		httpCode:     http.StatusBadRequest,
 		businessCode: 400,
 		message:      err.Error(),
-	}
+	}).WithError(err)
 }
 
 func notFound(msg string) httpcontext.BusinessError {
@@ -47,30 +56,47 @@ type customBusinessError struct {
 	httpCode     int
 	businessCode int
 	message      string
+	stackError   error
 }
 
 func (e *customBusinessError) GetHTTPCode() int   { return e.httpCode }
 func (e *customBusinessError) GetCode() int       { return e.businessCode }
 func (e *customBusinessError) GetMessage() string { return e.message }
-func (e *customBusinessError) GetError() error    { return nil }
+func (e *customBusinessError) GetError() error    { return e.stackError }
 func (e *customBusinessError) Error() string      { return e.message }
 func (e *customBusinessError) WithError(err error) httpcontext.BusinessError {
-	return e
+	br := e.clone()
+	br.stackError = err
+
+	return br
 }
 func (e *customBusinessError) WithHTTPCode(code int) httpcontext.BusinessError {
-	e.httpCode = code
+	br := e.clone()
+	br.httpCode = code
 
-	return e
+	return br
 }
 func (e *customBusinessError) WithMessage(msg string) httpcontext.BusinessError {
-	e.message = msg
+	br := e.clone()
+	br.message = msg
 
-	return e
+	return br
 }
 func (e *customBusinessError) WithBusinessCode(code int) httpcontext.BusinessError {
-	e.businessCode = code
+	br := e.clone()
+	br.businessCode = code
 
-	return e
+	return br
+}
+
+func (e *customBusinessError) clone() *customBusinessError {
+	if e == nil {
+		return &customBusinessError{}
+	}
+
+	br := *e
+
+	return &br
 }
 
 // GetSetting 获取 Telegram 配置
@@ -106,9 +132,7 @@ func (h *Handler) GetSetting() httpcontext.HandlerFunc {
 			return
 		}
 
-		setting.BotToken = setting.BotTokenEncrypted
-		setting.BotTokenEncrypted = ""
-		c.Success(setting)
+		c.Success(telegramSettingResponse(setting))
 	}
 }
 
@@ -146,76 +170,156 @@ func (h *Handler) UpdateSetting() httpcontext.HandlerFunc {
 			return
 		}
 
-		var setting models.TelegramSetting
+		var (
+			existingSetting    models.TelegramSetting
+			hasExistingSetting bool
+		)
 
-		result := h.db.First(&setting, "id = ?", int64(1))
-		if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			c.Fail(invalidParams(result.Error))
+		if err := h.db.First(&existingSetting, "id = ?", int64(1)).Error; err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				c.Fail(invalidParams(err))
 
-			return
+				return
+			}
+		} else {
+			hasExistingSetting = true
 		}
 
-		if setting.ID == 0 {
-			setting.ID = 1
-			setting.APIURL = "https://api.telegram.org"
-			setting.DefaultMountPath = "/转存"
-			setting.EnableNotify = true
+		normalizeTelegramSecretUpdate(&req.BotToken)
+
+		if hasExistingSetting {
+			normalizeTelegramURLUpdate(&req.ProxyURL, existingSetting.ProxyURL)
+			normalizeTelegramURLUpdate(&req.APIURL, existingSetting.APIURL)
 		}
 
+		setting := defaultTelegramSetting()
 		applyTelegramSettingUpdate(&setting, &req)
 
 		updates := telegramSettingUpdateMap(&req)
 
-		if result.Error != nil && errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			result = h.db.Model(new(models.TelegramSetting)).Create(map[string]interface{}{
-				"id":                  setting.ID,
-				"bot_token_encrypted": setting.BotTokenEncrypted,
-				"proxy_url":           setting.ProxyURL,
-				"proxy_type":          setting.ProxyType,
-				"api_url":             setting.APIURL,
-				"chat_id":             setting.ChatID,
-				"default_mount_path":  setting.DefaultMountPath,
-				"enable_notify":       setting.EnableNotify,
-				"enable":              setting.Enable,
-			})
-		} else {
-			if len(updates) == 0 {
-				result = &gorm.DB{RowsAffected: 0}
-			} else {
-				result = h.db.Model(&models.TelegramSetting{}).
-					Where("id = ?", setting.ID).
-					Updates(updates)
-			}
-		}
-
+		result := h.db.Model(new(models.TelegramSetting)).
+			Clauses(telegramSettingUpsertConflict(updates)).
+			Create(telegramSettingCreateMap(&setting))
 		if result.Error != nil {
-			if errors.Is(result.Error, gorm.ErrDuplicatedKey) || h.ensureTelegramSettingExists(1) == nil {
-				c.Fail(invalidParams(errors.New("telegram 配置已经初始化过了")))
-
-				return
-			}
-
 			c.Fail(invalidParams(result.Error))
 
 			return
 		}
 
-		if setting.ID != 0 && result.RowsAffected == 0 {
-			if err := h.checkTelegramSettingUpdateResult(result, setting.ID); err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					c.Fail(notFound("Setting not found"))
-				} else {
-					c.Fail(invalidParams(err))
-				}
+		if err := h.db.First(&setting, "id = ?", int64(1)).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				c.Fail(notFound("Setting not found"))
+			} else {
+				c.Fail(invalidParams(err))
+			}
+
+			return
+		}
+
+		if h.service != nil {
+			if err := h.service.UpdateConfig(telegram.Config{
+				BotToken:  setting.BotTokenEncrypted,
+				ChatID:    setting.ChatID,
+				ProxyURL:  setting.ProxyURL,
+				ProxyType: setting.ProxyType,
+				APIURL:    setting.APIURL,
+				Enable:    setting.Enable,
+			}); err != nil {
+				c.Fail(invalidParams(err))
 
 				return
 			}
 		}
 
-		setting.BotToken = setting.BotTokenEncrypted
-		setting.BotTokenEncrypted = ""
-		c.Success(setting)
+		c.Success(telegramSettingResponse(setting))
 	}
+}
+
+func telegramSettingResponse(setting models.TelegramSetting) models.TelegramSetting {
+	if strings.TrimSpace(setting.BotTokenEncrypted) != "" || strings.TrimSpace(setting.BotToken) != "" {
+		setting.BotToken = utils.RedactedSecret
+	} else {
+		setting.BotToken = ""
+	}
+
+	setting.BotTokenEncrypted = ""
+	setting.ProxyURL = utils.RedactURLForLog(setting.ProxyURL)
+	setting.APIURL = utils.RedactURLForLog(setting.APIURL)
+
+	return setting
+}
+
+func normalizeTelegramSecretUpdate(value **string) {
+	if value == nil || *value == nil {
+		return
+	}
+
+	trimmed := strings.TrimSpace(**value)
+	if trimmed == utils.RedactedSecret {
+		*value = nil
+
+		return
+	}
+
+	**value = trimmed
+}
+
+func normalizeTelegramURLUpdate(value **string, current string) {
+	if value == nil || *value == nil {
+		return
+	}
+
+	trimmed := strings.TrimSpace(**value)
+
+	if current != "" {
+		redactedCurrent := utils.RedactURLForLog(current)
+		if redactedCurrent != current && trimmed == redactedCurrent {
+			*value = nil
+
+			return
+		}
+	}
+
+	**value = trimmed
+}
+
+func defaultTelegramSetting() models.TelegramSetting {
+	return models.TelegramSetting{
+		ID:               1,
+		APIURL:           "https://api.telegram.org",
+		DefaultMountPath: "/转存",
+		EnableNotify:     true,
+	}
+}
+
+func telegramSettingCreateMap(setting *models.TelegramSetting) map[string]interface{} {
+	return map[string]interface{}{
+		"id":                  setting.ID,
+		"bot_token_encrypted": setting.BotTokenEncrypted,
+		"proxy_url":           setting.ProxyURL,
+		"proxy_type":          setting.ProxyType,
+		"api_url":             setting.APIURL,
+		"chat_id":             setting.ChatID,
+		"default_mount_path":  setting.DefaultMountPath,
+		"enable_notify":       setting.EnableNotify,
+		"enable":              setting.Enable,
+	}
+}
+
+func telegramSettingUpsertConflict(updates map[string]interface{}) clause.OnConflict {
+	conflict := clause.OnConflict{
+		Columns: []clause.Column{{Name: "id"}},
+	}
+	if len(updates) == 0 {
+		conflict.DoNothing = true
+
+		return conflict
+	}
+
+	updates["updated_at"] = time.Now()
+	conflict.DoUpdates = clause.Assignments(updates)
+
+	return conflict
 }
 
 func applyTelegramSettingUpdate(setting *models.TelegramSetting, req *UpdateSettingReq) {
@@ -402,26 +506,14 @@ func (h *Handler) UpdateUser() httpcontext.HandlerFunc {
 			return
 		}
 
-		var user models.TelegramUser
-
-		result := h.db.Where("user_id = ?", req.UserID).First(&user)
-		if result.Error != nil {
-			if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-				c.Fail(notFound("User not found"))
-			} else {
-				c.Fail(invalidParams(result.Error))
-			}
-
-			return
+		updates := map[string]interface{}{
+			"mount_path": req.MountPath,
+			"is_admin":   req.IsAdmin,
 		}
 
-		user.MountPath = req.MountPath
-		user.IsAdmin = req.IsAdmin
-
-		result = h.db.Model(&models.TelegramUser{}).
-			Where("id = ?", user.ID).
-			Select("mount_path", "is_admin").
-			Updates(user)
+		result := h.db.Model(&models.TelegramUser{}).
+			Where("user_id = ?", req.UserID).
+			Updates(updates)
 		if result.Error != nil {
 			c.Fail(invalidParams(result.Error))
 
@@ -429,7 +521,7 @@ func (h *Handler) UpdateUser() httpcontext.HandlerFunc {
 		}
 
 		if result.RowsAffected == 0 {
-			if err := h.checkTelegramUserUpdateResult(result, user.ID); err != nil {
+			if err := h.ensureTelegramUserIDExists(req.UserID); err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					c.Fail(notFound("User not found"))
 				} else {
@@ -438,6 +530,17 @@ func (h *Handler) UpdateUser() httpcontext.HandlerFunc {
 
 				return
 			}
+		}
+
+		var user models.TelegramUser
+		if err := h.db.Where("user_id = ?", req.UserID).First(&user).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				c.Fail(notFound("User not found"))
+			} else {
+				c.Fail(invalidParams(err))
+			}
+
+			return
 		}
 
 		c.Success(user)
@@ -484,6 +587,19 @@ func (h *Handler) ensureTelegramSettingExists(id int64) error {
 func (h *Handler) ensureTelegramUserExists(id int64) error {
 	var count int64
 	if err := h.db.Model(&models.TelegramUser{}).Where("id = ?", id).Count(&count).Error; err != nil {
+		return err
+	}
+
+	if count == 0 {
+		return gorm.ErrRecordNotFound
+	}
+
+	return nil
+}
+
+func (h *Handler) ensureTelegramUserIDExists(userID int64) error {
+	var count int64
+	if err := h.db.Model(&models.TelegramUser{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
 		return err
 	}
 
@@ -570,6 +686,18 @@ type ProcessShareLinkReq struct {
 	AutoMount bool   `json:"autoMount"`
 }
 
+type contextAwareTelegramShareService interface {
+	ParseAndMountShareLinkWithContext(ctx context.Context, shareURL, mountPath string, autoMount bool) (*telegram.MountResult, error)
+}
+
+func parseTelegramShareLinkWithContext(ctx context.Context, svc telegram.Service, shareURL, mountPath string, autoMount bool) (*telegram.MountResult, error) {
+	if contextAwareSvc, ok := svc.(contextAwareTelegramShareService); ok {
+		return contextAwareSvc.ParseAndMountShareLinkWithContext(ctx, shareURL, mountPath, autoMount)
+	}
+
+	return svc.ParseAndMountShareLink(shareURL, mountPath, autoMount)
+}
+
 // ProcessShareLink 处理 Telegram 分享链接
 // @Summary 处理 Telegram 分享链接
 // @Description 解析分享链接，可按配置将资源自动挂载到指定路径
@@ -595,7 +723,7 @@ func (h *Handler) ProcessShareLink() httpcontext.HandlerFunc {
 
 		// 优先使用已启动的 Telegram 服务（具有挂载依赖注入）
 		if h.service != nil && h.service.IsEnabled() {
-			result, err := h.service.ParseAndMountShareLink(req.ShareURL, req.MountPath, req.AutoMount)
+			result, err := parseTelegramShareLinkWithContext(c.Request.Context(), h.service, req.ShareURL, req.MountPath, req.AutoMount)
 			if err != nil {
 				c.Fail(invalidParams(err))
 
@@ -636,6 +764,12 @@ func (h *Handler) ProcessShareLink() httpcontext.HandlerFunc {
 			token = setting.BotTokenEncrypted
 		}
 
+		if token == "" || !setting.Enable {
+			c.Fail(invalidParams(&customBusinessError{httpCode: http.StatusBadRequest, message: "Telegram bot is not enabled or token not configured"}))
+
+			return
+		}
+
 		targetChatID := req.ChatID
 		if targetChatID == "" {
 			targetChatID = setting.ChatID
@@ -650,7 +784,7 @@ func (h *Handler) ProcessShareLink() httpcontext.HandlerFunc {
 			h.logger,
 		)
 
-		result, err := msgService.ParseAndMountShareLink(req.ShareURL, req.MountPath, req.AutoMount)
+		result, err := parseTelegramShareLinkWithContext(c.Request.Context(), msgService, req.ShareURL, req.MountPath, req.AutoMount)
 		if err != nil {
 			c.Fail(invalidParams(err))
 

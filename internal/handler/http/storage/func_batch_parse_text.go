@@ -2,16 +2,18 @@ package storage
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
+	mountpointSvi "github.com/xxcheng123/cloudpan189-share/internal/services/mountpoint"
 	"github.com/xxcheng123/cloudpan189-share/internal/types/topic"
 	"gorm.io/gorm"
 )
 
 // BatchParseFromText 批量解析文本
 // @Summary 批量解析文本（预览）
-// @Description 解析文本内容（如分享链接），验证CloudToken，返回资源的真实名称和ID，但不创建挂载
+// @Description 解析文本内容（如分享链接、订阅号、文件夹ID），仅在解析个人文件夹ID时验证CloudToken，返回资源的真实名称和ID，但不创建挂载
 // @Tags 存储管理
 // @Accept json
 // @Produce json
@@ -35,29 +37,29 @@ func (h *handler) BatchParseFromText() httpcontext.HandlerFunc {
 
 		req.UserID = ctx.GetInt64(consts.CtxKeyUserId)
 		req.IsAdmin = ctx.GetBool(consts.CtxKeyIsAdmin)
+		req.Content = strings.TrimSpace(req.Content)
 
-		// 校验 CloudToken 是否存在
-		tokenInfo, err := h.cloudTokenService.QueryAccessible(ctx.GetContext(), req.CloudToken, req.UserID, req.IsAdmin)
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				ctx.Fail(busCodeStorageCloudTokenNotExist.WithError(err))
-			} else {
-				ctx.Fail(busCodeStorageQueryCloudTokenError.WithError(err))
-			}
+		if req.Content == "" {
+			ctx.AbortWithInvalidParams(errors.New("content 不能为空"))
 
 			return
 		}
 
-		if tokenInfo == nil {
-			ctx.Fail(busCodeStorageCloudTokenNotExist)
-
+		if !h.ensureMountPointService(ctx, busCodeStorageQueryMountPointError) {
 			return
 		}
 
 		// 调用 Service 层进行解析 (核心逻辑在 Service 中)
 		result, err := h.mountPointService.BatchParseText(ctx.GetContext(), req)
 		if err != nil {
-			ctx.Fail(busCodeStorageQueryPathFailed.WithError(err))
+			switch {
+			case mountpointSvi.IsInvalidCloudTokenIDError(err):
+				ctx.Fail(busCodeStorageCloudTokenEmpty.WithError(err))
+			case errors.Is(err, gorm.ErrRecordNotFound):
+				ctx.Fail(busCodeStorageCloudTokenNotExist.WithError(err))
+			default:
+				ctx.Fail(busCodeStorageQueryCloudTokenError.WithError(err))
+			}
 
 			return
 		}

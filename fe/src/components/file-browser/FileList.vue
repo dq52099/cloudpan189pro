@@ -8,15 +8,94 @@
       :checked-row-keys="checkedRowKeys"
       @update:checked-row-keys="handleCheck"
       :row-props="rowProps"
+      :scroll-x="640"
       :bordered="false"
-      class="custom-table"
+      class="custom-table desktop-file-table"
     />
+
+    <div class="mobile-file-list">
+      <n-empty
+        v-if="!loading && fileList.length === 0"
+        description="暂无文件"
+        class="mobile-empty"
+      />
+      <div
+        v-for="file in fileList"
+        :key="file.id"
+        class="file-card"
+        :class="{
+          'is-directory': file.isDir,
+          'is-pending': isRowPendingDelete(file.id),
+        }"
+        role="button"
+        tabindex="0"
+        @click="handleRowClick(file, $event)"
+        @keydown.enter.prevent="handleKeyboardOpen(file)"
+        @keydown.space.prevent="handleKeyboardOpen(file)"
+      >
+        <div class="file-card__select">
+          <n-checkbox
+            :checked="isRowChecked(file.id)"
+            :disabled="isRowActionBlocked(file.id)"
+            @update:checked="(checked) => handleCardCheck(file.id, checked)"
+          />
+        </div>
+        <n-icon class="file-card__icon" :color="file.isDir ? 'var(--n-primary-color)' : undefined">
+          <component :is="getFileIcon(file.name, file.isDir)" />
+        </n-icon>
+        <div class="file-card__body">
+          <div class="file-card__name" :title="file.name">
+            {{ file.name }}
+          </div>
+          <div class="file-card__meta">
+            <span>{{ file.isDir ? '文件夹' : formatFileSize(file.size) }}</span>
+            <span>{{ formatDate(file.modifyDate || file.updatedAt) }}</span>
+          </div>
+        </div>
+        <n-tag
+          v-if="isRowPendingDelete(file.id)"
+          size="small"
+          type="warning"
+          :bordered="false"
+          class="file-card__tag"
+        >
+          删除中
+        </n-tag>
+        <n-button
+          class="file-card__action"
+          size="small"
+          quaternary
+          circle
+          :type="isRowActionBlocked(file.id) ? 'warning' : 'primary'"
+          :loading="isRowDownloading(file.id)"
+          :disabled="isRowActionBlocked(file.id)"
+          :aria-label="file.isDir ? '打开' : '下载'"
+          @click.stop="handleCardAction(file)"
+        >
+          <template #icon>
+            <n-icon>
+              <OpenOutline v-if="file.isDir" />
+              <DownloadOutline v-else />
+            </n-icon>
+          </template>
+        </n-button>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { h, computed } from 'vue'
-import { NDataTable, NIcon, NButton, NTag, type DataTableColumns } from 'naive-ui'
+import { h, computed, type Component } from 'vue'
+import {
+  NDataTable,
+  NIcon,
+  NButton,
+  NTag,
+  NTooltip,
+  NCheckbox,
+  NEmpty,
+  type DataTableColumns,
+} from 'naive-ui'
 import {
   FolderOutline,
   DocumentOutline,
@@ -24,7 +103,8 @@ import {
   MusicalNotesOutline,
   ImageOutline,
   ArchiveOutline,
-  DownloadOutline, // <--- 修改：换成 DownloadOutline，更通用
+  DownloadOutline,
+  OpenOutline,
 } from '@vicons/ionicons5'
 import type { FileChild } from '@/api/file'
 import { formatFileSize, formatDate } from '@/utils/format'
@@ -50,6 +130,32 @@ const pendingDeleteRowKeySet = computed(() => new Set(props.pendingDeleteRowKeys
 const isRowDownloading = (rowId: number) => downloadingRowKeySet.value.has(rowId)
 const isRowPendingDelete = (rowId: number) => pendingDeleteRowKeySet.value.has(rowId)
 const isRowActionBlocked = (rowId: number) => isRowDownloading(rowId) || isRowPendingDelete(rowId)
+const checkedRowKeySet = computed(() => new Set(props.checkedRowKeys ?? []))
+const isRowChecked = (rowId: number) => checkedRowKeySet.value.has(rowId)
+const renderIconButton = (
+  label: string,
+  icon: Component,
+  disabled: boolean,
+  loading: boolean,
+  onClick: () => void
+) => {
+  const button = h(
+    NButton,
+    {
+      size: 'small',
+      quaternary: true,
+      circle: true,
+      type: disabled ? 'warning' : 'primary',
+      loading,
+      disabled,
+      'aria-label': label,
+      onClick,
+    },
+    { icon: () => h(NIcon, null, { default: () => h(icon) }) }
+  )
+
+  return h(NTooltip, { trigger: 'hover' }, { trigger: () => button, default: () => label })
+}
 
 const handleCheck = (keys: Array<string | number>) => {
   const selectableKeys = keys.filter(
@@ -59,22 +165,60 @@ const handleCheck = (keys: Array<string | number>) => {
   emit('update:checkedRowKeys', selectableKeys)
 }
 
+const isInteractiveTarget = (target: EventTarget | null) => {
+  return (
+    target instanceof HTMLElement &&
+    (target.closest('.n-checkbox') || target.closest('.n-button') || target.tagName === 'A')
+  )
+}
+
+const handleRowClick = (row: FileChild, e: MouseEvent) => {
+  if (isRowPendingDelete(row.id) || isInteractiveTarget(e.target)) {
+    return
+  }
+
+  emit('fileClick', row)
+}
+
+const handleKeyboardOpen = (row: FileChild) => {
+  if (!isRowPendingDelete(row.id)) {
+    emit('fileClick', row)
+  }
+}
+
+const handleCardCheck = (rowId: number, checked: boolean) => {
+  if (isRowActionBlocked(rowId)) {
+    return
+  }
+
+  const keys = new Set(props.checkedRowKeys ?? [])
+  if (checked) {
+    keys.add(rowId)
+  } else {
+    keys.delete(rowId)
+  }
+
+  handleCheck([...keys])
+}
+
+const handleCardAction = (row: FileChild) => {
+  if (isRowActionBlocked(row.id)) {
+    return
+  }
+
+  if (row.isDir) {
+    emit('fileClick', row)
+  } else {
+    emit('download', row)
+  }
+}
+
 // 处理行点击（点击行进入目录）
 const rowProps = (row: FileChild) => {
   return {
     style: isRowPendingDelete(row.id) ? 'cursor: not-allowed; opacity: 0.62;' : 'cursor: pointer;',
     onClick: (e: MouseEvent) => {
-      if (isRowPendingDelete(row.id)) {
-        return
-      }
-
-      // 获取点击的目标元素
-      const target = e.target as HTMLElement
-      // 如果点击的是复选框、按钮或其内部元素，不触发进入目录操作
-      if (target.closest('.n-checkbox') || target.closest('.n-button') || target.tagName === 'A') {
-        return
-      }
-      emit('fileClick', row)
+      handleRowClick(row, e)
     },
   }
 }
@@ -84,7 +228,9 @@ const getFileIcon = (fileName: string, isDir?: boolean) => {
   if (isDir) return FolderOutline
   const ext = fileName.split('.').pop()?.toLowerCase()
   if (!ext) return DocumentOutline
-  if (['mp4', 'avi', 'mkv', 'mov', 'wmv', 'flv', 'webm'].includes(ext)) return VideocamOutline
+  if (['mp4', 'avi', 'mkv', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'm3u8'].includes(ext)) {
+    return VideocamOutline
+  }
   if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'wma'].includes(ext)) return MusicalNotesOutline
   if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg'].includes(ext)) return ImageOutline
   if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2'].includes(ext)) return ArchiveOutline
@@ -117,7 +263,9 @@ const columns = computed<DataTableColumns<FileChild>>(() => [
           h(
             'span',
             {
-              style: 'white-space: nowrap; overflow: hidden; text-overflow: ellipsis;',
+              style:
+                'min-width: 0; flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;',
+              title: row.name,
             },
             row.name
           ),
@@ -135,7 +283,7 @@ const columns = computed<DataTableColumns<FileChild>>(() => [
   {
     title: '大小',
     key: 'size',
-    width: 120,
+    width: 110,
     align: 'center',
     render(row) {
       return row.isDir ? '-' : formatFileSize(row.size)
@@ -144,7 +292,7 @@ const columns = computed<DataTableColumns<FileChild>>(() => [
   {
     title: '修改时间',
     key: 'updatedAt', // 这里确认一下你的 API 返回的是 modifyDate 还是 updatedAt
-    width: 180,
+    width: 160,
     align: 'center',
     render(row) {
       // 优先使用 modifyDate，如果没有则尝试 updatedAt
@@ -155,7 +303,7 @@ const columns = computed<DataTableColumns<FileChild>>(() => [
   {
     title: '操作',
     key: 'actions',
-    width: 100,
+    width: 72,
     align: 'center',
     fixed: 'right',
     render(row) {
@@ -163,39 +311,27 @@ const columns = computed<DataTableColumns<FileChild>>(() => [
       const isPendingDelete = isRowPendingDelete(row.id)
 
       if (row.isDir) {
-        return h(
-          NButton,
-          {
-            size: 'small',
-            text: true,
-            type: isPendingDelete ? 'warning' : 'primary',
-            disabled: isPendingDelete,
-            onClick: () => {
-              if (!isPendingDelete) {
-                emit('fileClick', row)
-              }
-            },
-          },
-          { default: () => (isPendingDelete ? '删除中' : '打开') }
+        return renderIconButton(
+          isPendingDelete ? '删除中' : '打开',
+          OpenOutline,
+          isPendingDelete,
+          false,
+          () => {
+            if (!isPendingDelete) {
+              emit('fileClick', row)
+            }
+          }
         )
       } else {
-        return h(
-          NButton,
-          {
-            size: 'small',
-            text: true,
-            type: isPendingDelete ? 'warning' : 'error',
-            loading: isDownloading,
-            disabled: isDownloading || isPendingDelete,
-            onClick: () => {
-              if (!isDownloading && !isPendingDelete) {
-                emit('download', row)
-              }
-            },
-          },
-          {
-            icon: () => h(NIcon, null, { default: () => h(DownloadOutline) }),
-            default: () => (isPendingDelete ? '删除中' : '下载'),
+        return renderIconButton(
+          isPendingDelete ? '删除中' : isDownloading ? '下载中' : '下载',
+          DownloadOutline,
+          isDownloading || isPendingDelete,
+          isDownloading,
+          () => {
+            if (!isDownloading && !isPendingDelete) {
+              emit('download', row)
+            }
           }
         )
       }
@@ -222,5 +358,93 @@ const columns = computed<DataTableColumns<FileChild>>(() => [
 :deep(.custom-table .n-data-table-th) {
   background-color: var(--n-color-hover);
   font-weight: 500;
+}
+
+.mobile-file-list {
+  display: none;
+}
+
+@media (width <= 640px) {
+  .file-list-container {
+    min-height: 240px;
+  }
+
+  .desktop-file-table {
+    display: none;
+  }
+
+  .mobile-file-list {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .file-card {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 10px;
+    min-height: 68px;
+    padding: 12px;
+    border-bottom: 1px solid var(--n-border-color);
+    cursor: pointer;
+  }
+
+  .file-card:last-child {
+    border-bottom: 0;
+  }
+
+  .file-card.is-pending {
+    cursor: not-allowed;
+    opacity: 0.62;
+  }
+
+  .file-card:focus-visible {
+    outline: 2px solid var(--n-primary-color);
+    outline-offset: -2px;
+  }
+
+  .file-card__select {
+    display: flex;
+    align-items: center;
+  }
+
+  .file-card__icon {
+    font-size: 22px;
+  }
+
+  .file-card__body {
+    min-width: 0;
+  }
+
+  .file-card__name {
+    overflow: hidden;
+    color: var(--n-text-color);
+    font-weight: 500;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .file-card__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    margin-top: 4px;
+    color: var(--n-text-color-3);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .file-card__tag {
+    justify-self: end;
+  }
+
+  .file-card__action {
+    justify-self: end;
+  }
+
+  .mobile-empty {
+    padding: 40px 16px;
+  }
 }
 </style>

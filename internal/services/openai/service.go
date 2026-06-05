@@ -8,16 +8,21 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 	"go.uber.org/zap"
 )
 
 const maxOpenAIResponseSize = 5 << 20
 
+var openAILogURLPattern = regexp.MustCompile(`(?i)(?:[a-z][a-z0-9+.-]*://|/)[^\s"'<>]+`)
+
 type Service interface {
 	GenerateUpgradeKeyword(title, category string) (string, error)
+	GenerateUpgradeKeywordWithContext(ctx context.Context, title, category string) (string, error)
 }
 
 type Config struct {
@@ -56,7 +61,29 @@ type service struct {
 	client *http.Client
 }
 
+func sanitizeOpenAIText(text string) string {
+	if text == "" {
+		return ""
+	}
+
+	text = openAILogURLPattern.ReplaceAllStringFunc(text, utils.RedactURLForLog)
+
+	return utils.RedactSensitiveText(text)
+}
+
+func sanitizeOpenAIError(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	return sanitizeOpenAIText(err.Error())
+}
+
 func NewService(logger *zap.Logger, apiKey, baseURL, model string) Service {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
 	s := &service{
 		config: &Config{
 			APIKey:  apiKey,
@@ -91,6 +118,14 @@ func NewService(logger *zap.Logger, apiKey, baseURL, model string) Service {
 }
 
 func (s *service) GenerateUpgradeKeyword(title, category string) (string, error) {
+	return s.GenerateUpgradeKeywordWithContext(context.Background(), title, category)
+}
+
+func (s *service) GenerateUpgradeKeywordWithContext(ctx context.Context, title, category string) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	if s.config.APIKey == "" {
 		return "", fmt.Errorf("OpenAI API key is not set")
 	}
@@ -129,9 +164,9 @@ func (s *service) GenerateUpgradeKeyword(title, category string) (string, error)
 
 	apiURL := buildOpenAIURL(s.config.BaseURL, "/chat/completions")
 
-	reqHTTP, err := http.NewRequestWithContext(context.Background(), "POST", apiURL, bytes.NewReader(jsonBody))
+	reqHTTP, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(jsonBody))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("创建 OpenAI 请求失败: %s", sanitizeOpenAIError(err))
 	}
 
 	reqHTTP.Header.Set("Content-Type", "application/json")
@@ -139,7 +174,7 @@ func (s *service) GenerateUpgradeKeyword(title, category string) (string, error)
 
 	resp, err := s.client.Do(reqHTTP)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("OpenAI 请求失败: %s", sanitizeOpenAIError(err))
 	}
 	defer func() {
 		_ = resp.Body.Close()
@@ -151,7 +186,7 @@ func (s *service) GenerateUpgradeKeyword(title, category string) (string, error)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("openai API returned status: %d, body: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("openai API returned status: %d, body: %s", resp.StatusCode, sanitizeOpenAIText(string(body)))
 	}
 
 	var result ChatResponse
@@ -166,7 +201,10 @@ func (s *service) GenerateUpgradeKeyword(title, category string) (string, error)
 	keyword := strings.TrimSpace(result.Choices[0].Message.Content)
 	keyword = strings.Trim(keyword, "\"")
 
-	s.logger.Info("Generated upgrade keyword", zap.String("title", title), zap.String("keyword", keyword))
+	s.logger.Info("Generated upgrade keyword",
+		zap.String("title", sanitizeOpenAIText(title)),
+		zap.String("keyword", sanitizeOpenAIText(keyword)),
+	)
 
 	return keyword, nil
 }

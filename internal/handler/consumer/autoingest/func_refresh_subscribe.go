@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +31,22 @@ const (
 	maxConcurrentItems        = 32
 	maxPendingItemsPerRefresh = 1000
 )
+
+var autoIngestConsumerURLPattern = regexp.MustCompile(`(?i)(?:[a-z][a-z0-9+.-]*://|/)[^\s"'<>]+`)
+
+func sanitizeAutoIngestConsumerText(text string) string {
+	text = autoIngestConsumerURLPattern.ReplaceAllStringFunc(text, utils.RedactURLForLog)
+
+	return utils.RedactSensitiveText(text)
+}
+
+func sanitizeAutoIngestConsumerError(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	return sanitizeAutoIngestConsumerText(err.Error())
+}
 
 // isDuplicateEntryError 判断错误是否为"唯一约束冲突"。
 // 兼容 SQLite / MySQL / PostgreSQL 的不同错误文本。
@@ -68,8 +84,12 @@ func isDuplicateEntryError(err error) bool {
 		strings.Contains(msg, "duplicate key value violates unique constraint")
 }
 
-func buildConflictRenamePath(parentPath, name string, retry int) string {
-	return path.Join(parentPath, fmt.Sprintf("%s_%d_%d", name, time.Now().UnixNano(), retry+1))
+func buildSubscribeItemPath(parentPath, name string) (string, error) {
+	return utils.JoinStoragePath(parentPath, name)
+}
+
+func buildConflictRenamePath(parentPath, name string, retry int) (string, error) {
+	return buildSubscribeItemPath(parentPath, fmt.Sprintf("%s_%d_%d", name, time.Now().UnixNano(), retry+1))
 }
 
 type subscribeOffsetCursor struct {
@@ -124,6 +144,13 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 		plan, err := h.autoIngestPlanService.Query(ctx.GetContext(), req.PlanId)
 		if err != nil {
 			logger.Error("查询入库计划信息失败", zap.Error(err), zap.Int64("plan_id", req.PlanId))
+
+			return err
+		}
+
+		if plan == nil || plan.ID == 0 {
+			err = gorm.ErrRecordNotFound
+			logger.Error("入库计划不存在", zap.Error(err), zap.Int64("plan_id", req.PlanId))
 
 			return err
 		}
@@ -258,18 +285,14 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 		}
 
 		recordFailureLog := func(fullPath string, message string, err error) {
-			if h.autoIngestLogService == nil {
-				return
-			}
-
 			logMessage := message
 			if err != nil {
-				logMessage = fmt.Sprintf("%s: %s", message, err.Error())
+				logMessage = fmt.Sprintf("%s: %s", message, sanitizeAutoIngestConsumerError(err))
 			}
 
-			if _, logErr := h.autoIngestLogService.Create(ctx.GetContext(),
+			if logErr := h.createAutoIngestLog(ctx.GetContext(),
 				req.PlanId, autoingest.LogLevelError,
-				fmt.Sprintf("新增入库失败：%s, 错误信息：%s", fullPath, logMessage),
+				fmt.Sprintf("新增入库失败：%s, 错误信息：%s", sanitizeAutoIngestConsumerText(fullPath), logMessage),
 			); logErr != nil {
 				logger.Error("创建入库日志失败", zap.Error(logErr))
 			}
@@ -346,7 +369,14 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 
 					// 重试时扫描已存在目录
 					if req.IsRetry {
-						fullPath := path.Join(plan.ParentPath, item.Name)
+						fullPath, err := buildSubscribeItemPath(plan.ParentPath, item.Name)
+						if err != nil {
+							logger.Error("生成订阅入库路径失败", zap.String("parent_path", plan.ParentPath), zap.String("name", item.Name), zap.Error(err))
+							recordFailureLog(item.Name, "生成订阅入库路径失败", err)
+
+							continue
+						}
+
 						enqueueRetryExistingScan(item, fullPath)
 					}
 
@@ -395,9 +425,38 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 				defer wg.Done()
 
 				for pItem := range itemChan {
-					fullPath := path.Join(plan.ParentPath, pItem.item.Name)
+					fullPath, err := buildSubscribeItemPath(plan.ParentPath, pItem.item.Name)
+					if err != nil {
+						logger.Error("生成订阅入库路径失败", zap.String("parent_path", plan.ParentPath), zap.String("name", pItem.item.Name), zap.Error(err))
+						mu.Lock()
+						localFailedCount++
+						mu.Unlock()
+						recordFailureLog(pItem.item.Name, "生成订阅入库路径失败", err)
+
+						continue
+					}
+
 					handled := false
 					failedRecorded := false
+					renameConflictPath := func(retry int) bool {
+						renamedPath, renameErr := buildConflictRenamePath(plan.ParentPath, pItem.item.Name, retry)
+						if renameErr != nil {
+							logger.Error("生成冲突重命名路径失败", zap.String("parent_path", plan.ParentPath), zap.String("name", pItem.item.Name), zap.Error(renameErr))
+							mu.Lock()
+							localFailedCount++
+							mu.Unlock()
+
+							failedRecorded = true
+
+							recordFailureLog(fullPath, "生成冲突重命名路径失败", renameErr)
+
+							return false
+						}
+
+						fullPath = renamedPath
+
+						return true
+					}
 
 					for retry := 0; retry <= maxRetryCount; retry++ {
 						if retry > 0 {
@@ -424,7 +483,9 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 								if err != nil {
 									if errors.Is(err, storagefacadeSvi.ErrPathAlreadyExists) || errors.Is(err, storagefacadeSvi.ErrExistingPathForbidden) {
 										if plan.OnConflict == autoingest.OnConflictRename {
-											fullPath = buildConflictRenamePath(plan.ParentPath, pItem.item.Name, retry)
+											if !renameConflictPath(retry) {
+												break
+											}
 
 											continue
 										}
@@ -477,7 +538,9 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 							}
 
 							if plan.OnConflict == autoingest.OnConflictRename {
-								fullPath = buildConflictRenamePath(plan.ParentPath, pItem.item.Name, retry)
+								if !renameConflictPath(retry) {
+									break
+								}
 
 								continue
 							}
@@ -495,7 +558,9 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 						if err != nil {
 							if errors.Is(err, storagefacadeSvi.ErrPathAlreadyExists) || errors.Is(err, storagefacadeSvi.ErrExistingPathForbidden) {
 								if plan.OnConflict == autoingest.OnConflictRename {
-									fullPath = buildConflictRenamePath(plan.ParentPath, pItem.item.Name, retry)
+									if !renameConflictPath(retry) {
+										break
+									}
 
 									continue
 								}
@@ -537,7 +602,9 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 									if verifyErr != nil {
 										if errors.Is(verifyErr, storagefacadeSvi.ErrPathAlreadyExists) || errors.Is(verifyErr, storagefacadeSvi.ErrExistingPathForbidden) {
 											if plan.OnConflict == autoingest.OnConflictRename {
-												fullPath = buildConflictRenamePath(plan.ParentPath, pItem.item.Name, retry)
+												if !renameConflictPath(retry) {
+													break
+												}
 
 												continue
 											}
@@ -588,7 +655,9 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 								}
 
 								if exists != nil && plan.OnConflict == autoingest.OnConflictRename {
-									fullPath = buildConflictRenamePath(plan.ParentPath, pItem.item.Name, retry)
+									if !renameConflictPath(retry) {
+										break
+									}
 
 									continue
 								}
@@ -666,7 +735,7 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 							break
 						}
 
-						if _, logErr := h.autoIngestLogService.Create(ctx.GetContext(),
+						if logErr := h.createAutoIngestLog(ctx.GetContext(),
 							req.PlanId, autoingest.LogLevelInfo,
 							fmt.Sprintf("新增入库：%s", fullPath),
 						); logErr != nil {
@@ -688,7 +757,7 @@ func (h *handler) RefreshSubscribe() taskcontext.HandlerFunc {
 						localFailedCount++
 						mu.Unlock()
 
-						if _, logErr := h.autoIngestLogService.Create(ctx.GetContext(),
+						if logErr := h.createAutoIngestLog(ctx.GetContext(),
 							req.PlanId, autoingest.LogLevelError,
 							fmt.Sprintf("新增入库失败：%s, 错误信息：无法生成不冲突的目标路径", fullPath),
 						); logErr != nil {

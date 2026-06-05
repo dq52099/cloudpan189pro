@@ -1,8 +1,13 @@
 package storagefacade
 
 import (
+	"bytes"
+	"encoding/json"
+	"strings"
 	"time"
 
+	mysqlDriver "github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pkg/errors"
 	"github.com/xxcheng123/cloudpan189-share/internal/bootstrap"
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
@@ -30,7 +35,7 @@ type CreateStorageRequest struct {
 	CreatorUserID int64 // 创建者用户ID
 	IsAdmin       bool  // 创建者是否管理员
 
-	// AllowExisting 为 true 时，若目标路径已有挂载点，直接返回其根 VirtualFile ID；
+	// AllowExisting 为 true 时，若目标路径已有同一资源的挂载点，直接返回其根 VirtualFile ID；
 	// 若只有同路径虚拟文件而没有挂载点，仍返回 ErrPathAlreadyExists，避免调用方误判为挂载成功。
 	AllowExisting bool
 }
@@ -56,22 +61,19 @@ func (s *service) CreateStorage(ctx context.Context, req *CreateStorageRequest) 
 		return 0, errRequestNil
 	}
 
-	if !utils.CheckIsPath(req.LocalPath) {
+	normalizedPath, paths, err := utils.NormalizeStoragePathParts(req.LocalPath)
+	if err != nil {
 		return 0, errInvalidPath
 	}
+
+	req = cloneCreateStorageRequest(req)
+	req.LocalPath = normalizedPath
 
 	if !req.IsAdmin && req.CreatorUserID <= 0 {
 		return 0, errInvalidCreatorUser
 	}
 
 	if err := s.validateCloudTokenAccess(ctx, req); err != nil {
-		return 0, err
-	}
-
-	paths, err := utils.SplitPath(req.LocalPath)
-	if err != nil {
-		ctx.Error("路径分割失败", zap.Error(err), zap.String("path", req.LocalPath))
-
 		return 0, err
 	}
 
@@ -109,6 +111,13 @@ func (s *service) CreateStorage(ctx context.Context, req *CreateStorageRequest) 
 	return id, nil
 }
 
+func cloneCreateStorageRequest(req *CreateStorageRequest) *CreateStorageRequest {
+	cloned := *req
+	cloned.FileId = strings.TrimSpace(cloned.FileId)
+
+	return &cloned
+}
+
 func (s *service) createStorageInTransaction(ctx context.Context, req *CreateStorageRequest, paths []string) (int64, error) {
 	// 防重：MountPoint 与 VirtualFile
 	if mp, err := s.mountPointService.QueryByPath(ctx, req.LocalPath); err != nil {
@@ -134,24 +143,41 @@ func (s *service) createStorageInTransaction(ctx context.Context, req *CreateSto
 			return 0, ErrExistingPathForbidden
 		}
 
-		if req.FileId != "" {
-			existingFile, err := s.virtualFileService.Query(ctx, mp.FileId)
-			if err != nil {
-				ctx.Error("查询已存在挂载点根文件失败", zap.Error(err), zap.String("path", req.LocalPath), zap.Int64("file_id", mp.FileId))
+		if mp.TokenId != req.CloudToken {
+			ctx.Warn("挂载点路径已存在但令牌上下文不一致",
+				zap.String("path", req.LocalPath),
+				zap.Int64("exists_id", mp.ID),
+				zap.Int64("existing_token_id", mp.TokenId),
+				zap.Int64("request_token_id", req.CloudToken),
+			)
 
-				return 0, err
-			}
+			return 0, ErrPathAlreadyExists
+		}
 
-			if existingFile.CloudId != req.FileId {
-				ctx.Warn("挂载点路径已存在但云端资源不一致",
-					zap.String("path", req.LocalPath),
-					zap.Int64("exists_id", mp.ID),
-					zap.String("existing_cloud_id", existingFile.CloudId),
-					zap.String("request_cloud_id", req.FileId),
-				)
+		existingFile, err := s.virtualFileService.Query(ctx, mp.FileId)
+		if err != nil {
+			ctx.Error("查询已存在挂载点根文件失败", zap.Error(err), zap.String("path", req.LocalPath), zap.Int64("file_id", mp.FileId))
 
-				return 0, ErrPathAlreadyExists
-			}
+			return 0, err
+		}
+
+		if existingFile == nil {
+			ctx.Warn("挂载点路径已存在但根文件为空", zap.String("path", req.LocalPath), zap.Int64("exists_id", mp.ID), zap.Int64("file_id", mp.FileId))
+
+			return 0, gorm.ErrRecordNotFound
+		}
+
+		if !sameStorageResource(existingFile, req) {
+			ctx.Warn("挂载点路径已存在但资源不一致",
+				zap.String("path", req.LocalPath),
+				zap.Int64("exists_id", mp.ID),
+				zap.String("existing_os_type", string(existingFile.OsType)),
+				zap.String("request_os_type", req.OsType),
+				zap.String("existing_cloud_id", existingFile.CloudId),
+				zap.String("request_cloud_id", req.FileId),
+			)
+
+			return 0, ErrPathAlreadyExists
 		}
 
 		// 路径已存在，返回已存在的挂载点ID而不是报错
@@ -199,6 +225,10 @@ func (s *service) createStorageInTransaction(ctx context.Context, req *CreateSto
 	if err != nil {
 		ctx.Error("创建顶层虚拟文件失败", zap.Error(err), zap.Int64("parentId", parentId))
 
+		if isUniqueConstraintError(err) {
+			return 0, ErrPathAlreadyExists
+		}
+
 		return 0, err
 	}
 
@@ -223,6 +253,91 @@ func (s *service) createStorageInTransaction(ctx context.Context, req *CreateSto
 	return id, nil
 }
 
+func sameStorageResource(existingFile *models.VirtualFile, req *CreateStorageRequest) bool {
+	if existingFile == nil || req == nil {
+		return false
+	}
+
+	if string(existingFile.OsType) != req.OsType {
+		return false
+	}
+
+	existingCloudID := normalizeComparableCloudID(existingFile.CloudId)
+
+	requestCloudID := normalizeComparableCloudID(req.FileId)
+	if (existingCloudID != "" || requestCloudID != "") && existingCloudID != requestCloudID {
+		return false
+	}
+
+	return jsonMapEqual(existingFile.Addition, req.Addition)
+}
+
+func normalizeComparableCloudID(cloudID string) string {
+	cloudID = strings.TrimSpace(cloudID)
+	if cloudID == "0" {
+		return ""
+	}
+
+	return cloudID
+}
+
+func jsonMapEqual(left datatypes.JSONMap, right datatypes.JSONMap) bool {
+	leftBytes, err := canonicalJSONMapBytes(left)
+	if err != nil {
+		return false
+	}
+
+	rightBytes, err := canonicalJSONMapBytes(right)
+	if err != nil {
+		return false
+	}
+
+	return bytes.Equal(leftBytes, rightBytes)
+}
+
+func canonicalJSONMapBytes(value datatypes.JSONMap) ([]byte, error) {
+	if len(value) == 0 {
+		return []byte("{}"), nil
+	}
+
+	return json.Marshal(map[string]interface{}(value))
+}
+
+// isUniqueConstraintError 判断错误是否为唯一约束冲突，覆盖 SQLite / MySQL / PostgreSQL。
+func isUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var mysqlErr *mysqlDriver.MySQLError
+	if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+		return true
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return true
+	}
+
+	type sqliteCodeError interface {
+		Code() int
+	}
+
+	var sqliteErr sqliteCodeError
+	if errors.As(err, &sqliteErr) {
+		switch sqliteErr.Code() {
+		case 1555, 2067: // SQLITE_CONSTRAINT_PRIMARYKEY / SQLITE_CONSTRAINT_UNIQUE
+			return true
+		}
+	}
+
+	msg := err.Error()
+
+	return strings.Contains(msg, "UNIQUE constraint failed") ||
+		strings.Contains(msg, "Duplicate entry") ||
+		strings.Contains(msg, "duplicate key value violates unique constraint")
+}
+
 func (s *service) validateCloudTokenAccess(ctx context.Context, req *CreateStorageRequest) error {
 	if req.CloudToken < 0 {
 		return errInvalidCloudToken
@@ -232,7 +347,7 @@ func (s *service) validateCloudTokenAccess(ctx context.Context, req *CreateStora
 		return nil
 	}
 
-	if s.cloudTokenService == nil {
+	if isNilDependency(s.cloudTokenService) {
 		return errInvalidCloudToken
 	}
 

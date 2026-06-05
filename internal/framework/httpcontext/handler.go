@@ -3,17 +3,20 @@ package httpcontext
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"runtime/debug"
 	"strings"
 	"time"
 
-	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
-
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/xxcheng123/cloudpan189-share/internal/framework/context"
+	"github.com/xxcheng123/cloudpan189-share/internal/pkgs/utils"
 )
 
 type HandlerFunc func(ctx *Context)
@@ -22,11 +25,18 @@ type HandlerFuncWrapper struct {
 	logger *zap.Logger
 }
 
+var loggedURLPattern = regexp.MustCompile(`(?i)(?:[a-z][a-z0-9+.-]*://|/)[^\s"'<>]+`)
+
 func NewHandlerFuncWrapper(logger *zap.Logger) *HandlerFuncWrapper {
 	return &HandlerFuncWrapper{logger: logger}
 }
 
 const httpContextKey = "__request__context__"
+const (
+	maxLoggedJSONRequestBodySize = 4 * 1024
+	maxLoggedResponseBodySize    = 4 * 1024
+	loggedBodyTruncatedSuffix    = "...[truncated]"
+)
 
 func (w *HandlerFuncWrapper) Wrap(handler HandlerFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -69,35 +79,26 @@ func loggerHandler() HandlerFunc {
 
 		var (
 			decodedURL, _ = url.QueryUnescape(reqContext.Request.URL.RequestURI())
+			safeURL       = sanitizeLoggedURL(decodedURL)
 			requestInfo   = &context.Request{
 				TTL:        "un-limit",
 				Method:     reqContext.Request.Method,
-				DecodedURL: decodedURL,
-				Header:     reqContext.Request.Header.Clone(),
+				DecodedURL: safeURL,
+				Header:     sanitizeLoggedHeaders(reqContext.Request.Header),
 			}
 		)
 
-		// 只解析 json
+		// 只记录 json 请求体，且限制日志读取大小，避免大请求体被日志层完整读入内存。
 		if strings.Contains(reqContext.Request.Header.Get("Content-Type"), "application/json") {
-			if body, err := reqContext.GetRawData(); err == nil && len(body) > 0 {
-				reqContext.Request.GetBody = func() (io.ReadCloser, error) {
-					reqContext.Request.Body = io.NopCloser(bytes.NewBuffer(body))
-					buffer := bytes.NewBuffer(body)
-					closer := io.NopCloser(buffer)
-
-					return closer, nil
-				}
-
-				bb, _ := reqContext.Request.GetBody()
-				reqContext.Request.Body = bb
-
-				requestInfo.Body = string(body)
+			if body, err := readRequestBodyForLog(reqContext.Request, maxLoggedJSONRequestBodySize); err == nil && body != "" {
+				requestInfo.Body = sanitizeLoggedText(body)
 			}
 		}
 
 		writer := &responseWriter{
 			ResponseWriter: reqContext.Writer,
 			b:              &bytes.Buffer{},
+			maxBodySize:    maxLoggedResponseBodySize,
 		}
 		reqContext.Writer = writer
 
@@ -106,7 +107,7 @@ func loggerHandler() HandlerFunc {
 			if err := recover(); err != nil {
 				stackInfo := string(debug.Stack())
 				fields = append(fields,
-					zap.Any("panic", err),
+					zap.String("panic", sanitizeLoggedPanicValue(err)),
 					zap.String("stack", stackInfo),
 					zap.String("trace_id", traceId),
 				)
@@ -118,13 +119,13 @@ func loggerHandler() HandlerFunc {
 			success := reqContext.Writer.Status() == http.StatusOK
 
 			respInfo := &context.Response{
-				Header:      reqContext.Writer.Header(),
+				Header:      sanitizeLoggedHeaders(reqContext.Writer.Header()),
 				HttpCode:    reqContext.Writer.Status(),
 				HttpCodeMsg: http.StatusText(reqContext.Writer.Status()),
 				CostSeconds: cost,
 			}
 			if strings.Contains(reqContext.Writer.Header().Get("Content-Type"), "application/json") {
-				respInfo.Body = writer.b.String()
+				respInfo.Body = sanitizeLoggedText(writer.loggedBody())
 			}
 
 			ctx.WithRequest(requestInfo)
@@ -132,12 +133,12 @@ func loggerHandler() HandlerFunc {
 
 			fields = append(fields,
 				zap.String("method", reqContext.Request.Method),
-				zap.String("path", decodedURL),
+				zap.String("path", safeURL),
 				zap.Int("http_code", reqContext.Writer.Status()),
 				zap.Bool("success", success),
 				zap.Float64("cost_seconds", cost),
 				zap.Any("trace_info", ctx.Trace),
-				zap.Errors("errors", reqContext.errors),
+				zap.Strings("errors", sanitizeLoggedErrors(reqContext.errors)),
 				zap.String("client_ip", reqContext.ClientIP()),
 			)
 
@@ -152,17 +153,164 @@ func LoggerHandler(logger *zap.Logger) gin.HandlerFunc {
 	return NewHandlerFuncWrapper(logger).Wrap(loggerHandler())
 }
 
-type responseWriter struct {
-	gin.ResponseWriter
-	b *bytes.Buffer
+type requestBodyReplayReadCloser struct {
+	io.Reader
+	io.Closer
 }
 
-func (w responseWriter) Write(data []byte) (int, error) {
-	// 如果还没超限，就记录日志
-	if w.b.Len() <= 1024*1024 {
-		w.b.Write(data)
+func readRequestBodyForLog(req *http.Request, maxSize int) (string, error) {
+	if req == nil || req.Body == nil || maxSize <= 0 {
+		return "", nil
 	}
 
-	// 正常写响应
+	body := req.Body
+	data, err := io.ReadAll(io.LimitReader(body, int64(maxSize)+1))
+	req.Body = &requestBodyReplayReadCloser{
+		Reader: io.MultiReader(bytes.NewReader(data), body),
+		Closer: body,
+	}
+
+	if err != nil {
+		return "", err
+	}
+
+	if len(data) == 0 {
+		return "", nil
+	}
+
+	if len(data) > maxSize {
+		return string(data[:maxSize]) + loggedBodyTruncatedSuffix, nil
+	}
+
+	return string(data), nil
+}
+
+func sanitizeLoggedURL(rawURL string) string {
+	return utils.RedactURLForLog(rawURL)
+}
+
+func sanitizeLoggedText(text string) string {
+	message := loggedURLPattern.ReplaceAllStringFunc(text, sanitizeLoggedURL)
+
+	return utils.RedactSensitiveText(message)
+}
+
+func sanitizeLoggedErrors(errs []error) []string {
+	if len(errs) == 0 {
+		return nil
+	}
+
+	sanitized := make([]string, 0, len(errs))
+	for _, err := range errs {
+		if err == nil {
+			continue
+		}
+
+		sanitized = append(sanitized, sanitizeLoggedError(err))
+	}
+
+	return sanitized
+}
+
+func sanitizeLoggedError(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	return sanitizeLoggedText(err.Error())
+}
+
+func sanitizeLoggedPanicValue(value interface{}) string {
+	return sanitizeLoggedText(fmt.Sprint(value))
+}
+
+func sanitizeLoggedHeaders(headers http.Header) map[string][]string {
+	sanitized := make(map[string][]string, len(headers))
+	for key, values := range headers {
+		if utils.IsSensitiveLogKey(key) {
+			sanitized[key] = []string{utils.RedactedSecret}
+
+			continue
+		}
+
+		redactedValues := make([]string, 0, len(values))
+		for _, value := range values {
+			redactedValues = append(redactedValues, sanitizeLoggedText(value))
+		}
+
+		sanitized[key] = redactedValues
+	}
+
+	return sanitized
+}
+
+type responseWriter struct {
+	gin.ResponseWriter
+	b           *bytes.Buffer
+	maxBodySize int
+	truncated   bool
+}
+
+func (w *responseWriter) Write(data []byte) (int, error) {
+	w.captureBodyBytes(data)
+
 	return w.ResponseWriter.Write(data)
+}
+
+func (w *responseWriter) WriteString(data string) (int, error) {
+	w.captureBodyString(data)
+
+	return w.ResponseWriter.WriteString(data)
+}
+
+func (w *responseWriter) captureBodyBytes(data []byte) {
+	limit, ok := w.captureLimit(len(data))
+	if !ok {
+		return
+	}
+
+	_, _ = w.b.Write(data[:limit])
+}
+
+func (w *responseWriter) captureBodyString(data string) {
+	limit, ok := w.captureLimit(len(data))
+	if !ok {
+		return
+	}
+
+	_, _ = w.b.WriteString(data[:limit])
+}
+
+func (w *responseWriter) captureLimit(dataSize int) (int, bool) {
+	if w == nil || w.b == nil || w.maxBodySize <= 0 || dataSize == 0 {
+		return 0, false
+	}
+
+	remaining := w.maxBodySize - w.b.Len()
+	if remaining <= 0 {
+		w.truncated = true
+
+		return 0, false
+	}
+
+	if dataSize > remaining {
+		w.truncated = true
+
+		return remaining, true
+	}
+
+	return dataSize, true
+}
+
+func (w *responseWriter) loggedBody() string {
+	if w == nil || w.b == nil {
+		return ""
+	}
+
+	body := w.b.String()
+	if w.truncated {
+		return body + loggedBodyTruncatedSuffix
+	}
+
+	return body
 }

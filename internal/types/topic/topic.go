@@ -104,10 +104,10 @@ func (r FileBatchModifyTokenRequest) Topic() taskengine.Topic {
 
 // 批量解析文本请求 (仅用于 API，不用于 Task)
 type BatchParseTextRequest struct {
-	Content    string `json:"content" binding:"required"`    // 文本内容
-	CloudToken int64  `json:"cloudToken" binding:"required"` // 需要用到token去查询信息
-	UserID     int64  `json:"-"`                             // 当前用户ID
-	IsAdmin    bool   `json:"-"`                             // 是否管理员
+	Content    string `json:"content" binding:"required"` // 文本内容
+	CloudToken int64  `json:"cloudToken"`                 // 解析个人文件夹ID时使用的令牌
+	UserID     int64  `json:"-"`                          // 当前用户ID
+	IsAdmin    bool   `json:"-"`                          // 是否管理员
 }
 
 // 批量解析响应项 (仅用于 API，不用于 Task)

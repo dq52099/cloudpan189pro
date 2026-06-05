@@ -396,10 +396,18 @@ func migrateAutoIngestLogs(src, dst *gorm.DB) error {
 func migrateSettings(src, dst *gorm.DB, userCount int64) error {
 	var settings []models.Setting
 	if err := findSourceRows(src, &settings, new(models.Setting).TableName()); err != nil {
+		if errors.Is(err, errMissingSourceTable) && userCount > 0 {
+			return migrateDefaultInitializedSetting(dst)
+		}
+
 		return err
 	}
 
 	if len(settings) == 0 {
+		if userCount > 0 {
+			return migrateDefaultInitializedSetting(dst)
+		}
+
 		return nil
 	}
 
@@ -408,6 +416,25 @@ func migrateSettings(src, dst *gorm.DB, userCount int64) error {
 
 	if userCount > 0 {
 		setting.Initialized = true
+	}
+
+	if err := upsertRows(dst, []models.Setting{setting}); err != nil {
+		return err
+	}
+
+	return resetPostgresSequence(dst, new(models.Setting).TableName())
+}
+
+func migrateDefaultInitializedSetting(dst *gorm.DB) error {
+	setting := models.Setting{
+		ID:          1,
+		Title:       defaultWebTitle,
+		EnableAuth:  true,
+		SaltKey:     utils.GenerateString(16),
+		Initialized: true,
+		Addition: models.SettingAddition{
+			Keep: utils.GenerateString(16), // 维持结构
+		},
 	}
 
 	if err := upsertRows(dst, []models.Setting{setting}); err != nil {
@@ -481,9 +508,10 @@ func upsertGroup2FileRows(dst *gorm.DB, rows []models.Group2File) error {
 			Where("group_id = ? AND file_id = ?", row.GroupId, row.FileId).
 			Take(&existing).Error
 		if err == nil {
-			if err := dst.Model(new(models.Group2File)).
+			result := dst.Model(new(models.Group2File)).
 				Where("id = ?", existing.ID).
-				Update("updated_at", row.UpdatedAt).Error; err != nil {
+				Update("updated_at", row.UpdatedAt)
+			if err := ensureSingleRowAffected(result, "update group file binding"); err != nil {
 				return err
 			}
 
@@ -549,12 +577,13 @@ func upsertUserMountPointTokenRows(dst *gorm.DB, rows []models.UserMountPointTok
 			Where("user_id = ? AND mount_point_id = ?", row.UserID, row.MountPointID).
 			Take(&existing).Error
 		if err == nil {
-			if err := dst.Model(new(models.UserMountPointToken)).
+			result := dst.Model(new(models.UserMountPointToken)).
 				Where("id = ?", existing.ID).
 				Updates(map[string]any{
 					"token_id":   row.TokenID,
 					"updated_at": row.UpdatedAt,
-				}).Error; err != nil {
+				})
+			if err := ensureSingleRowAffected(result, "update user mount point token binding"); err != nil {
 				return err
 			}
 
@@ -568,6 +597,18 @@ func upsertUserMountPointTokenRows(dst *gorm.DB, rows []models.UserMountPointTok
 		if err := dst.Clauses(clause.OnConflict{UpdateAll: true}).Create(&row).Error; err != nil {
 			return err
 		}
+	}
+
+	return nil
+}
+
+func ensureSingleRowAffected(result *gorm.DB, operation string) error {
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("%s affected %d rows, expected 1", operation, result.RowsAffected)
 	}
 
 	return nil

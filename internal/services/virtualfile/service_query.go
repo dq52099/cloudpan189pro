@@ -31,9 +31,15 @@ func (s *service) Query(ctx context.Context, fid int64) (*models.VirtualFile, er
 }
 
 func (s *service) QueryByPath(ctx context.Context, path string) (*models.VirtualFile, error) {
-	paths, err := utils.SplitPath(path)
-	if err != nil {
-		return nil, err
+	var paths []string
+
+	if path != "" {
+		var normalizeErr error
+
+		_, paths, normalizeErr = utils.NormalizeStoragePathParts(path)
+		if normalizeErr != nil {
+			return nil, errInvalidVirtualFilePath
+		}
 	}
 
 	if len(paths) == 0 {
@@ -47,10 +53,8 @@ func (s *service) QueryByPath(ctx context.Context, path string) (*models.Virtual
 	for _, name := range paths {
 		m = new(models.VirtualFile)
 
-		// 查询时使用 sanitize 后的名字
-		queryName := utils.SanitizeFileName(name)
-		if err = s.getDB(ctx).Model(new(models.VirtualFile)).Where("name = ?", queryName).Where("parent_id = ?", pid).First(m).Error; err != nil {
-			return nil, err
+		if queryErr := s.getDB(ctx).Model(new(models.VirtualFile)).Where("name = ?", name).Where("parent_id = ?", pid).First(m).Error; queryErr != nil {
+			return nil, queryErr
 		}
 
 		pid = m.ID
@@ -72,13 +76,12 @@ func (s *service) QueryTop(ctx context.Context, fid int64) (*models.VirtualFile,
 
 // FindOrCreateAncestors 查找或创建所有祖先路径（本级不创建），返回最后一级的父ID
 func (s *service) FindOrCreateAncestors(ctx context.Context, path string) (int64, error) {
-	var (
-		paths, err = utils.SplitPath(path)
-		pid        int64
-	)
+	_, paths, err := utils.NormalizeStoragePathParts(path)
 	if err != nil {
-		return 0, err
+		return 0, errInvalidVirtualFilePath
 	}
+
+	var pid int64
 
 	// 去掉最后一级路径
 	if len(paths) > 0 {
@@ -88,10 +91,7 @@ func (s *service) FindOrCreateAncestors(ctx context.Context, path string) (int64
 	for _, name := range paths {
 		var m = new(models.VirtualFile)
 
-		// 查询时使用 sanitize 后的名字
-		queryName := utils.SanitizeFileName(name)
-
-		err = s.getDB(ctx).Model(new(models.VirtualFile)).Where("name = ?", queryName).Where("parent_id = ?", pid).First(m).Error
+		err = s.getDB(ctx).Model(new(models.VirtualFile)).Where("name = ?", name).Where("parent_id = ?", pid).First(m).Error
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				// 不存在则创建
@@ -108,7 +108,8 @@ func (s *service) FindOrCreateAncestors(ctx context.Context, path string) (int64
 					Addition:   datatypes.JSONMap{},
 				}
 
-				if _, err = s.CreateTop(ctx, pid, m); err != nil {
+				// 这里只创建路径祖先目录，不是挂载点顶层节点。
+				if _, err = s.Create(ctx, pid, m); err != nil {
 					return 0, err
 				}
 

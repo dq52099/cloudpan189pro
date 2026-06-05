@@ -1,5 +1,5 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
-import { useAuthStore } from '@/stores'
+import { buildLoginRedirectPath, LOGIN_PATH } from '@/utils/redirect'
 
 // 响应数据类型
 export interface ApiResponse<T = unknown> {
@@ -18,10 +18,56 @@ type RetriableRequestConfig = InternalAxiosRequestConfig & {
   _retry?: boolean
 }
 
+type AuthStoreAccessor = {
+  getToken: () => string
+  requireRefreshToken: boolean
+  hasRefreshToken: boolean
+  isLogin: boolean
+  doRefreshToken: (force?: boolean) => Promise<string | null>
+  logout: () => void
+}
+
+let authStoreGetter: (() => AuthStoreAccessor) | null = null
+let systemAuthEnabledGetter: (() => boolean) | null = null
+let systemAuthRequiredHandler: (() => void) | null = null
+
+const isLoginRequest = (url?: string) => url?.includes('/user/login') ?? false
 const isRefreshTokenRequest = (url?: string) => url?.includes('/user/refresh_token') ?? false
 const isSystemInfoRequest = (url?: string) => url?.includes('/setting/info') ?? false
+const isInitSystemRequest = (url?: string) => url?.includes('/setting/init_system') ?? false
+const isAuthBootstrapRequest = (url?: string) =>
+  isLoginRequest(url) ||
+  isRefreshTokenRequest(url) ||
+  isSystemInfoRequest(url) ||
+  isInitSystemRequest(url)
 const getApiErrorMessage = (data: ApiResponse | undefined, fallback: string) =>
   data?.msg || fallback
+const redirectToLogin = () => {
+  if (window.location.pathname !== LOGIN_PATH) {
+    const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`
+
+    window.location.href = buildLoginRedirectPath(currentPath)
+  }
+}
+export const setAuthStoreGetter = (getter: () => AuthStoreAccessor) => {
+  authStoreGetter = getter
+}
+
+export const setSystemAuthEnabledGetter = (getter: () => boolean) => {
+  systemAuthEnabledGetter = getter
+}
+
+export const setSystemAuthRequiredHandler = (handler: () => void) => {
+  systemAuthRequiredHandler = handler
+}
+
+const getAuthStore = () => authStoreGetter?.() ?? null
+
+const isSystemAuthEnabled = () => systemAuthEnabledGetter?.() ?? true
+
+const markSystemAuthRequired = () => {
+  systemAuthRequiredHandler?.()
+}
 
 export const getErrorMessage = (error: unknown, fallback: string) => {
   if (error instanceof Error && error.message) {
@@ -54,15 +100,32 @@ export const api = axios.create({
 // 请求拦截器
 api.interceptors.request.use(
   async (config: InternalAxiosRequestConfig) => {
-    const authStore = useAuthStore()
+    if (isAuthBootstrapRequest(config.url)) {
+      return config
+    }
+
+    if (!isSystemAuthEnabled()) {
+      return config
+    }
+
+    const authStore = getAuthStore()
+    if (!authStore) {
+      redirectToLogin()
+
+      return Promise.reject(new Error('登录状态已过期，请重新登录'))
+    }
+
     let token = authStore.getToken()
 
-    if (
-      authStore.requireRefreshToken &&
-      !isRefreshTokenRequest(config.url) &&
-      !isSystemInfoRequest(config.url)
-    ) {
-      token = (await authStore.doRefreshToken()) || token
+    if (authStore.requireRefreshToken) {
+      const refreshedToken = await authStore.doRefreshToken()
+      if (!refreshedToken) {
+        redirectToLogin()
+
+        return Promise.reject(new Error('登录状态已过期，请重新登录'))
+      }
+
+      token = refreshedToken
     }
 
     if (token) {
@@ -95,32 +158,30 @@ api.interceptors.response.use(
 
     if (error.response) {
       const { status, data, config } = error.response
-      const authStore = useAuthStore()
 
       switch (status) {
         case 400:
           return Promise.reject(new Error(getApiErrorMessage(data, '请求失败')))
         case 401:
-          if (
-            authStore.hasRefreshToken &&
-            !isRefreshTokenRequest(config.url) &&
-            !(config as RetriableRequestConfig)._retry
-          ) {
-            const retryConfig = config as RetriableRequestConfig
-            retryConfig._retry = true
+          if (!isAuthBootstrapRequest(config.url)) {
+            markSystemAuthRequired()
+            const authStore = getAuthStore()
+            if (authStore?.hasRefreshToken && !(config as RetriableRequestConfig)._retry) {
+              const retryConfig = config as RetriableRequestConfig
+              retryConfig._retry = true
 
-            const token = await authStore.doRefreshToken(true)
-            if (token) {
-              retryConfig.headers.Authorization = `Bearer ${token}`
+              const token = await authStore.doRefreshToken(true)
+              if (token) {
+                retryConfig.headers.Authorization = `Bearer ${token}`
 
-              return api.request(retryConfig)
+                return api.request(retryConfig)
+              }
             }
+
+            authStore?.logout()
           }
 
-          if (authStore.isLogin) {
-            authStore.logout()
-          }
-          window.location.href = '/@login'
+          redirectToLogin()
           console.error('未登录或会话已过期')
           return Promise.reject(new Error(getApiErrorMessage(data, '未登录或会话已过期')))
         case 403:

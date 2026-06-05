@@ -1,10 +1,13 @@
 package file
 
 import (
+	"errors"
+
 	"github.com/samber/lo"
 	"github.com/xxcheng123/cloudpan189-share/internal/consts"
 	"github.com/xxcheng123/cloudpan189-share/internal/framework/httpcontext"
 	"github.com/xxcheng123/cloudpan189-share/internal/shared"
+	"gorm.io/gorm"
 )
 
 type createDownloadURLRequest struct {
@@ -38,26 +41,70 @@ func (h *handler) CreateDownloadURL() httpcontext.HandlerFunc {
 			return
 		}
 
-		if userGroupId := ctx.GetInt64(consts.CtxKeyUserGroupId); userGroupId != 0 {
-			file, err := h.virtualFileService.Query(ctx.GetContext(), req.FileID)
-			if err != nil {
-				ctx.Fail(busCodeFileQueryError.WithError(err))
+		if !h.ensureVirtualFileService(ctx, busCodeFileQueryError) {
+			return
+		}
+
+		file, err := h.virtualFileService.Query(ctx.GetContext(), req.FileID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				ctx.Fail(busCodeFileNotFound.WithError(err))
 
 				return
 			}
 
-			topIds, err := h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
-			if err != nil {
-				ctx.Fail(busCodeQueryTopIdError.WithError(err))
+			ctx.Fail(busCodeFileQueryError.WithError(err))
 
-				return
-			}
+			return
+		}
 
-			if len(topIds) == 0 || !lo.Contains(topIds, file.TopId) {
-				ctx.Unauthorized("无权限访问")
+		if file == nil {
+			ctx.Fail(busCodeFileNotFound.WithError(gorm.ErrRecordNotFound))
 
-				return
-			}
+			return
+		}
+
+		groupFileIds, err := h.getUserGroupFileIDs(ctx)
+		if err != nil {
+			ctx.Fail(busCodeQueryTopIdError.WithError(err))
+
+			return
+		}
+
+		userID := ctx.GetInt64(consts.CtxKeyUserId)
+		isAdmin := ctx.GetBool(consts.CtxKeyIsAdmin)
+
+		if !h.ensureMountPointService(ctx, busCodeQueryTopIdError) {
+			return
+		}
+
+		allowTopIds, err := h.mountPointService.GetAccessibleMountPointIDs(ctx.GetContext(), userID, isAdmin, groupFileIds)
+		if err != nil {
+			ctx.Fail(busCodeQueryTopIdError.WithError(err))
+
+			return
+		}
+
+		if !lo.Contains(allowTopIds, file.TopId) {
+			ctx.Unauthorized("无权限访问")
+
+			return
+		}
+
+		if file.IsDir {
+			ctx.Fail(busCodeFileIsDirNotSupport)
+
+			return
+		}
+
+		if shouldLimitFileBySuffix(file, isAdmin) {
+			ctx.Fail(busCodeFileNotFound)
+
+			return
+		}
+
+		if !h.ensureVerifyService(ctx, busCodeFileSignError) {
+			return
 		}
 
 		values, err := h.verifyService.SignV1(ctx.GetContext(), req.FileID)
@@ -71,4 +118,17 @@ func (h *handler) CreateDownloadURL() httpcontext.HandlerFunc {
 			DownloadURL: shared.JoinDownloadURL(req.FileID, values),
 		})
 	}
+}
+
+func (h *handler) getUserGroupFileIDs(ctx *httpcontext.Context) ([]int64, error) {
+	userGroupId := ctx.GetInt64(consts.CtxKeyUserGroupId)
+	if userGroupId == 0 {
+		return nil, nil
+	}
+
+	if !h.hasGroup2FileService() {
+		return nil, errors.New("用户组绑定服务未初始化")
+	}
+
+	return h.group2FileService.GetBindFiles(ctx.GetContext(), userGroupId)
 }

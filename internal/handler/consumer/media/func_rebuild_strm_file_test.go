@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/url"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -203,10 +205,36 @@ func (m *mockRebuildStrmVerifyService) SignV1(ctx context.Context, fileID int64,
 
 type mockRebuildStrmMediaFileService struct {
 	mediafileSvi.Service
+
+	mu         sync.Mutex
+	writeCalls []rebuildStrmWriteCall
+}
+
+type rebuildStrmWriteCall struct {
+	fid     int64
+	baseURL string
+	path    string
+	fileURL string
 }
 
 func (m *mockRebuildStrmMediaFileService) WriteStrm(ctx context.Context, car mediaType.WriterCar, fid int64, fileURL string) (int64, error) {
+	m.mu.Lock()
+	m.writeCalls = append(m.writeCalls, rebuildStrmWriteCall{
+		fid:     fid,
+		baseURL: car.GetBaseURL(),
+		path:    car.GetPath(),
+		fileURL: fileURL,
+	})
+	m.mu.Unlock()
+
 	return 1, nil
+}
+
+func (m *mockRebuildStrmMediaFileService) WrittenCalls() []rebuildStrmWriteCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return append([]rebuildStrmWriteCall(nil), m.writeCalls...)
 }
 
 func (m *mockRebuildStrmMediaFileService) QueryStrm(ctx context.Context, fid int64) (*models.MediaFile, error) {
@@ -292,8 +320,190 @@ func setupRebuildStrmMediaConfig(t *testing.T) {
 		Enable:         true,
 		StoragePath:    t.TempDir(),
 		ConflictPolicy: mediaType.FileConflictPolicySkip,
+		BaseURL:        "http://media.example.test",
 	}
-	shared.BaseURL = "http://example.test"
+	shared.BaseURL = "http://system.example.test"
+}
+
+func assertMediaDependencyError(t *testing.T, err error, want error) {
+	t.Helper()
+
+	if !errors.Is(err, want) {
+		t.Fatalf("expected %v, got %v", want, err)
+	}
+
+	if strings.Contains(err.Error(), "task processor panic") {
+		t.Fatalf("expected direct dependency error, got panic recovery error %v", err)
+	}
+}
+
+func TestClearReturnsMissingMediaFileServiceWhenTypedNil(t *testing.T) {
+	setupRebuildStrmMediaConfig(t)
+
+	var mediaFileService *mockRebuildStrmMediaFileService
+
+	handler := NewHandler(
+		mediaFileService,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.Clear())
+	err := processor.Process(stdctx.Background(), []byte(`{}`))
+
+	assertMediaDependencyError(t, err, errMediaFileServiceNotInitialized)
+}
+
+func TestRebuildStrmFileReturnsDependencyErrorsBeforeProcessing(t *testing.T) {
+	tests := []struct {
+		name string
+		want error
+		new  func(t *testing.T) Handler
+	}{
+		{
+			name: "missing media file service",
+			want: errMediaFileServiceNotInitialized,
+			new: func(t *testing.T) Handler {
+				t.Helper()
+
+				tDB := setupRebuildStrmTestDB(t)
+
+				var mediaFileService *mockRebuildStrmMediaFileService
+
+				return NewHandler(
+					mediaFileService,
+					&mockRebuildStrmMountPointService{},
+					&mockRebuildStrmVirtualFileService{filesByParent: map[int64][]*models.VirtualFile{}, errByParent: map[int64]error{}},
+					&mockRebuildStrmVerifyService{errByFileID: map[int64]error{}},
+					filetasklog.NewService(tDB),
+				)
+			},
+		},
+		{
+			name: "missing mount point service",
+			want: errMountPointServiceNotInitialized,
+			new: func(t *testing.T) Handler {
+				t.Helper()
+
+				tDB := setupRebuildStrmTestDB(t)
+
+				var mountPointService *mockRebuildStrmMountPointService
+
+				return NewHandler(
+					&mockRebuildStrmMediaFileService{},
+					mountPointService,
+					&mockRebuildStrmVirtualFileService{filesByParent: map[int64][]*models.VirtualFile{}, errByParent: map[int64]error{}},
+					&mockRebuildStrmVerifyService{errByFileID: map[int64]error{}},
+					filetasklog.NewService(tDB),
+				)
+			},
+		},
+		{
+			name: "missing virtual file service",
+			want: errVirtualFileServiceNotInitialized,
+			new: func(t *testing.T) Handler {
+				t.Helper()
+
+				tDB := setupRebuildStrmTestDB(t)
+
+				var virtualFileService *mockRebuildStrmVirtualFileService
+
+				return NewHandler(
+					&mockRebuildStrmMediaFileService{},
+					&mockRebuildStrmMountPointService{},
+					virtualFileService,
+					&mockRebuildStrmVerifyService{errByFileID: map[int64]error{}},
+					filetasklog.NewService(tDB),
+				)
+			},
+		},
+		{
+			name: "missing verify service",
+			want: errVerifyServiceNotInitialized,
+			new: func(t *testing.T) Handler {
+				t.Helper()
+
+				tDB := setupRebuildStrmTestDB(t)
+
+				var verifyService *mockRebuildStrmVerifyService
+
+				return NewHandler(
+					&mockRebuildStrmMediaFileService{},
+					&mockRebuildStrmMountPointService{},
+					&mockRebuildStrmVirtualFileService{filesByParent: map[int64][]*models.VirtualFile{}, errByParent: map[int64]error{}},
+					verifyService,
+					filetasklog.NewService(tDB),
+				)
+			},
+		},
+		{
+			name: "missing file task log service",
+			want: errFileTaskLogServiceNotInitialized,
+			new: func(t *testing.T) Handler {
+				t.Helper()
+
+				var fileTaskLogService *failingRebuildStatusFileTaskLogService
+
+				return NewHandler(
+					&mockRebuildStrmMediaFileService{},
+					&mockRebuildStrmMountPointService{},
+					&mockRebuildStrmVirtualFileService{filesByParent: map[int64][]*models.VirtualFile{}, errByParent: map[int64]error{}},
+					&mockRebuildStrmVerifyService{errByFileID: map[int64]error{}},
+					fileTaskLogService,
+				)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupRebuildStrmMediaConfig(t)
+
+			processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(tt.new(t).RebuildStrmFile())
+			err := processor.Process(stdctx.Background(), []byte(`{}`))
+
+			assertMediaDependencyError(t, err, tt.want)
+		})
+	}
+}
+
+func TestRebuildStrmFileByMountPointDoesNotRequireMountPointService(t *testing.T) {
+	tDB := setupRebuildStrmTestDB(t)
+	fileTaskLogService := filetasklog.NewService(tDB)
+
+	setupRebuildStrmMediaConfig(t)
+
+	var mountPointService *mockRebuildStrmMountPointService
+
+	handler := NewHandler(
+		&mockRebuildStrmMediaFileService{},
+		mountPointService,
+		&mockRebuildStrmVirtualFileService{
+			filesByParent: map[int64][]*models.VirtualFile{
+				100: {},
+			},
+			errByParent: map[int64]error{},
+		},
+		&mockRebuildStrmVerifyService{errByFileID: map[int64]error{}},
+		fileTaskLogService,
+	)
+
+	req := topic.MediaRebuildStrmFileByMountPointRequest{
+		MountPointFileId: 100,
+		MountPointPath:   "/movies",
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.RebuildStrmFileByMountPoint())
+	if err := processor.Process(stdctx.Background(), body); err != nil {
+		t.Fatalf("single mount point rebuild should not require mount point service, got %v", err)
+	}
 }
 
 func TestRebuildStrmFileByMountPointRejectsMissingFileID(t *testing.T) {
@@ -332,6 +542,116 @@ func TestRebuildStrmFileByMountPointRejectsMissingFileID(t *testing.T) {
 
 	if count != 0 {
 		t.Fatalf("expected invalid task not to create task log, got %d", count)
+	}
+}
+
+func TestRebuildStrmFileByMountPointUsesMediaConfigBaseURL(t *testing.T) {
+	tDB := setupRebuildStrmTestDB(t)
+	fileTaskLogService := filetasklog.NewService(tDB)
+
+	setupRebuildStrmMediaConfig(t)
+
+	mediaFileService := &mockRebuildStrmMediaFileService{}
+	handler := NewHandler(
+		mediaFileService,
+		&mockRebuildStrmMountPointService{},
+		&mockRebuildStrmVirtualFileService{
+			filesByParent: map[int64][]*models.VirtualFile{
+				100: {
+					{ID: 200, ParentId: 100, Name: "movie.mp4", IsDir: false},
+				},
+			},
+			errByParent: map[int64]error{},
+		},
+		&mockRebuildStrmVerifyService{errByFileID: map[int64]error{}},
+		fileTaskLogService,
+	)
+
+	req := topic.MediaRebuildStrmFileByMountPointRequest{
+		MountPointFileId: 100,
+		MountPointPath:   "/movies",
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.RebuildStrmFileByMountPoint())
+	if err := processor.Process(stdctx.Background(), body); err != nil {
+		t.Fatalf("process rebuild strm: %v", err)
+	}
+
+	calls := mediaFileService.WrittenCalls()
+	if len(calls) != 1 {
+		t.Fatalf("expected one STRM write, got %#v", calls)
+	}
+
+	if calls[0].baseURL != shared.MediaConfig.BaseURL {
+		t.Fatalf("expected media base URL %q, got %q", shared.MediaConfig.BaseURL, calls[0].baseURL)
+	}
+
+	if calls[0].baseURL == shared.BaseURL {
+		t.Fatalf("expected STRM write not to use system base URL %q", shared.BaseURL)
+	}
+
+	if !strings.HasPrefix(calls[0].fileURL, shared.MediaConfig.BaseURL+"/api/file/download/200?") {
+		t.Fatalf("expected STRM download URL to use media base URL, got %q", calls[0].fileURL)
+	}
+
+	if strings.HasPrefix(calls[0].fileURL, shared.BaseURL) {
+		t.Fatalf("expected STRM download URL not to use system base URL %q", shared.BaseURL)
+	}
+}
+
+func TestRebuildStrmFileUsesMediaConfigBaseURL(t *testing.T) {
+	tDB := setupRebuildStrmTestDB(t)
+	fileTaskLogService := filetasklog.NewService(tDB)
+
+	setupRebuildStrmMediaConfig(t)
+
+	mediaFileService := &mockRebuildStrmMediaFileService{}
+	handler := NewHandler(
+		mediaFileService,
+		&mockRebuildStrmMountPointService{items: []*models.MountPoint{
+			{FileId: 100, FullPath: "/movies"},
+		}},
+		&mockRebuildStrmVirtualFileService{
+			filesByParent: map[int64][]*models.VirtualFile{
+				100: {
+					{ID: 200, ParentId: 100, Name: "movie.mp4", IsDir: false},
+				},
+			},
+			errByParent: map[int64]error{},
+		},
+		&mockRebuildStrmVerifyService{errByFileID: map[int64]error{}},
+		fileTaskLogService,
+	)
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.RebuildStrmFile())
+	if err := processor.Process(stdctx.Background(), []byte(`{}`)); err != nil {
+		t.Fatalf("process rebuild strm: %v", err)
+	}
+
+	calls := mediaFileService.WrittenCalls()
+	if len(calls) != 1 {
+		t.Fatalf("expected one STRM write, got %#v", calls)
+	}
+
+	if calls[0].baseURL != shared.MediaConfig.BaseURL {
+		t.Fatalf("expected media base URL %q, got %q", shared.MediaConfig.BaseURL, calls[0].baseURL)
+	}
+
+	if calls[0].baseURL == shared.BaseURL {
+		t.Fatalf("expected STRM write not to use system base URL %q", shared.BaseURL)
+	}
+
+	if !strings.HasPrefix(calls[0].fileURL, shared.MediaConfig.BaseURL+"/api/file/download/200?") {
+		t.Fatalf("expected STRM download URL to use media base URL, got %q", calls[0].fileURL)
+	}
+
+	if strings.HasPrefix(calls[0].fileURL, shared.BaseURL) {
+		t.Fatalf("expected STRM download URL not to use system base URL %q", shared.BaseURL)
 	}
 }
 
@@ -620,5 +940,99 @@ func TestRebuildStrmFileMarksMixedMountPointsAsFailed(t *testing.T) {
 
 	if log.Completed != 1 {
 		t.Fatalf("expected one completed mount point, got %d", log.Completed)
+	}
+}
+
+func TestRebuildStrmFileMarksNilMountPointAsFailed(t *testing.T) {
+	tDB := setupRebuildStrmTestDB(t)
+	fileTaskLogService := filetasklog.NewService(tDB)
+
+	setupRebuildStrmMediaConfig(t)
+
+	mediaFileService := &mockRebuildStrmMediaFileService{}
+	handler := NewHandler(
+		mediaFileService,
+		&mockRebuildStrmMountPointService{items: []*models.MountPoint{nil}},
+		&mockRebuildStrmVirtualFileService{
+			filesByParent: map[int64][]*models.VirtualFile{},
+			errByParent:   map[int64]error{},
+		},
+		&mockRebuildStrmVerifyService{errByFileID: map[int64]error{}},
+		fileTaskLogService,
+	)
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.RebuildStrmFile())
+	if err := processor.Process(stdctx.Background(), []byte(`{}`)); err != nil {
+		t.Fatalf("process rebuild strm with nil mount point: %v", err)
+	}
+
+	if calls := mediaFileService.WrittenCalls(); len(calls) != 0 {
+		t.Fatalf("expected nil mount point not to write STRM files, got %#v", calls)
+	}
+
+	var log models.FileTaskLog
+	if err := tDB.db.First(&log).Error; err != nil {
+		t.Fatalf("query task log: %v", err)
+	}
+
+	if log.Status != models.StatusFailed {
+		t.Fatalf("expected failed task status, got %q", log.Status)
+	}
+
+	if log.Failed != 1 || log.Completed != 0 || log.Total != 1 {
+		t.Fatalf("expected failed=1 completed=0 total=1, got failed=%d completed=%d total=%d", log.Failed, log.Completed, log.Total)
+	}
+}
+
+func TestRebuildStrmFileByMountPointMarksNilChildFileAsFailed(t *testing.T) {
+	tDB := setupRebuildStrmTestDB(t)
+	fileTaskLogService := filetasklog.NewService(tDB)
+
+	setupRebuildStrmMediaConfig(t)
+
+	mediaFileService := &mockRebuildStrmMediaFileService{}
+	handler := NewHandler(
+		mediaFileService,
+		&mockRebuildStrmMountPointService{},
+		&mockRebuildStrmVirtualFileService{
+			filesByParent: map[int64][]*models.VirtualFile{
+				100: {nil},
+			},
+			errByParent: map[int64]error{},
+		},
+		&mockRebuildStrmVerifyService{errByFileID: map[int64]error{}},
+		fileTaskLogService,
+	)
+
+	req := topic.MediaRebuildStrmFileByMountPointRequest{
+		MountPointFileId: 100,
+		MountPointPath:   "/movies",
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	processor := taskcontext.NewHandlerFuncWrapper(zap.NewNop()).Wrap(handler.RebuildStrmFileByMountPoint())
+	if err := processor.Process(stdctx.Background(), body); err != nil {
+		t.Fatalf("process rebuild strm with nil child file: %v", err)
+	}
+
+	if calls := mediaFileService.WrittenCalls(); len(calls) != 0 {
+		t.Fatalf("expected nil child file not to write STRM files, got %#v", calls)
+	}
+
+	var log models.FileTaskLog
+	if err := tDB.db.First(&log).Error; err != nil {
+		t.Fatalf("query task log: %v", err)
+	}
+
+	if log.Status != models.StatusFailed {
+		t.Fatalf("expected failed task status, got %q", log.Status)
+	}
+
+	if log.Failed != 1 || log.Completed != 0 || log.Total != 1 {
+		t.Fatalf("expected failed=1 completed=0 total=1, got failed=%d completed=%d total=%d", log.Failed, log.Completed, log.Total)
 	}
 }

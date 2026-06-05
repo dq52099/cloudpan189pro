@@ -13,7 +13,7 @@
           v-model:value="planQuery.name"
           placeholder="按名称搜索计划"
           clearable
-          style="width: 240px; margin-right: 12px"
+          class="plan-search-input"
           @keyup.enter="handlePlanSearch"
         >
           <template #prefix>
@@ -22,7 +22,7 @@
             </n-icon>
           </template>
         </n-input>
-        <n-button type="primary" @click="handlePlanSearch" style="margin-right: 8px">
+        <n-button type="primary" @click="handlePlanSearch">
           <template #icon>
             <n-icon>
               <SearchOutline />
@@ -127,16 +127,16 @@
           :options="planOptions"
           placeholder="按计划筛选"
           clearable
-          style="width: 220px; margin-right: 8px"
+          class="log-plan-select"
         />
         <n-select
           v-model:value="logQuery.level"
           :options="logLevelOptions"
           placeholder="日志级别"
           clearable
-          style="width: 160px; margin-right: 8px"
+          class="log-level-select"
         />
-        <n-button type="primary" @click="handleLogFilter" style="margin-right: 8px">
+        <n-button type="primary" @click="handleLogFilter">
           <template #icon>
             <n-icon>
               <SearchOutline />
@@ -155,7 +155,6 @@
         <n-dropdown trigger="click" :options="clearLogOptions" @select="handleClearLogsSelect">
           <n-button
             type="error"
-            style="margin-left: 8px"
             :loading="clearingLogs"
             :disabled="clearingLogs || clearLogDialogOpen"
           >
@@ -271,6 +270,7 @@ import {
   normalizeCloudTokens,
   normalizePlanLogResults,
 } from '@/utils/responseGuards'
+import { formatDateTime } from '@/utils/time'
 
 const message = useMessage()
 const dialog = useDialog()
@@ -368,8 +368,10 @@ const loadCloudTokens = () => {
         return
       }
 
-      console.error('获取令牌列表失败:', err)
-      message.error(getErrorMessage(err, '获取令牌列表失败'))
+      const errorMessage = getErrorMessage(err, '获取令牌列表失败')
+
+      console.error('获取令牌列表失败:', errorMessage)
+      message.error(errorMessage)
     })
 }
 
@@ -483,8 +485,10 @@ const handleBatchRetry = () => {
         return
       }
 
-      console.error('批量重试失败', err)
-      message.error(getErrorMessage(err, '批量重试失败'))
+      const errorMessage = getErrorMessage(err, '批量重试失败')
+
+      console.error('批量重试失败', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isPageAlive) {
@@ -523,8 +527,10 @@ const handleBatchRefresh = () => {
         return
       }
 
-      console.error('批量扫描失败', err)
-      message.error(getErrorMessage(err, '批量扫描失败'))
+      const errorMessage = getErrorMessage(err, '批量扫描失败')
+
+      console.error('批量扫描失败', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isPageAlive) {
@@ -564,8 +570,10 @@ const handleBatchEnable = () => {
         return
       }
 
-      console.error('批量启用失败', err)
-      message.error(getErrorMessage(err, '批量启用失败'))
+      const errorMessage = getErrorMessage(err, '批量启用失败')
+
+      console.error('批量启用失败', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isPageAlive) {
@@ -605,8 +613,10 @@ const handleBatchDisable = () => {
         return
       }
 
-      console.error('批量停用失败', err)
-      message.error(getErrorMessage(err, '批量停用失败'))
+      const errorMessage = getErrorMessage(err, '批量停用失败')
+
+      console.error('批量停用失败', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isPageAlive) {
@@ -662,8 +672,10 @@ const handleBatchDelete = () => {
             return
           }
 
-          console.error('批量删除失败', err)
-          message.error(getErrorMessage(err, '批量删除失败'))
+          const errorMessage = getErrorMessage(err, '批量删除失败')
+
+          console.error('批量删除失败', errorMessage)
+          message.error(errorMessage)
         })
         .finally(() => {
           if (isPageAlive) {
@@ -745,7 +757,7 @@ const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
       h(
         'div',
         {
-          style: 'max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;',
+          class: 'autoingest-path-cell',
           title: row.parentPath || '-',
         },
         row.parentPath || '-'
@@ -804,11 +816,11 @@ const planColumns: DataTableColumns<Models.AutoIngestPlan> = [
       h('div', { class: 'time-cell' }, [
         h('div', { class: 'time-line' }, [
           h('span', { class: 'time-label' }, '创建: '),
-          h('span', { class: 'time-value' }, formatDT(row.createdAt)),
+          h('span', { class: 'time-value' }, formatDateTime(row.createdAt)),
         ]),
         h('div', { class: 'time-line' }, [
           h('span', { class: 'time-label' }, '更新: '),
-          h('span', { class: 'time-value' }, formatDT(row.updatedAt)),
+          h('span', { class: 'time-value' }, formatDateTime(row.updatedAt)),
         ]),
       ]),
   },
@@ -1002,8 +1014,10 @@ const fetchPlanList = () => {
         return
       }
 
-      console.error('获取计划列表失败:', err)
-      message.error(getErrorMessage(err, '获取计划列表失败'))
+      const errorMessage = getErrorMessage(err, '获取计划列表失败')
+
+      console.error('获取计划列表失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (!isActiveRequest(requestId, planListRequestId)) {
@@ -1039,8 +1053,10 @@ const onEnable = (row: Models.AutoIngestPlan) => {
         return
       }
 
-      console.error('启用失败', err)
-      message.error(getErrorMessage(err, '启用失败'))
+      const errorMessage = getErrorMessage(err, '启用失败')
+
+      console.error('启用失败', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isPageAlive) {
@@ -1073,8 +1089,10 @@ const onDisable = (row: Models.AutoIngestPlan) => {
         return
       }
 
-      console.error('停用失败', err)
-      message.error(getErrorMessage(err, '停用失败'))
+      const errorMessage = getErrorMessage(err, '停用失败')
+
+      console.error('停用失败', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isPageAlive) {
@@ -1107,8 +1125,10 @@ const onRefresh = (row: Models.AutoIngestPlan) => {
         return
       }
 
-      console.error('扫描下发失败', err)
-      message.error(getErrorMessage(err, '扫描下发失败'))
+      const errorMessage = getErrorMessage(err, '扫描下发失败')
+
+      console.error('扫描下发失败', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isPageAlive) {
@@ -1141,8 +1161,10 @@ const onRetry = (row: Models.AutoIngestPlan) => {
         return
       }
 
-      console.error('重试失败', err)
-      message.error(getErrorMessage(err, '重试失败'))
+      const errorMessage = getErrorMessage(err, '重试失败')
+
+      console.error('重试失败', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isPageAlive) {
@@ -1177,8 +1199,10 @@ const onDelete = (row: Models.AutoIngestPlan) => {
         return
       }
 
-      console.error('删除失败', err)
-      message.error(getErrorMessage(err, '删除失败'))
+      const errorMessage = getErrorMessage(err, '删除失败')
+
+      console.error('删除失败', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isPageAlive) {
@@ -1337,8 +1361,10 @@ const handleClearLogsSelect = (key: string | number) => {
             return
           }
 
-          console.error('清理失败', err)
-          message.error(getErrorMessage(err, '清理失败'))
+          const errorMessage = getErrorMessage(err, '清理失败')
+
+          console.error('清理失败', errorMessage)
+          message.error(errorMessage)
         })
         .finally(() => {
           if (isPageAlive) {
@@ -1375,7 +1401,7 @@ const logColumns: DataTableColumns<Models.AutoIngestLog> = [
     key: 'createdAt',
     width: 180,
     align: 'center',
-    render: (row) => formatDT(row.createdAt),
+    render: (row) => formatDateTime(row.createdAt),
   },
   {
     title: '操作',
@@ -1435,8 +1461,10 @@ const onRetryFailed = (planId?: number) => {
         return
       }
 
-      console.error('重试失败', err)
-      message.error(getErrorMessage(err, '重试失败'))
+      const errorMessage = getErrorMessage(err, '重试失败')
+
+      console.error('重试失败', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (isPageAlive) {
@@ -1446,6 +1474,10 @@ const onRetryFailed = (planId?: number) => {
 }
 
 const fetchLogList = () => {
+  if (!isPageAlive) {
+    return
+  }
+
   const requestId = ++logListRequestId
 
   logLoading.value = true
@@ -1488,8 +1520,10 @@ const fetchLogList = () => {
         return
       }
 
-      console.error('获取日志失败:', err)
-      message.error(getErrorMessage(err, '获取日志失败'))
+      const errorMessage = getErrorMessage(err, '获取日志失败')
+
+      console.error('获取日志失败:', errorMessage)
+      message.error(errorMessage)
     })
     .finally(() => {
       if (!isActiveRequest(requestId, logListRequestId)) {
@@ -1500,9 +1534,6 @@ const fetchLogList = () => {
       refreshTime.value = dayjs()
     })
 }
-
-// Utils
-const formatDT = (v?: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-')
 
 // Init
 onMounted(() => {
@@ -1538,6 +1569,8 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 /* 批量操作栏 */
@@ -1548,12 +1581,35 @@ onUnmounted(() => {
   border-radius: 6px;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
 .header-left {
   display: flex;
   align-items: center;
+  flex: 1 1 360px;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.header-right {
+  display: flex;
+  justify-content: flex-end;
+  flex: 0 1 auto;
+}
+
+.plan-search-input {
+  width: min(260px, 100%);
+}
+
+.log-plan-select {
+  width: min(240px, 100%);
+}
+
+.log-level-select {
+  width: min(180px, 100%);
 }
 
 .autoingest-table {
@@ -1572,6 +1628,13 @@ onUnmounted(() => {
 
 .cell-title {
   font-weight: 600;
+}
+
+.autoingest-path-cell {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .log-content {
@@ -1599,5 +1662,25 @@ onUnmounted(() => {
 
 .time-value {
   color: var(--n-text-color);
+}
+
+@media (width <= 768px) {
+  .header,
+  .header-left,
+  .header-right,
+  .batch-actions {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .plan-search-input,
+  .log-plan-select,
+  .log-level-select,
+  .header-left :deep(.n-button),
+  .header-right :deep(.n-button),
+  .batch-actions :deep(.n-button) {
+    width: 100%;
+  }
 }
 </style>

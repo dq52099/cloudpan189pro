@@ -58,7 +58,7 @@ func setupGroup2FileTestDB(t *testing.T) *group2FileTestDB {
 		t.Fatalf("open test db: %v", err)
 	}
 
-	if err := db.AutoMigrate(&models.UserGroup{}, &models.Group2File{}, &models.VirtualFile{}); err != nil {
+	if err := db.AutoMigrate(&models.UserGroup{}, &models.Group2File{}, &models.VirtualFile{}, &models.MountPoint{}); err != nil {
 		t.Fatalf("migrate test db: %v", err)
 	}
 
@@ -69,6 +69,13 @@ func createGroupFileBinding(t *testing.T, db *gorm.DB, groupID, fileID int64) {
 	t.Helper()
 
 	createUserGroupForBinding(t, db, groupID)
+	createMountPointFileForGroupBinding(t, db, fileID)
+
+	createRawGroupFileBinding(t, db, groupID, fileID)
+}
+
+func createRawGroupFileBinding(t *testing.T, db *gorm.DB, groupID, fileID int64) {
+	t.Helper()
 
 	if err := db.Create(&models.Group2File{GroupId: groupID, FileId: fileID}).Error; err != nil {
 		t.Fatalf("create group file binding: %v", err)
@@ -92,13 +99,31 @@ func createVirtualFileForGroupBinding(t *testing.T, db *gorm.DB, fileID int64) {
 	file := &models.VirtualFile{
 		ID:       fileID,
 		CloudId:  "cloud-id",
-		ParentId: 1,
-		TopId:    1,
+		ParentId: 0,
+		TopId:    fileID,
 		Name:     fmt.Sprintf("file-%d", fileID),
-		OsType:   models.OsTypeFile,
+		IsDir:    true,
+		IsTop:    true,
+		OsType:   models.OsTypeFolder,
 	}
 	if err := db.Create(file).Error; err != nil {
 		t.Fatalf("create virtual file: %v", err)
+	}
+}
+
+func createMountPointFileForGroupBinding(t *testing.T, db *gorm.DB, fileID int64) {
+	t.Helper()
+
+	createVirtualFileForGroupBinding(t, db, fileID)
+
+	mountPoint := &models.MountPoint{
+		FileId:  fileID,
+		OsType:  string(models.OsTypeFolder),
+		TokenId: 1,
+		Name:    fmt.Sprintf("mount-%d", fileID),
+	}
+	if err := db.Create(mountPoint).Error; err != nil {
+		t.Fatalf("create mount point: %v", err)
 	}
 }
 
@@ -110,8 +135,8 @@ func TestBatchBindFilesReplacesExistingBindingsAndDeduplicates(t *testing.T) {
 	createGroupFileBinding(t, tDB.db, 10, 1001)
 	createGroupFileBinding(t, tDB.db, 10, 1002)
 	createGroupFileBinding(t, tDB.db, 20, 2001)
-	createVirtualFileForGroupBinding(t, tDB.db, 3001)
-	createVirtualFileForGroupBinding(t, tDB.db, 3002)
+	createMountPointFileForGroupBinding(t, tDB.db, 3001)
+	createMountPointFileForGroupBinding(t, tDB.db, 3002)
 
 	if err := svc.BatchBindFiles(ctx, 10, []int64{3001, 3001, 3002}); err != nil {
 		t.Fatalf("batch bind files: %v", err)
@@ -158,7 +183,7 @@ func TestBatchBindFilesRejectsMissingFileIDWithoutChangingBindings(t *testing.T)
 
 	createGroupFileBinding(t, tDB.db, 10, 1001)
 	createGroupFileBinding(t, tDB.db, 10, 1002)
-	createVirtualFileForGroupBinding(t, tDB.db, 3001)
+	createMountPointFileForGroupBinding(t, tDB.db, 3001)
 
 	err := svc.BatchBindFiles(ctx, 10, []int64{3001, 99999})
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -176,6 +201,59 @@ func TestBatchBindFilesRejectsMissingFileIDWithoutChangingBindings(t *testing.T)
 
 	if !reflect.DeepEqual(fileIDs, []int64{1001, 1002}) {
 		t.Fatalf("expected existing bindings unchanged, got %v", fileIDs)
+	}
+}
+
+func TestGetBindFilesFiltersLegacyNonMountPointBindings(t *testing.T) {
+	tDB := setupGroup2FileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	createUserGroupForBinding(t, tDB.db, 10)
+	createMountPointFileForGroupBinding(t, tDB.db, 3001)
+	createRawGroupFileBinding(t, tDB.db, 10, 3001)
+	createVirtualFileForGroupBinding(t, tDB.db, 3002)
+	createRawGroupFileBinding(t, tDB.db, 10, 3002)
+
+	fileIDs, err := svc.GetBindFiles(ctx, 10)
+	if err != nil {
+		t.Fatalf("get bind files: %v", err)
+	}
+
+	if !reflect.DeepEqual(fileIDs, []int64{3001}) {
+		t.Fatalf("expected only mount point bindings, got %v", fileIDs)
+	}
+}
+
+func TestBatchBindFilesAllowsDuplicateMountPointRowsForSameFileID(t *testing.T) {
+	tDB := setupGroup2FileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	createUserGroupForBinding(t, tDB.db, 10)
+	createMountPointFileForGroupBinding(t, tDB.db, 3001)
+
+	duplicateMountPoint := &models.MountPoint{
+		FileId:  3001,
+		OsType:  string(models.OsTypeFolder),
+		TokenId: 2,
+		Name:    "duplicate-name",
+	}
+	if err := tDB.db.Create(duplicateMountPoint).Error; err != nil {
+		t.Fatalf("create duplicate mount point: %v", err)
+	}
+
+	if err := svc.BatchBindFiles(ctx, 10, []int64{3001}); err != nil {
+		t.Fatalf("batch bind duplicated mount point file id: %v", err)
+	}
+
+	fileIDs, err := svc.GetBindFiles(ctx, 10)
+	if err != nil {
+		t.Fatalf("get bind files: %v", err)
+	}
+
+	if !reflect.DeepEqual(fileIDs, []int64{3001}) {
+		t.Fatalf("expected binding to duplicated mount point file id, got %v", fileIDs)
 	}
 }
 
@@ -220,6 +298,34 @@ func TestBatchBindFilesAllowsClearingAllBindings(t *testing.T) {
 				t.Fatalf("expected other group unchanged, got %v", otherFileIDs)
 			}
 		})
+	}
+}
+
+func TestBatchBindFilesRejectsNonMountPointFileIDWithoutChangingBindings(t *testing.T) {
+	tDB := setupGroup2FileTestDB(t)
+	svc := NewService(tDB)
+	ctx := context.NewContext(stdctx.Background())
+
+	createGroupFileBinding(t, tDB.db, 10, 1001)
+	createGroupFileBinding(t, tDB.db, 10, 1002)
+	createVirtualFileForGroupBinding(t, tDB.db, 3001)
+
+	err := svc.BatchBindFiles(ctx, 10, []int64{3001})
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected record not found for non-mount point file id, got %v", err)
+	}
+
+	fileIDs, err := svc.GetBindFiles(ctx, 10)
+	if err != nil {
+		t.Fatalf("get bind files: %v", err)
+	}
+
+	sort.Slice(fileIDs, func(i, j int) bool {
+		return fileIDs[i] < fileIDs[j]
+	})
+
+	if !reflect.DeepEqual(fileIDs, []int64{1001, 1002}) {
+		t.Fatalf("expected existing bindings unchanged, got %v", fileIDs)
 	}
 }
 
@@ -282,7 +388,7 @@ func TestBatchBindFilesRejectsMissingGroupIDWithoutCreatingOrphans(t *testing.T)
 	ctx := context.NewContext(stdctx.Background())
 
 	createGroupFileBinding(t, tDB.db, 10, 1001)
-	createVirtualFileForGroupBinding(t, tDB.db, 3001)
+	createMountPointFileForGroupBinding(t, tDB.db, 3001)
 
 	err := svc.BatchBindFiles(ctx, 99999, []int64{3001})
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -371,5 +477,17 @@ func TestCheckPermissionReturnsBindingState(t *testing.T) {
 
 	if ok {
 		t.Fatal("expected missing permission to be false")
+	}
+
+	createVirtualFileForGroupBinding(t, tDB.db, 1003)
+	createRawGroupFileBinding(t, tDB.db, 10, 1003)
+
+	ok, err = svc.CheckPermission(ctx, 10, 1003)
+	if err != nil {
+		t.Fatalf("check legacy non-mount permission: %v", err)
+	}
+
+	if ok {
+		t.Fatal("expected legacy non-mount permission to be false")
 	}
 }
